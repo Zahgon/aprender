@@ -217,9 +217,59 @@ fn receipt_is_self_consistent_and_round_trips() {
         bad.check(TAG_SHA),
         Err(Refusal::RatioInconsistent(Phase::Decode))
     );
+    // A claimed run count that is not the samples' is refused.
+    let mut bad = r.clone();
+    bad.n_runs = 200;
+    assert_eq!(bad.check(TAG_SHA), Err(Refusal::TooFewRuns(7)));
     // Fewer than MIN_RUNS is never a gate number.
     assert!(PhaseStats::from_samples(&[1.0, 2.0, 3.0, 4.0], 1).is_none());
     assert!(PhaseStats::from_samples(&[1.0, 2.0, 3.0, 4.0, f64::NAN], 1).is_none());
     let p = PhaseStats::from_samples(&samples(10.0, 1.0), 1).expect("seven samples");
     assert!(p.ci_lo <= p.median && p.median <= p.ci_hi && p.median <= p.p95);
+}
+
+#[test]
+fn falsify_crux_perf_006_rc_missing_t0_or_t1_for_an_admitted_cell_is_red() {
+    let tag = "v0.70.0-rc.2";
+    let gx10 = cell().id();
+    let intel = Cell {
+        host: "intel".to_string(),
+        ..cell()
+    }
+    .id();
+    let admitted = vec![gx10.clone(), intel.clone()];
+    let mut a = receipt(tag, 1.0);
+    a.t1_topk_sha = Some("dd44".to_string());
+    // Only gx10 measured: intel has no T0.
+    assert_eq!(
+        coverage_gaps(tag, TAG_SHA, &admitted, &[a.clone()]),
+        vec![Gap::T0 {
+            cell_id: intel.clone()
+        }]
+    );
+    let mut b = a.clone();
+    b.cell = Cell {
+        host: "intel".to_string(),
+        ..cell()
+    };
+    b.cell_id = b.cell.id();
+    b.t1_topk_sha = None;
+    // Both measured, intel without its T1 profile.
+    assert_eq!(
+        coverage_gaps(tag, TAG_SHA, &admitted, &[a.clone(), b.clone()]),
+        vec![Gap::T1 {
+            cell_id: intel.clone()
+        }]
+    );
+    b.t1_topk_sha = Some("ee55".to_string());
+    assert!(coverage_gaps(tag, TAG_SHA, &admitted, &[a.clone(), b.clone()]).is_empty());
+    // Another tag's receipt, or a receipt of another binary, fills nothing.
+    assert_eq!(
+        coverage_gaps("v0.70.0-rc.3", TAG_SHA, &admitted, &[a.clone(), b.clone()]).len(),
+        2
+    );
+    assert_eq!(
+        coverage_gaps(tag, &"ff".repeat(32), &admitted, &[a, b]).len(),
+        2
+    );
 }
