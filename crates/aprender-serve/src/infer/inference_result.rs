@@ -272,6 +272,7 @@ fn mock_run_report(config: &InferenceConfig, result: &InferenceResult) -> run_re
             config.max_tokens,
         )),
         context_length: None,
+        num_layers: None,
     }
 }
 
@@ -456,6 +457,7 @@ fn run_gguf_inference(
             budget,
         )),
         context_length: Some(model_config.context_length),
+        num_layers: Some(model_config.num_layers),
     };
 
     Ok((

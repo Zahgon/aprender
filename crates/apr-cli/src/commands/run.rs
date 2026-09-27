@@ -233,6 +233,8 @@ pub(crate) struct RunUsage {
     pub finish_reason: Option<&'static str>,
     /// The model's context window, from its metadata.
     pub context_length: Option<usize>,
+    /// TR-09 (#4564): transformer layers, from its metadata; feeds `apr-trace-v1`.
+    pub num_layers: Option<usize>,
     /// #3981: generation wall time (prefill + decode), in ms, when the backend marked
     /// where generation began. `None` means the path did not measure it, and then
     /// `tok_per_sec` still includes setup.
@@ -381,43 +383,7 @@ pub(crate) fn resolve_model(source: &ModelSource, force: bool, offline: bool) ->
     match source {
         ModelSource::Local(path) => Ok(path.clone()),
         ModelSource::HuggingFace { org, repo, file } => {
-            // Check multiple cache locations for the model
-            // GH-528: Skip cache when --force is set to re-download
-            if !force {
-                if let Some(path) = find_cached_model(org, repo, file.as_deref()) {
-                    return Ok(path);
-                }
-            }
-
-            if offline {
-                // OFFLINE MODE: Reject any network access attempt.
-                //
-                // CRUX-A-20: a BARE `hf://org/repo` gets a different message,
-                // because "not cached" would be a claim we cannot support. The
-                // caller reached here having asked the Hub API which file the
-                // repo means (`run_model` → `resolve_hf_model`) and been
-                // refused, so `file` is None and the pacha cache — keyed on the
-                // full `hf://org/repo/<file>` — cannot be probed at all. The
-                // file may well be cached under a name we cannot name.
-                if file.is_none() {
-                    return Err(CliError::ValidationFailed(format!(
-                        "OFFLINE MODE: cannot resolve hf://{org}/{repo} to a file. \
-                         Which file a bare repo means is only knowable from the \
-                         HuggingFace API, and network access is disabled. Name the \
-                         file (e.g. hf://{org}/{repo}/model.safetensors), pass a \
-                         local path, or cache it first with: apr import hf://{org}/{repo}"
-                    )));
-                }
-                return Err(CliError::ValidationFailed(format!(
-                    "OFFLINE MODE: Model hf://{org}/{repo} not cached. \
-                     Network access is disabled. Cache the model first with: \
-                     apr import hf://{org}/{repo}"
-                )));
-            }
-
-            // Auto-download like ollama
-            eprintln!("{}", format!("Downloading hf://{org}/{repo}...").yellow());
-            download_hf_model(org, repo, file.as_deref())
+            resolve_hf_source(org, repo, file.as_deref(), force, offline)
         }
         ModelSource::Url(url) => {
             let cache_path = source.cache_path();
@@ -438,6 +404,53 @@ pub(crate) fn resolve_model(source: &ModelSource, force: bool, offline: bool) ->
             }
         }
     }
+}
+
+/// The `hf://` arm of [`resolve_model`]: the cache, else the offline refusal, else a download.
+fn resolve_hf_source(
+    org: &str,
+    repo: &str,
+    file: Option<&str>,
+    force: bool,
+    offline: bool,
+) -> Result<PathBuf> {
+    // Check multiple cache locations for the model
+    // GH-528: Skip cache when --force is set to re-download
+    if !force {
+        if let Some(path) = find_cached_model(org, repo, file) {
+            return Ok(path);
+        }
+    }
+
+    if offline {
+        // OFFLINE MODE: Reject any network access attempt.
+        //
+        // CRUX-A-20: a BARE `hf://org/repo` gets a different message,
+        // because "not cached" would be a claim we cannot support. The
+        // caller reached here having asked the Hub API which file the
+        // repo means (`run_model` → `resolve_hf_model`) and been
+        // refused, so `file` is None and the pacha cache — keyed on the
+        // full `hf://org/repo/<file>` — cannot be probed at all. The
+        // file may well be cached under a name we cannot name.
+        if file.is_none() {
+            return Err(CliError::ValidationFailed(format!(
+                "OFFLINE MODE: cannot resolve hf://{org}/{repo} to a file. \
+                 Which file a bare repo means is only knowable from the \
+                 HuggingFace API, and network access is disabled. Name the \
+                 file (e.g. hf://{org}/{repo}/model.safetensors), pass a \
+                 local path, or cache it first with: apr import hf://{org}/{repo}"
+            )));
+        }
+        return Err(CliError::ValidationFailed(format!(
+            "OFFLINE MODE: Model hf://{org}/{repo} not cached. \
+             Network access is disabled. Cache the model first with: \
+             apr import hf://{org}/{repo}"
+        )));
+    }
+
+    // Auto-download like ollama
+    eprintln!("{}", format!("Downloading hf://{org}/{repo}...").yellow());
+    download_hf_model(org, repo, file)
 }
 
 /// Find model in various cache locations (HF cache, apr cache)
