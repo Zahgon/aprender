@@ -880,6 +880,12 @@ impl<'a> Qwen35Model<'a> {
         let config = crate::gguf::config::ValidatedModelConfig::from_gguf(model)?.into_inner();
 
         let output_norm_weight = model.get_tensor_f32("output_norm.weight", data)?;
+        // #2378 finding 4: apr serve/chat/eval reach this loader, not from_gguf.
+        crate::gguf::transformer::gguf_check_norm_width(
+            "output_norm.weight",
+            &output_norm_weight,
+            config.hidden_dim,
+        )?;
 
         let lm_head_ref =
             crate::gguf::QuantizedGGUFTransformer::get_tensor_ref(model, data, "output.weight")
