@@ -143,21 +143,21 @@ proof_obligations:
   property: 'Every written receipt has an observed load, a server alive at the end
     whose own uptime covers the run, and every TTFT below load_ms
     (FALSIFY-SERVE-001..003, FALSIFY-SERVE-007)'
-  formal: 'forall r: r.load_ms > 0 and r.server_uptime_s > 0 and r.ttft_ms.max < r.load_ms'
+  formal: '∀ r: r.load_ms > 0 ∧ r.server_uptime_s > 0 ∧ r.ttft_ms.max < r.load_ms'
 - id: ASR-INV-002
   type: invariant
   property: 'Every written receipt measured pp512/tg128 (FALSIFY-SERVE-004)'
-  formal: 'forall r: |r.prompt_tokens_p50 - 512| <= 25.6 and all completions = 128'
+  formal: '∀ r: abs(r.prompt_tokens_p50 - 512) ≤ 25.6 ∧ ∀ c ∈ completions(r): c = 128'
 - id: ASR-SND-003
   type: soundness
   property: 'The rates are per-request medians over successful streamed requests
     only (FALSIFY-SERVE-005, FALSIFY-SERVE-006)'
-  formal: 'forall r: r.n >= 1 and failed = 0 and r.pp512_tok_s = median(p_i / ttft_i)'
+  formal: '∀ r: r.n ≥ 1 ∧ failed = 0 ∧ r.pp512_tok_s = median(p_i / ttft_i)'
 - id: ASR-INV-004
   type: invariant
   property: 'Every written receipt names the device the server reported after
     the last run (FALSIFY-SERVE-008)'
-  formal: 'forall r: r.compute_mode = health_after(r).compute_mode'
+  formal: '∀ r: r.compute_mode = health_after(r).compute_mode'
 
 qa_gate:
   id: FALSIFY-SERVE-GATE-001
