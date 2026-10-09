@@ -73,9 +73,10 @@ pub struct BenchmarkReport {
     #[serde(default)]
     pub ready_to_end_s: Option<f64>,
     /// The server's own `/health` `compute_mode` (`gpu`/`cpu`), read after the
-    /// last run: the device that served it, not the one the build or the
-    /// command line asked for. A GPU path refused at the first request falls
-    /// back to CPU and only this read shows it.
+    /// last run: what the server reports, not what the build or the command
+    /// line asked for. The Qwen3.5 hybrid reports its live backend, so a GPU
+    /// path it refused at the first request reads `cpu` here; other model
+    /// paths report the device of the resident model.
     #[serde(default)]
     pub server_compute_mode_after: Option<String>,
 }

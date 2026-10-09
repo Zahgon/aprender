@@ -25,10 +25,12 @@
 //!   V1 compares this TTFT with llama.cpp's on the same host;
 //! - a workload that is not pp512/tg128: the median prompt is outside
 //!   512 ± [`PROMPT_TOLERANCE`], or a completion is not exactly 128 tokens;
-//! - no `compute_mode` — `/health` did not say which device served the runs.
-//!   A GPU path the server refuses at the first request falls back to CPU, so
-//!   neither the build nor the host label says where the numbers came from.
-//!   A `cpu` answer is recorded as it is, never refused and never relabelled.
+//! - no `compute_mode` — `/health` did not report a device after the runs.
+//!   The Qwen3.5 hybrid falls back to CPU when it refuses its GPU path at the
+//!   first request, so neither the build nor the host label says where the
+//!   numbers came from; its `/health` reports the live backend. Other model
+//!   paths report the device of the resident model. A `cpu` answer is
+//!   recorded as it is, never refused and never relabelled.
 
 use super::benchmark::BenchmarkReport;
 use super::loadtest::RequestDetail;
@@ -85,8 +87,8 @@ pub struct ServeReceipt {
     pub load_ms: f64,
     /// The server's own uptime after the last run, s; covers the measured span.
     pub server_uptime_s: f64,
-    /// The device that served the runs, as the server's `/health` reported it
-    /// after the last run (`gpu` or `cpu`).
+    /// The device the server's `/health` reported after the last run (`gpu`
+    /// or `cpu`); live for the Qwen3.5 hybrid, the resident model otherwise.
     pub compute_mode: String,
     /// Measured requests, all served by the one process that loaded once.
     pub n: usize,
@@ -112,7 +114,7 @@ pub struct ServeReceipt {
 pub fn build(report: &BenchmarkReport, meta: ReceiptMeta) -> Result<ServeReceipt, String> {
     let (load_ms, uptime) = one_process(report)?;
     let compute_mode = report.server_compute_mode_after.clone().ok_or(
-        "no compute_mode: /health did not say which device served the runs, so a GPU path \
+        "no compute_mode: /health did not report a device after the runs, so a GPU path \
          that fell back to CPU would read as GPU",
     )?;
     let reqs = measured_requests(report)?;

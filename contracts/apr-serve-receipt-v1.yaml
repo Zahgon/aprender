@@ -10,7 +10,7 @@ metadata:
   - 'crates/aprender-test-lib/src/llm/serve_receipt_tests.rs — the case table'
   - 'crates/aprender-test-lib/src/llm/benchmark.rs — load_ms (spawn to first healthy answer, 50 ms poll), server_alive_after, and the server''s own /health uptime_sec after the last run'
   - 'crates/apr-cli/src/commands/test_llm.rs — `apr test llm bench --serve-receipt` writes it'
-  - 'aprender#4958 — a GPU path refused at the first request falls back to CPU; only /health compute_mode shows it'
+  - 'aprender#4958 — the Qwen3.5 hybrid falls back to CPU when it refuses its GPU path; its /health compute_mode then reads cpu'
   description: >
     A serve receipt says one thing: ONE `apr serve` process loaded the model ONCE,
     and then served N pp512/tg128 requests from memory. It carries load_ms (server
@@ -63,9 +63,11 @@ equations:
     domain: 'a serve receipt'
     codomain: '{gpu, cpu}'
     invariants:
-    - 'The device is what the server says served the runs, not what the build
-       or the command line asked for. A GPU path refused at the first request
-       falls back to CPU; without this field that run reads as a GPU number.'
+    - 'The device is what the server reports, not what the build or the
+       command line asked for. The Qwen3.5 hybrid reports its live backend: a
+       GPU path it refused at the first request falls back to CPU and reads
+       cpu, where without this field the run reads as a GPU number. Other
+       model paths report the device of the resident model.'
     - 'A cpu answer is recorded as cpu. It is never refused and never relabelled.'
 
   rates_are_per_request_medians:
@@ -118,7 +120,7 @@ falsification_tests:
   if_fails: 'a supervisor that restarts the server per request passes as one load'
   mutation: 'delete the uptime comparison, or widen UPTIME_SLACK_S to 2.0; red_a_server_that_restarted_after_ready (5.0 and 28.9 rows) must turn RED'
 - id: FALSIFY-SERVE-008
-  rule: the receipt names the device the server says served the runs
+  rule: the receipt names the device the server reports after the runs
   prediction: 'No /health compute_mode after the last run is REFUSED; a cpu
     answer is written as cpu.'
   test: 'cargo test -p aprender-test-lib --features llm --lib -- serve_receipt::tests::red_no_compute_mode serve_receipt::tests::a_cpu_fallback_is_recorded_as_cpu'
