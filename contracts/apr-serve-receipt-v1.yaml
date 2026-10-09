@@ -101,10 +101,10 @@ falsification_tests:
 - id: FALSIFY-SERVE-007
   rule: the server''s own clock shows no restart
   prediction: 'No /health uptime_sec after the last run, or an uptime more than
-    1 s short of the span since ready, is REFUSED; 29.5 s after a 30 s run is inside.'
+    1 s short of the span since ready, is REFUSED: 28.9 s after a 30 s run is refused, 29.5 s is inside.'
   test: 'cargo test -p aprender-test-lib --features llm --lib -- serve_receipt::tests::red_no_server_uptime serve_receipt::tests::red_a_server_that_restarted_after_ready'
   if_fails: 'a supervisor that restarts the server per request passes as one load'
-  mutation: 'delete the uptime comparison; red_a_server_that_restarted_after_ready must turn RED'
+  mutation: 'delete the uptime comparison, or widen UPTIME_SLACK_S to 2.0; red_a_server_that_restarted_after_ready (5.0 and 28.9 rows) must turn RED'
 - id: FALSIFY-SERVE-006
   rule: the GREEN row computes the stated formulas
   prediction: 'TTFT 100/120/140 ms on 512 tokens and 1270 ms of decode for 127

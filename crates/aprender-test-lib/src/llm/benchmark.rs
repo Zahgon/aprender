@@ -150,7 +150,14 @@ impl Benchmark {
         // Phase 1: Start server (if configured). A server that ALREADY answers
         // before we spawn ours would make the readiness poll return at once and
         // load_ms measure nothing (#4953), so that is an error, not a fast load.
-        if self.config.start_command.is_some() && matches!(client.health_check().await, Ok(true)) {
+        // The probe gets a 5 s timeout: a refused connect returns at once, but a
+        // blackholed --url would otherwise hold the run for 3 × 120 s.
+        let probe = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .map(|c| LlmClient::with_client(&self.config.url, &self.config.model, c))
+            .unwrap_or_else(|_| client.clone());
+        if self.config.start_command.is_some() && matches!(probe.health_check().await, Ok(true)) {
             return Err(LlmClientError::HealthCheckFailed(format!(
                 "a server already answers at {} before --start ran; its load is not this run's",
                 self.config.url
@@ -299,14 +306,7 @@ impl Benchmark {
     /// Kill the server process if we started one.
     async fn teardown(&mut self) {
         if let Some(ref mut child) = self.child {
-            // SIGKILL the whole group first: killing `sh` alone orphans the
-            // server it started, which keeps the port and the GPU.
-            #[cfg(unix)]
-            if let Some(pid) = child.id() {
-                let _ = std::process::Command::new("kill")
-                    .args(["-KILL", "--", &format!("-{pid}")])
-                    .status();
-            }
+            kill_group(child);
             let _ = child.kill().await;
             let _ = child.wait().await;
             eprintln!("Server process terminated");
@@ -315,9 +315,29 @@ impl Benchmark {
     }
 }
 
+/// SIGKILL the started command's whole process group. Killing `sh` alone
+/// orphans the server it started, which keeps the port and the GPU (#4953).
+/// A server that calls `setsid` or daemonizes leaves the group and escapes
+/// this; `apr serve` does neither.
+fn kill_group(child: &tokio::process::Child) {
+    #[cfg(unix)]
+    if let Some(pid) = child.id() {
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", "--", &format!("-{pid}")])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    #[cfg(not(unix))]
+    let _ = child;
+}
+
 impl Drop for Benchmark {
     fn drop(&mut self) {
+        // Also on an early return (a readiness timeout) or a panic, which skip
+        // teardown: the group, not only `sh`.
         if let Some(ref mut child) = self.child {
+            kill_group(child);
             let _ = child.start_kill();
         }
     }

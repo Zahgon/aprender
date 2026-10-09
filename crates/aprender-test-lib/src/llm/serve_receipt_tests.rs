@@ -178,6 +178,10 @@ fn red_a_server_that_restarted_after_ready() {
     let mut rep = report(green_runs(), Some(4000.0), Some(true));
     rep.server_uptime_after_s = Some(5.0);
     refusal(rep, "restarted");
+    // Just outside the 1 s slack: refused, so a wider slack turns this RED.
+    let mut out = report(green_runs(), Some(4000.0), Some(true));
+    out.server_uptime_after_s = Some(28.9);
+    refusal(out, "restarted");
     // Within the 1 s clock slack it is the same process.
     let mut edge = report(green_runs(), Some(4000.0), Some(true));
     edge.server_uptime_after_s = Some(29.5);
