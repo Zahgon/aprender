@@ -61,6 +61,7 @@ fn report(runs: Vec<LoadTestResult>, load_ms: Option<f64>, alive: Option<bool>) 
         // The server reports 60 s of its own uptime after a 30 s run: no restart.
         server_uptime_after_s: Some(60.0),
         ready_to_end_s: Some(30.0),
+        server_compute_mode_after: Some("gpu".to_string()),
     }
 }
 
@@ -94,6 +95,7 @@ fn green_a_loaded_once_pp512_tg128_run_is_a_receipt() {
     assert_eq!(r.n, 3);
     assert_eq!(r.load_ms, 4000.0);
     assert_eq!(r.server_uptime_s, 60.0);
+    assert_eq!(r.compute_mode, "gpu");
     assert_eq!(
         r.ttft_ms,
         Spread {
@@ -118,6 +120,7 @@ fn green_a_loaded_once_pp512_tg128_run_is_a_receipt() {
         "tg128_tok_s",
         "model_sha256",
         "apr_commit",
+        "compute_mode",
         "n",
     ] {
         assert!(j.get(k).is_some(), "receipt JSON lacks {k}: {j}");
@@ -186,6 +189,21 @@ fn red_a_server_that_restarted_after_ready() {
     let mut edge = report(green_runs(), Some(4000.0), Some(true));
     edge.server_uptime_after_s = Some(29.5);
     build(&edge, meta()).unwrap();
+}
+
+#[test]
+fn red_no_compute_mode() {
+    let mut rep = report(green_runs(), Some(4000.0), Some(true));
+    rep.server_compute_mode_after = None;
+    refusal(rep, "no compute_mode");
+}
+
+#[test]
+fn a_cpu_fallback_is_recorded_as_cpu() {
+    // A GPU build whose first request fell back to CPU: the receipt says so.
+    let mut rep = report(green_runs(), Some(4000.0), Some(true));
+    rep.server_compute_mode_after = Some("cpu".to_string());
+    assert_eq!(build(&rep, meta()).unwrap().compute_mode, "cpu");
 }
 
 #[test]

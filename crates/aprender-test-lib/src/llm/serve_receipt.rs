@@ -24,7 +24,11 @@
 //!   load. The process-continuity check above is the proof against restarts;
 //!   V1 compares this TTFT with llama.cpp's on the same host;
 //! - a workload that is not pp512/tg128: the median prompt is outside
-//!   512 ± [`PROMPT_TOLERANCE`], or a completion is not exactly 128 tokens.
+//!   512 ± [`PROMPT_TOLERANCE`], or a completion is not exactly 128 tokens;
+//! - no `compute_mode` — `/health` did not say which device served the runs.
+//!   A GPU path the server refuses at the first request falls back to CPU, so
+//!   neither the build nor the host label says where the numbers came from.
+//!   A `cpu` answer is recorded as it is, never refused and never relabelled.
 
 use super::benchmark::BenchmarkReport;
 use super::loadtest::RequestDetail;
@@ -81,6 +85,9 @@ pub struct ServeReceipt {
     pub load_ms: f64,
     /// The server's own uptime after the last run, s; covers the measured span.
     pub server_uptime_s: f64,
+    /// The device that served the runs, as the server's `/health` reported it
+    /// after the last run (`gpu` or `cpu`).
+    pub compute_mode: String,
     /// Measured requests, all served by the one process that loaded once.
     pub n: usize,
     /// How every summary below is formed.
@@ -104,6 +111,10 @@ pub struct ServeReceipt {
 /// A human-readable refusal; see the module docs for the list.
 pub fn build(report: &BenchmarkReport, meta: ReceiptMeta) -> Result<ServeReceipt, String> {
     let (load_ms, uptime) = one_process(report)?;
+    let compute_mode = report.server_compute_mode_after.clone().ok_or(
+        "no compute_mode: /health did not say which device served the runs, so a GPU path \
+         that fell back to CPU would read as GPU",
+    )?;
     let reqs = measured_requests(report)?;
     let prompt_p50 = workload_prompt_p50(&reqs)?;
     let ttft = spread(reqs.iter().map(|r| r.ttft_ms).collect());
@@ -129,6 +140,7 @@ pub fn build(report: &BenchmarkReport, meta: ReceiptMeta) -> Result<ServeReceipt
         meta,
         load_ms,
         server_uptime_s: uptime,
+        compute_mode,
         n: reqs.len(),
         method: "per-request values; p50 = median, p95 = nearest rank, over all measured runs; \
                  warmup excluded"
@@ -148,7 +160,7 @@ fn one_process(report: &BenchmarkReport) -> Result<(f64, f64), String> {
         "no load_ms: the server was not started by this producer (--start), so its load was \
          never observed",
     )?;
-    if !(load_ms > 0.0) {
+    if load_ms.is_nan() || load_ms <= 0.0 {
         return Err(format!("load_ms is {load_ms}, not a measured load"));
     }
     if report.server_alive_after != Some(true) {
@@ -168,7 +180,7 @@ fn one_process(report: &BenchmarkReport) -> Result<(f64, f64), String> {
             )
         }
     };
-    if !(uptime + UPTIME_SLACK_S >= span) {
+    if uptime.is_nan() || span.is_nan() || uptime + UPTIME_SLACK_S < span {
         return Err(format!(
             "the server reports {uptime:.1} s of uptime after a {span:.1} s run: it restarted \
              after it was ready, so it did not stay loaded"
@@ -196,7 +208,7 @@ fn measured_requests(report: &BenchmarkReport) -> Result<Vec<&RequestDetail>, St
     }
     if let Some(r) = reqs
         .iter()
-        .find(|r| !(r.ttft_ms > 0.0) || r.latency_ms <= r.ttft_ms)
+        .find(|r| r.ttft_ms.is_nan() || r.ttft_ms <= 0.0 || r.latency_ms <= r.ttft_ms)
     {
         return Err(format!(
             "a request has no streamed TTFT (ttft {} ms, latency {} ms); run with --stream",

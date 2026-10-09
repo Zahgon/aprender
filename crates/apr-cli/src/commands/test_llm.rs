@@ -283,8 +283,13 @@ fn write_serve_receipt(report: &BenchmarkReport, path: &Path, args: &BenchArgs<'
         .map_err(|e| CliError::InvalidFormat(format!("serialising serve receipt: {e}")))?;
     std::fs::write(path, json)?;
     println!(
-        "\nserve receipt  load {:.0} ms · ttft p50 {:.1} ms · pp512 {:.1} tok/s · tg128 {:.1} tok/s · n {}",
-        receipt.load_ms, receipt.ttft_ms.p50, receipt.pp512_tok_s, receipt.tg128_tok_s, receipt.n
+        "\nserve receipt  {} · load {:.0} ms · ttft p50 {:.1} ms · pp512 {:.1} tok/s · tg128 {:.1} tok/s · n {}",
+        receipt.compute_mode,
+        receipt.load_ms,
+        receipt.ttft_ms.p50,
+        receipt.pp512_tok_s,
+        receipt.tg128_tok_s,
+        receipt.n
     );
     println!("serve receipt written to {}", path.display());
     Ok(())

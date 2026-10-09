@@ -72,6 +72,12 @@ pub struct BenchmarkReport {
     /// that never restarted has `server_uptime_after_s >= ready_to_end_s`.
     #[serde(default)]
     pub ready_to_end_s: Option<f64>,
+    /// The server's own `/health` `compute_mode` (`gpu`/`cpu`), read after the
+    /// last run: the device that served it, not the one the build or the
+    /// command line asked for. A GPU path refused at the first request falls
+    /// back to CPU and only this read shows it.
+    #[serde(default)]
+    pub server_compute_mode_after: Option<String>,
 }
 
 /// Cross-run aggregate statistics with confidence intervals.
@@ -271,18 +277,20 @@ impl Benchmark {
         // moment the server finished loading. Read now, it must cover the whole
         // span since ready; a restart in between (a supervisor, a wrapper)
         // resets it, which a liveness check on our own child cannot see.
-        let (server_uptime_after_s, ready_to_end_s) = if self.child.is_some() {
-            let span = ready_at.elapsed().as_secs_f64();
-            let uptime = client
-                .get_json("/health")
-                .await
-                .ok()
-                .flatten()
-                .and_then(|v| v.get("uptime_sec").and_then(serde_json::Value::as_f64));
-            (uptime, Some(span))
-        } else {
-            (None, None)
-        };
+        // The same read names the device that served the runs.
+        let (server_uptime_after_s, ready_to_end_s, server_compute_mode_after) =
+            if self.child.is_some() {
+                let span = ready_at.elapsed().as_secs_f64();
+                let health = client.get_json("/health").await.ok().flatten();
+                let field = |k: &str| health.as_ref().and_then(|v| v.get(k)).cloned();
+                (
+                    field("uptime_sec").and_then(|v| v.as_f64()),
+                    Some(span),
+                    field("compute_mode").and_then(|v| v.as_str().map(str::to_string)),
+                )
+            } else {
+                (None, None, None)
+            };
 
         // Phase 5: Teardown. Read liveness FIRST: `try_wait` is Ok(None) while
         // the process we spawned is still running.
@@ -300,6 +308,7 @@ impl Benchmark {
             server_alive_after,
             server_uptime_after_s,
             ready_to_end_s,
+            server_compute_mode_after,
         })
     }
 
@@ -548,6 +557,7 @@ mod tests {
             server_alive_after: Some(true),
             server_uptime_after_s: Some(60.0),
             ready_to_end_s: Some(30.0),
+            server_compute_mode_after: Some("gpu".to_string()),
         };
         let json = serde_json::to_string_pretty(&report).unwrap();
         assert!(json.contains("throughput_rps"));
@@ -560,6 +570,7 @@ mod tests {
         assert_eq!(back.server_alive_after, Some(true));
         assert_eq!(back.server_uptime_after_s, Some(60.0));
         assert_eq!(back.ready_to_end_s, Some(30.0));
+        assert_eq!(back.server_compute_mode_after.as_deref(), Some("gpu"));
     }
 
     /// A report written before V2 (#4953) carries neither field and must still
@@ -575,6 +586,7 @@ mod tests {
             server_alive_after: Some(true),
             server_uptime_after_s: Some(1.0),
             ready_to_end_s: Some(1.0),
+            server_compute_mode_after: Some("gpu".to_string()),
         })
         .unwrap();
         let o = v.as_object_mut().unwrap();
@@ -582,10 +594,12 @@ mod tests {
         o.remove("server_alive_after");
         o.remove("server_uptime_after_s");
         o.remove("ready_to_end_s");
+        o.remove("server_compute_mode_after");
         let back: BenchmarkReport = serde_json::from_value(v).unwrap();
         assert_eq!(back.load_ms, None);
         assert_eq!(back.server_alive_after, None);
         assert_eq!(back.server_uptime_after_s, None);
         assert_eq!(back.ready_to_end_s, None);
+        assert_eq!(back.server_compute_mode_after, None);
     }
 }

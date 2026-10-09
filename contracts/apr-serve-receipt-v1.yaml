@@ -10,6 +10,7 @@ metadata:
   - 'crates/aprender-test-lib/src/llm/serve_receipt_tests.rs — the case table'
   - 'crates/aprender-test-lib/src/llm/benchmark.rs — load_ms (spawn to first healthy answer, 50 ms poll), server_alive_after, and the server''s own /health uptime_sec after the last run'
   - 'crates/apr-cli/src/commands/test_llm.rs — `apr test llm bench --serve-receipt` writes it'
+  - 'aprender#4958 — a GPU path refused at the first request falls back to CPU; only /health compute_mode shows it'
   description: >
     A serve receipt says one thing: ONE `apr serve` process loaded the model ONCE,
     and then served N pp512/tg128 requests from memory. It carries load_ms (server
@@ -55,6 +56,17 @@ equations:
        token totals. The prompt side allows 5% for a corpus cut under one
        tokenizer and served under another; the completion side allows none,
        because max_tokens 128 with ignore_eos fixes it exactly.'
+
+  device_is_reported:
+    formula: |
+      REQUIRE: compute_mode = /health compute_mode, read after the last run
+    domain: 'a serve receipt'
+    codomain: '{gpu, cpu}'
+    invariants:
+    - 'The device is what the server says served the runs, not what the build
+       or the command line asked for. A GPU path refused at the first request
+       falls back to CPU; without this field that run reads as a GPU number.'
+    - 'A cpu answer is recorded as cpu. It is never refused and never relabelled.'
 
   rates_are_per_request_medians:
     formula: |
@@ -105,6 +117,15 @@ falsification_tests:
   test: 'cargo test -p aprender-test-lib --features llm --lib -- serve_receipt::tests::red_no_server_uptime serve_receipt::tests::red_a_server_that_restarted_after_ready'
   if_fails: 'a supervisor that restarts the server per request passes as one load'
   mutation: 'delete the uptime comparison, or widen UPTIME_SLACK_S to 2.0; red_a_server_that_restarted_after_ready (5.0 and 28.9 rows) must turn RED'
+- id: FALSIFY-SERVE-008
+  rule: the receipt names the device the server says served the runs
+  prediction: 'No /health compute_mode after the last run is REFUSED; a cpu
+    answer is written as cpu.'
+  test: 'cargo test -p aprender-test-lib --features llm --lib -- serve_receipt::tests::red_no_compute_mode serve_receipt::tests::a_cpu_fallback_is_recorded_as_cpu'
+  if_fails: 'a GPU host whose first request fell back to CPU publishes CPU numbers as GPU numbers'
+  mutation: 'drop the missing-compute_mode refusal (red_no_compute_mode must turn
+    RED), or write "gpu" whatever the server said (a_cpu_fallback_is_recorded_as_cpu
+    must turn RED)'
 - id: FALSIFY-SERVE-006
   rule: the GREEN row computes the stated formulas
   prediction: 'TTFT 100/120/140 ms on 512 tokens and 1270 ms of decode for 127
@@ -130,6 +151,11 @@ proof_obligations:
   property: 'The rates are per-request medians over successful streamed requests
     only (FALSIFY-SERVE-005, FALSIFY-SERVE-006)'
   formal: 'forall r: r.n >= 1 and failed = 0 and r.pp512_tok_s = median(p_i / ttft_i)'
+- id: ASR-INV-004
+  type: invariant
+  property: 'Every written receipt names the device the server reported after
+    the last run (FALSIFY-SERVE-008)'
+  formal: 'forall r: r.compute_mode = health_after(r).compute_mode'
 
 qa_gate:
   id: FALSIFY-SERVE-GATE-001
@@ -146,17 +172,18 @@ qa_gate:
   - completion_is_128
   - prompt_is_512
   - no_failed_or_unstreamed_request
+  - compute_mode_reported
   pass_criteria: >
     `cargo test -p aprender-test-lib --features llm --lib serve_receipt` passes:
     one GREEN row and one RED row per refusal, each RED row breaking exactly one
     input of the GREEN fixture.
 
 verification_summary:
-  total_obligations: 3
+  total_obligations: 4
   proven: 0
-  tested: 3
+  tested: 4
   status: proposed
   notes: >
-    All three obligations are TESTED by the case table in serve_receipt_tests.rs.
+    All four obligations are TESTED by the case table in serve_receipt_tests.rs.
     Nothing is PROVEN in the L4/L5 sense. The named mutations are declared here;
     the observed RED for each is recorded in the PR that lands this contract.
