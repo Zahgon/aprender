@@ -54,6 +54,16 @@ pub struct BenchmarkReport {
     pub aggregate: AggregateStats,
     /// Regressions detected vs. baseline.
     pub regressions: Vec<Regression>,
+    /// Server spawn → first healthy answer, ms (V2, #4953). Present only when
+    /// this benchmark started the server (`start_command`); a server it did
+    /// not start has no observed load.
+    #[serde(default)]
+    pub load_ms: Option<f64>,
+    /// Whether the server this benchmark started was still alive after the
+    /// last measured run. `None` when it started none. A restart between
+    /// requests would hide a per-request load.
+    #[serde(default)]
+    pub server_alive_after: Option<bool>,
 }
 
 /// Cross-run aggregate statistics with confidence intervals.
@@ -128,6 +138,7 @@ impl Benchmark {
     /// Run the full benchmark lifecycle.
     pub async fn run(&mut self) -> Result<BenchmarkReport, LlmClientError> {
         // Phase 1: Start server (if configured)
+        let spawned_at = std::time::Instant::now();
         if let Some(ref cmd) = self.config.start_command {
             let child = tokio::process::Command::new("sh")
                 .arg("-c")
@@ -144,9 +155,19 @@ impl Benchmark {
         let client = LlmClient::new(&self.config.url, &self.config.model);
 
         // Phase 1b: Wait for server readiness
-        let ready_time = client
-            .wait_ready(self.config.health_timeout, Duration::from_secs(2))
-            .await?;
+        // A 2 s poll is fine for "is it up", not for a load time: it rounds a
+        // load up to the next poll. When this run owns the server, poll at
+        // 50 ms and record spawn → ready as load_ms (V2, #4953).
+        let poll = if self.child.is_some() {
+            Duration::from_millis(50)
+        } else {
+            Duration::from_secs(2)
+        };
+        let ready_time = client.wait_ready(self.config.health_timeout, poll).await?;
+        let load_ms = self
+            .child
+            .is_some()
+            .then(|| spawned_at.elapsed().as_secs_f64() * 1000.0);
         eprintln!("Server ready in {:.1}s", ready_time.as_secs_f64());
 
         // Phase 2: Warmup (excluded from metrics)
@@ -218,13 +239,20 @@ impl Benchmark {
             Vec::new()
         };
 
-        // Phase 5: Teardown
+        // Phase 5: Teardown. Read liveness FIRST: `try_wait` is Ok(None) while
+        // the process we spawned is still running.
+        let server_alive_after = self
+            .child
+            .as_mut()
+            .map(|c| matches!(c.try_wait(), Ok(None)));
         self.teardown().await;
 
         Ok(BenchmarkReport {
             runs: run_results,
             aggregate,
             regressions,
+            load_ms,
+            server_alive_after,
         })
     }
 
@@ -449,6 +477,8 @@ mod tests {
                 change_pct: -16.7,
                 exceeds_threshold: true,
             }],
+            load_ms: Some(4000.0),
+            server_alive_after: Some(true),
         };
         let json = serde_json::to_string_pretty(&report).unwrap();
         assert!(json.contains("throughput_rps"));
@@ -457,5 +487,28 @@ mod tests {
         assert_eq!(back.runs.len(), 1);
         assert_eq!(back.regressions.len(), 1);
         assert!(back.regressions[0].exceeds_threshold);
+        assert_eq!(back.load_ms, Some(4000.0));
+        assert_eq!(back.server_alive_after, Some(true));
+    }
+
+    /// A report written before V2 (#4953) carries neither field and must still
+    /// load as a baseline, with both absent rather than invented.
+    #[test]
+    fn a_pre_v2_report_loads_with_no_load_ms() {
+        let runs = vec![sample_run(10.0, 100.0, 200.0)];
+        let mut v = serde_json::to_value(BenchmarkReport {
+            aggregate: compute_aggregate(&runs),
+            runs,
+            regressions: Vec::new(),
+            load_ms: Some(1.0),
+            server_alive_after: Some(true),
+        })
+        .unwrap();
+        let o = v.as_object_mut().unwrap();
+        o.remove("load_ms");
+        o.remove("server_alive_after");
+        let back: BenchmarkReport = serde_json::from_value(v).unwrap();
+        assert_eq!(back.load_ms, None);
+        assert_eq!(back.server_alive_after, None);
     }
 }

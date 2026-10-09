@@ -1,0 +1,146 @@
+metadata:
+  version: 1.0.0
+  kind: schema
+  created: '2026-10-09'
+  author: PAIML Engineering
+  references:
+  - 'aprender#4953 — V2: apr serve keeps the model loaded; Rust receipt reports load_ms and TTFT beside pp512/tg128'
+  - 'aprender#3598 — E2, the epic V2 is a row of (APR-071 Train B)'
+  - 'crates/aprender-test-lib/src/llm/serve_receipt.rs — the ONE builder; it refuses rather than reports'
+  - 'crates/aprender-test-lib/src/llm/serve_receipt_tests.rs — the case table'
+  - 'crates/aprender-test-lib/src/llm/benchmark.rs — load_ms (spawn to first healthy answer, 50 ms poll) and server_alive_after'
+  - 'crates/apr-cli/src/commands/test_llm.rs — `apr test llm bench --serve-receipt` writes it'
+  description: >
+    A serve receipt says one thing: ONE `apr serve` process loaded the model ONCE,
+    and then served N pp512/tg128 requests from memory. It carries load_ms (server
+    spawn to first healthy answer) beside TTFT, the prefill rate (pp512) and the
+    decode rate (tg128), all taken from that one process by one Rust producer.
+
+    The producer it replaces was a Python OpenAI client that recorded none of the
+    four numbers, so "the model stays loaded" was asserted, never measured. The
+    builder here refuses to write a receipt that cannot carry the claim, and names
+    the missing measurement in the refusal.
+
+equations:
+  one_load:
+    formula: |
+      REQUIRE: load_ms observed by the producer that spawned the server
+      REQUIRE: server alive after the last measured request
+      REQUIRE: forall request i: ttft_ms(i) < load_ms
+    domain: 'a serve receipt'
+    codomain: bool
+    invariants:
+    - 'A model loaded per request makes every TTFT at least one load long. A
+       receipt whose slowest first token is below load_ms is evidence the load
+       happened once; one that is not, is not.'
+    - 'A server the producer did not start has no observed load, so no receipt.'
+    - 'A server that died during the run could have been restarted between
+       requests, hiding a per-request load, so no receipt.'
+
+  workload_is_pp512_tg128:
+    formula: |
+      REQUIRE: forall request i: completion_tokens(i) = 128
+      REQUIRE: |median(prompt_tokens) - 512| / 512 <= 0.05
+    domain: 'a serve receipt'
+    codomain: bool
+    invariants:
+    - 'The rates are only named pp512 and tg128 when the server counted those
+       token totals. The prompt side allows 5% for a corpus cut under one
+       tokenizer and served under another; the completion side allows none,
+       because max_tokens 128 with ignore_eos fixes it exactly.'
+
+  rates_are_per_request_medians:
+    formula: |
+      pp512 = median_i( prompt_tokens(i) / ttft(i) )
+      tg128 = median_i( (completion_tokens(i) - 1) / (latency(i) - ttft(i)) )
+    domain: 'the measured requests of one serve receipt, warmup excluded'
+    codomain: 'tok/s'
+    invariants:
+    - 'No failed request, no unstreamed request (ttft 0 or latency <= ttft): a
+       median over survivors is a measurement of the survivors.'
+
+falsification_tests:
+- id: FALSIFY-SERVE-001
+  rule: no observed load, no receipt
+  prediction: 'A report with no load_ms, or load_ms <= 0, is REFUSED.'
+  test: 'cargo test -p aprender-test-lib --features llm --lib serve_receipt::tests::red_no_load_ms_when_the_server_was_not_started_here serve_receipt::tests::red_zero_load_ms'
+  if_fails: 'a receipt claims a one-load serve for a server whose load nobody saw'
+  mutation: 'replace the load_ms ok_or with unwrap_or(1.0); red_no_load_ms_... must turn RED'
+- id: FALSIFY-SERVE-002
+  rule: a dead or untracked server is no receipt
+  prediction: 'server_alive_after = Some(false) or None is REFUSED.'
+  test: 'cargo test -p aprender-test-lib --features llm --lib serve_receipt::tests::red_the_server_died_or_was_never_tracked'
+  if_fails: 'a server restarted per request passes as one that stayed loaded'
+  mutation: 'delete the server_alive_after check; the row must turn RED'
+- id: FALSIFY-SERVE-003
+  rule: every first token arrives before a whole load would
+  prediction: 'A request with ttft_ms >= load_ms is REFUSED.'
+  test: 'cargo test -p aprender-test-lib --features llm --lib serve_receipt::tests::red_a_request_that_waited_a_whole_load'
+  if_fails: 'a per-request load is reported as a slow but loaded server'
+  mutation: 'compare ttft.p50 instead of ttft.max against load_ms; the row must turn RED'
+- id: FALSIFY-SERVE-004
+  rule: the rates are named only for the workload they measured
+  prediction: 'A completion that is not 128 tokens, or a median prompt outside
+    512 +- 5%, is REFUSED; 487 and 537 are inside.'
+  test: 'cargo test -p aprender-test-lib --features llm --lib serve_receipt::tests::red_a_completion_that_is_not_128 serve_receipt::tests::red_a_prompt_that_is_not_512_and_its_edges'
+  if_fails: 'a 32/32 profile run is published as pp512/tg128'
+  mutation: 'widen PROMPT_TOLERANCE to 0.10; the 486 and 538 rows must turn RED'
+- id: FALSIFY-SERVE-005
+  rule: a receipt over survivors is not one
+  prediction: 'A failed request, zero requests, or an unstreamed request is REFUSED.'
+  test: 'cargo test -p aprender-test-lib --features llm --lib serve_receipt::tests::red_a_failed_request serve_receipt::tests::red_zero_requests serve_receipt::tests::red_no_streamed_ttft'
+  if_fails: 'a median over the requests that survived is reported as the runtime'
+  mutation: 'drop the failed-request sum; red_a_failed_request must turn RED'
+- id: FALSIFY-SERVE-006
+  rule: the GREEN row computes the stated formulas
+  prediction: 'TTFT 100/120/140 ms on 512 tokens and 1270 ms of decode for 127
+    tokens gives ttft p50 120, p95 140, pp512 512/0.120, tg128 100.0.'
+  test: 'cargo test -p aprender-test-lib --features llm --lib serve_receipt::tests::green_a_loaded_once_pp512_tg128_run_is_a_receipt'
+  if_fails: 'a builder that refuses everything looks exactly like a strict one'
+  mutation: 'use completion_tokens instead of completion_tokens - 1 in tg128; the
+    GREEN row must turn RED'
+
+proof_obligations:
+- id: ASR-INV-001
+  type: invariant
+  property: 'Every written receipt has an observed load, a server alive at the end,
+    and every TTFT below load_ms (FALSIFY-SERVE-001..003)'
+  formal: 'forall r: r.load_ms > 0 and r.ttft_ms.max < r.load_ms and r.max_ttft_over_load < 1'
+- id: ASR-INV-002
+  type: invariant
+  property: 'Every written receipt measured pp512/tg128 (FALSIFY-SERVE-004)'
+  formal: 'forall r: |r.prompt_tokens_p50 - 512| <= 25.6 and all completions = 128'
+- id: ASR-SND-003
+  type: soundness
+  property: 'The rates are per-request medians over successful streamed requests
+    only (FALSIFY-SERVE-005, FALSIFY-SERVE-006)'
+  formal: 'forall r: r.n >= 1 and failed = 0 and r.pp512_tok_s = median(p_i / ttft_i)'
+
+qa_gate:
+  id: FALSIFY-SERVE-GATE-001
+  name: 'a serve receipt is evidence that one process loaded once'
+  description: >
+    The receipt is a measurement artifact for APR-071 Train B row V2. It is
+    evidence, not a merge or release check: a RED refuses the receipt, it does
+    not block a merge on a timing value.
+  checks:
+  - load_observed
+  - server_alive_after
+  - ttft_below_load
+  - completion_is_128
+  - prompt_is_512
+  - no_failed_or_unstreamed_request
+  pass_criteria: >
+    `cargo test -p aprender-test-lib --features llm --lib serve_receipt` passes:
+    one GREEN row and one RED row per refusal, each RED row breaking exactly one
+    input of the GREEN fixture.
+
+verification_summary:
+  total_obligations: 3
+  proven: 0
+  tested: 3
+  status: proposed
+  notes: >
+    All three obligations are TESTED by the case table in serve_receipt_tests.rs.
+    Nothing is PROVEN in the L4/L5 sense. The named mutations are declared here;
+    the observed RED for each is recorded in the PR that lands this contract.

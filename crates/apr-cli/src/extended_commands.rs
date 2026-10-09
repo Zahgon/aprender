@@ -1765,6 +1765,23 @@ pub enum LlmSubcommand {
         /// refused.
         #[arg(long)]
         prompts: Option<InputFile>,
+        /// Write the V2 serve receipt here (#4953): load_ms and TTFT beside
+        /// pp512 and tg128, from ONE server this run started (`--start`).
+        ///
+        /// Refused, never written, unless the run can carry the claim: the
+        /// server was started here and alive at the end, every request
+        /// streamed and succeeded, completions are 128 tokens, the median
+        /// prompt is 512 ± 5%, and every TTFT is below load_ms. Use with
+        /// `--stream --prompts prompts-w1.jsonl`. Needs `--model-file`.
+        #[arg(long, requires = "model_file")]
+        serve_receipt: Option<OutputPath>,
+        /// The model file the started server loads; its sha256 goes in the
+        /// serve receipt.
+        #[arg(long)]
+        model_file: Option<InputFile>,
+        /// Host label recorded in the serve receipt.
+        #[arg(long, default_value = "unlabelled")]
+        host_label: FreeText,
 
         // ------------------------------------------------------------------
         // PERF-025 — the APR-PERF-GATE-001 v2.2 §4.4 conformant mode.
