@@ -85,6 +85,15 @@ pub struct BenchArgs<'a> {
 
 /// Run the benchmark lifecycle and report.
 pub async fn run_bench(args: BenchArgs<'_>) -> Result<()> {
+    // A serve receipt from an earlier run must not survive this one failing
+    // or being refused (#4953).
+    if let Some(path) = args.serve_receipt {
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
     let prompts = resolve_prompts(args.profile, args.prompts)?;
     let workload = describe_workload(args.profile, args.prompts, prompts.len());
     let baseline = load_baseline(args.baseline)?;
@@ -255,18 +264,21 @@ fn write_serve_receipt(report: &BenchmarkReport, path: &Path, args: &BenchArgs<'
     let model = args.model_file.ok_or_else(|| {
         CliError::ValidationFailed("--serve-receipt needs --model-file".to_string())
     })?;
+    // Hash the model only once the cheap refusals have passed: build with the
+    // sha left empty, then fill it in.
     let meta = apr_test::llm::serve_receipt::ReceiptMeta {
         apr_version: env!("CARGO_PKG_VERSION").to_string(),
         apr_commit: env!("APR_GIT_SHA").to_string(),
-        model_sha256: super::manifest::sha256_of_file(model)?.1,
+        model_sha256: String::new(),
         host: args.host_label.to_string(),
         workload: args.prompts.map_or_else(
             || format!("profile {}", args.profile),
             |p| p.display().to_string(),
         ),
     };
-    let receipt = apr_test::llm::serve_receipt::build(report, meta)
+    let mut receipt = apr_test::llm::serve_receipt::build(report, meta)
         .map_err(|e| CliError::ValidationFailed(format!("serve receipt refused: {e}")))?;
+    receipt.meta.model_sha256 = super::manifest::sha256_of_file(model)?.1;
     let json = serde_json::to_string_pretty(&receipt)
         .map_err(|e| CliError::InvalidFormat(format!("serialising serve receipt: {e}")))?;
     std::fs::write(path, json)?;

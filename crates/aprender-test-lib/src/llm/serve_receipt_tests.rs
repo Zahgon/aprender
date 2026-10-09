@@ -58,6 +58,9 @@ fn report(runs: Vec<LoadTestResult>, load_ms: Option<f64>, alive: Option<bool>) 
         regressions: Vec::new(),
         load_ms,
         server_alive_after: alive,
+        // The server reports 60 s of its own uptime after a 30 s run: no restart.
+        server_uptime_after_s: Some(60.0),
+        ready_to_end_s: Some(30.0),
     }
 }
 
@@ -90,6 +93,7 @@ fn green_a_loaded_once_pp512_tg128_run_is_a_receipt() {
     assert_eq!(r.schema, SCHEMA);
     assert_eq!(r.n, 3);
     assert_eq!(r.load_ms, 4000.0);
+    assert_eq!(r.server_uptime_s, 60.0);
     assert_eq!(
         r.ttft_ms,
         Spread {
@@ -139,9 +143,45 @@ fn red_zero_load_ms() {
 }
 
 #[test]
-fn red_the_server_died_or_was_never_tracked() {
+fn red_negative_or_nan_load_ms() {
+    refusal(
+        report(green_runs(), Some(-1.0), Some(true)),
+        "not a measured load",
+    );
+    refusal(
+        report(green_runs(), Some(f64::NAN), Some(true)),
+        "not a measured load",
+    );
+}
+
+#[test]
+fn red_the_server_died() {
     refusal(report(green_runs(), Some(4000.0), Some(false)), "not alive");
+}
+
+#[test]
+fn red_the_server_was_never_tracked() {
     refusal(report(green_runs(), Some(4000.0), None), "not alive");
+}
+
+#[test]
+fn red_no_server_uptime() {
+    let mut rep = report(green_runs(), Some(4000.0), Some(true));
+    rep.server_uptime_after_s = None;
+    refusal(rep, "no server uptime");
+}
+
+#[test]
+fn red_a_server_that_restarted_after_ready() {
+    // A wrapper that restarts the server keeps our child alive; the server's
+    // own uptime is then shorter than the run.
+    let mut rep = report(green_runs(), Some(4000.0), Some(true));
+    rep.server_uptime_after_s = Some(5.0);
+    refusal(rep, "restarted");
+    // Within the 1 s clock slack it is the same process.
+    let mut edge = report(green_runs(), Some(4000.0), Some(true));
+    edge.server_uptime_after_s = Some(29.5);
+    build(&edge, meta()).unwrap();
 }
 
 #[test]
@@ -166,8 +206,16 @@ fn red_no_streamed_ttft() {
 }
 
 #[test]
+fn red_latency_not_above_ttft() {
+    let runs = vec![run(vec![req(100.0, 100.0, 512, 128)], 0)];
+    refusal(report(runs, Some(4000.0), Some(true)), "no streamed TTFT");
+}
+
+#[test]
 fn red_a_completion_that_is_not_128() {
     let runs = vec![run(vec![req(100.0, 1370.0, 512, 127)], 0)];
+    refusal(report(runs, Some(4000.0), Some(true)), "not 128");
+    let runs = vec![run(vec![req(100.0, 1370.0, 512, 129)], 0)];
     refusal(report(runs, Some(4000.0), Some(true)), "not 128");
 }
 

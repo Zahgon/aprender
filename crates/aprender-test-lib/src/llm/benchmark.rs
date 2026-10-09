@@ -64,6 +64,14 @@ pub struct BenchmarkReport {
     /// requests would hide a per-request load.
     #[serde(default)]
     pub server_alive_after: Option<bool>,
+    /// The server's own `/health` `uptime_sec`, read after the last run. `None`
+    /// when this run started no server, or the server does not report it.
+    #[serde(default)]
+    pub server_uptime_after_s: Option<f64>,
+    /// Seconds from ready to that read, on this producer's clock. A server
+    /// that never restarted has `server_uptime_after_s >= ready_to_end_s`.
+    #[serde(default)]
+    pub ready_to_end_s: Option<f64>,
 }
 
 /// Cross-run aggregate statistics with confidence intervals.
@@ -137,22 +145,34 @@ impl Benchmark {
 
     /// Run the full benchmark lifecycle.
     pub async fn run(&mut self) -> Result<BenchmarkReport, LlmClientError> {
-        // Phase 1: Start server (if configured)
+        let client = LlmClient::new(&self.config.url, &self.config.model);
+
+        // Phase 1: Start server (if configured). A server that ALREADY answers
+        // before we spawn ours would make the readiness poll return at once and
+        // load_ms measure nothing (#4953), so that is an error, not a fast load.
+        if self.config.start_command.is_some() && matches!(client.health_check().await, Ok(true)) {
+            return Err(LlmClientError::HealthCheckFailed(format!(
+                "a server already answers at {} before --start ran; its load is not this run's",
+                self.config.url
+            )));
+        }
         let spawned_at = std::time::Instant::now();
         if let Some(ref cmd) = self.config.start_command {
-            let child = tokio::process::Command::new("sh")
+            let mut command = tokio::process::Command::new("sh");
+            command
                 .arg("-c")
                 .arg(cmd)
                 .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-                .map_err(|e| {
-                    LlmClientError::HealthCheckFailed(format!("Failed to start server: {e}"))
-                })?;
+                .stderr(std::process::Stdio::null());
+            // Its own process group, so teardown reaches the server and not only
+            // the `sh` that started it (#4953).
+            #[cfg(unix)]
+            command.process_group(0);
+            let child = command.spawn().map_err(|e| {
+                LlmClientError::HealthCheckFailed(format!("Failed to start server: {e}"))
+            })?;
             self.child = Some(child);
         }
-
-        let client = LlmClient::new(&self.config.url, &self.config.model);
 
         // Phase 1b: Wait for server readiness
         // A 2 s poll is fine for "is it up", not for a load time: it rounds a
@@ -169,6 +189,7 @@ impl Benchmark {
             .is_some()
             .then(|| spawned_at.elapsed().as_secs_f64() * 1000.0);
         eprintln!("Server ready in {:.1}s", ready_time.as_secs_f64());
+        let ready_at = std::time::Instant::now();
 
         // Phase 2: Warmup (excluded from metrics)
         if self.config.warmup > Duration::ZERO {
@@ -239,6 +260,23 @@ impl Benchmark {
             Vec::new()
         };
 
+        // Process continuity (#4953): `/health` `uptime_sec` counts from the
+        // moment the server finished loading. Read now, it must cover the whole
+        // span since ready; a restart in between (a supervisor, a wrapper)
+        // resets it, which a liveness check on our own child cannot see.
+        let (server_uptime_after_s, ready_to_end_s) = if self.child.is_some() {
+            let span = ready_at.elapsed().as_secs_f64();
+            let uptime = client
+                .get_json("/health")
+                .await
+                .ok()
+                .flatten()
+                .and_then(|v| v.get("uptime_sec").and_then(serde_json::Value::as_f64));
+            (uptime, Some(span))
+        } else {
+            (None, None)
+        };
+
         // Phase 5: Teardown. Read liveness FIRST: `try_wait` is Ok(None) while
         // the process we spawned is still running.
         let server_alive_after = self
@@ -253,13 +291,22 @@ impl Benchmark {
             regressions,
             load_ms,
             server_alive_after,
+            server_uptime_after_s,
+            ready_to_end_s,
         })
     }
 
     /// Kill the server process if we started one.
     async fn teardown(&mut self) {
         if let Some(ref mut child) = self.child {
-            // Send SIGKILL and wait for exit
+            // SIGKILL the whole group first: killing `sh` alone orphans the
+            // server it started, which keeps the port and the GPU.
+            #[cfg(unix)]
+            if let Some(pid) = child.id() {
+                let _ = std::process::Command::new("kill")
+                    .args(["-KILL", "--", &format!("-{pid}")])
+                    .status();
+            }
             let _ = child.kill().await;
             let _ = child.wait().await;
             eprintln!("Server process terminated");
@@ -479,6 +526,8 @@ mod tests {
             }],
             load_ms: Some(4000.0),
             server_alive_after: Some(true),
+            server_uptime_after_s: Some(60.0),
+            ready_to_end_s: Some(30.0),
         };
         let json = serde_json::to_string_pretty(&report).unwrap();
         assert!(json.contains("throughput_rps"));
@@ -489,6 +538,8 @@ mod tests {
         assert!(back.regressions[0].exceeds_threshold);
         assert_eq!(back.load_ms, Some(4000.0));
         assert_eq!(back.server_alive_after, Some(true));
+        assert_eq!(back.server_uptime_after_s, Some(60.0));
+        assert_eq!(back.ready_to_end_s, Some(30.0));
     }
 
     /// A report written before V2 (#4953) carries neither field and must still
@@ -502,13 +553,19 @@ mod tests {
             regressions: Vec::new(),
             load_ms: Some(1.0),
             server_alive_after: Some(true),
+            server_uptime_after_s: Some(1.0),
+            ready_to_end_s: Some(1.0),
         })
         .unwrap();
         let o = v.as_object_mut().unwrap();
         o.remove("load_ms");
         o.remove("server_alive_after");
+        o.remove("server_uptime_after_s");
+        o.remove("ready_to_end_s");
         let back: BenchmarkReport = serde_json::from_value(v).unwrap();
         assert_eq!(back.load_ms, None);
         assert_eq!(back.server_alive_after, None);
+        assert_eq!(back.server_uptime_after_s, None);
+        assert_eq!(back.ready_to_end_s, None);
     }
 }

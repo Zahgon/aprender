@@ -13,11 +13,16 @@
 //!
 //! - no `load_ms` — the server was not started by this producer, so its load
 //!   was never observed;
-//! - the server process was not alive at the end of the last run — a restart
+//! - the server process was not alive at the end of the last run, or its own
+//!   `/health` `uptime_sec` (counted from the moment it finished loading) does
+//!   not cover the span since ready — a restart, by a wrapper or a supervisor,
 //!   would hide a per-request load;
 //! - a failed request, zero requests, or no streamed TTFT;
 //! - a request whose TTFT is not below `load_ms` — a request that waited as
-//!   long as a whole load cannot show that the model stayed loaded;
+//!   long as a whole load cannot show that the model stayed loaded. This is a
+//!   BOUND, not a proof: a warm in-process reload can be faster than the cold
+//!   load. The process-continuity check above is the proof against restarts;
+//!   V1 compares this TTFT with llama.cpp's on the same host;
 //! - a workload that is not pp512/tg128: the median prompt is outside
 //!   512 ± [`PROMPT_TOLERANCE`], or a completion is not exactly 128 tokens.
 
@@ -35,6 +40,8 @@ pub const COMPLETION_TOKENS: u32 = 128;
 /// for one tokenizer and served under another, so exact equality would refuse
 /// every honest run. Every completion must still be exactly 128 tokens.
 pub const PROMPT_TOLERANCE: f64 = 0.05;
+/// Clock slack between the server's uptime and this producer's span, seconds.
+pub const UPTIME_SLACK_S: f64 = 1.0;
 
 /// Identity of what was measured. The caller supplies it; nothing here guesses.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -72,6 +79,8 @@ pub struct ServeReceipt {
     pub meta: ReceiptMeta,
     /// Server spawn → first healthy answer, in ms.
     pub load_ms: f64,
+    /// The server's own uptime after the last run, s; covers the measured span.
+    pub server_uptime_s: f64,
     /// Measured requests, all served by the one process that loaded once.
     pub n: usize,
     /// How every summary below is formed.
@@ -94,6 +103,47 @@ pub struct ServeReceipt {
 ///
 /// A human-readable refusal; see the module docs for the list.
 pub fn build(report: &BenchmarkReport, meta: ReceiptMeta) -> Result<ServeReceipt, String> {
+    let (load_ms, uptime) = one_process(report)?;
+    let reqs = measured_requests(report)?;
+    let prompt_p50 = workload_prompt_p50(&reqs)?;
+    let ttft = spread(reqs.iter().map(|r| r.ttft_ms).collect());
+    if ttft.max >= load_ms {
+        return Err(format!(
+            "a request waited {} ms for its first token, not below load_ms {load_ms}: this run \
+             cannot show that the model stayed loaded",
+            ttft.max
+        ));
+    }
+    let pp = median(
+        reqs.iter()
+            .map(|r| f64::from(r.prompt_tokens) * 1000.0 / r.ttft_ms)
+            .collect(),
+    );
+    let tg = median(
+        reqs.iter()
+            .map(|r| f64::from(r.completion_tokens - 1) * 1000.0 / (r.latency_ms - r.ttft_ms))
+            .collect(),
+    );
+    Ok(ServeReceipt {
+        schema: SCHEMA.to_string(),
+        meta,
+        load_ms,
+        server_uptime_s: uptime,
+        n: reqs.len(),
+        method: "per-request values; p50 = median, p95 = nearest rank, over all measured runs; \
+                 warmup excluded"
+            .to_string(),
+        max_ttft_over_load: ttft.max / load_ms,
+        ttft_ms: ttft,
+        pp512_tok_s: pp,
+        tg128_tok_s: tg,
+        prompt_tokens_p50: prompt_p50,
+    })
+}
+
+/// The load was observed, and ONE server process lived through every run:
+/// returns `(load_ms, server uptime s)`.
+fn one_process(report: &BenchmarkReport) -> Result<(f64, f64), String> {
     let load_ms = report.load_ms.ok_or(
         "no load_ms: the server was not started by this producer (--start), so its load was \
          never observed",
@@ -108,6 +158,28 @@ pub fn build(report: &BenchmarkReport, meta: ReceiptMeta) -> Result<ServeReceipt
                 .to_string(),
         );
     }
+    let (uptime, span) = match (report.server_uptime_after_s, report.ready_to_end_s) {
+        (Some(u), Some(s)) => (u, s),
+        _ => {
+            return Err(
+                "no server uptime: /health did not report uptime_sec after the last run, so \
+                 a restart between requests cannot be ruled out"
+                    .to_string(),
+            )
+        }
+    };
+    if !(uptime + UPTIME_SLACK_S >= span) {
+        return Err(format!(
+            "the server reports {uptime:.1} s of uptime after a {span:.1} s run: it restarted \
+             after it was ready, so it did not stay loaded"
+        ));
+    }
+    Ok((load_ms, uptime))
+}
+
+/// Every measured request, provided all succeeded, streamed a first token, and
+/// completed exactly [`COMPLETION_TOKENS`].
+fn measured_requests(report: &BenchmarkReport) -> Result<Vec<&RequestDetail>, String> {
     let failed: u64 = report.runs.iter().map(|r| r.failed).sum();
     if failed > 0 {
         return Err(format!(
@@ -141,6 +213,11 @@ pub fn build(report: &BenchmarkReport, meta: ReceiptMeta) -> Result<ServeReceipt
             r.completion_tokens
         ));
     }
+    Ok(reqs)
+}
+
+/// The median prompt, provided it is pp512 within [`PROMPT_TOLERANCE`].
+fn workload_prompt_p50(reqs: &[&RequestDetail]) -> Result<f64, String> {
     let prompt_p50 = median(reqs.iter().map(|r| f64::from(r.prompt_tokens)).collect());
     let want = f64::from(PROMPT_TOKENS);
     if ((prompt_p50 - want) / want).abs() > PROMPT_TOLERANCE {
@@ -150,38 +227,7 @@ pub fn build(report: &BenchmarkReport, meta: ReceiptMeta) -> Result<ServeReceipt
             PROMPT_TOLERANCE * 100.0
         ));
     }
-    let ttft = spread(reqs.iter().map(|r| r.ttft_ms).collect());
-    if ttft.max >= load_ms {
-        return Err(format!(
-            "a request waited {} ms for its first token, not below load_ms {load_ms}: this run \
-             cannot show that the model stayed loaded",
-            ttft.max
-        ));
-    }
-    let pp = median(
-        reqs.iter()
-            .map(|r| f64::from(r.prompt_tokens) * 1000.0 / r.ttft_ms)
-            .collect(),
-    );
-    let tg = median(
-        reqs.iter()
-            .map(|r| f64::from(r.completion_tokens - 1) * 1000.0 / (r.latency_ms - r.ttft_ms))
-            .collect(),
-    );
-    Ok(ServeReceipt {
-        schema: SCHEMA.to_string(),
-        meta,
-        load_ms,
-        n: reqs.len(),
-        method: "per-request values; p50 = median, p95 = nearest rank, over all measured runs; \
-                 warmup excluded"
-            .to_string(),
-        max_ttft_over_load: ttft.max / load_ms,
-        ttft_ms: ttft,
-        pp512_tok_s: pp,
-        tg128_tok_s: tg,
-        prompt_tokens_p50: prompt_p50,
-    })
+    Ok(prompt_p50)
 }
 
 fn sorted(mut v: Vec<f64>) -> Vec<f64> {
