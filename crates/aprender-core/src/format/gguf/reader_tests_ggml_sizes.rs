@@ -289,7 +289,7 @@ fn bf16_bytes(values: &[f32]) -> Vec<u8> {
 #[test]
 fn test_4900_get_tensor_f32_widens_bf16_bit_exactly() {
     assert!(
-        BF16_EXACT.iter().all(|v| v.to_bits() & 0xFFFF == 0),
+        BF16_EXACT.iter().all(|v| v.to_bits().trailing_zeros() >= 16),
         "fixture: every value must be exact in BF16"
     );
     let n = BF16_EXACT.len();
