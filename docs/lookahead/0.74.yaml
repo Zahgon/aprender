@@ -32,7 +32,7 @@ issues:
   - {issue: 4801, state: open, milestone: backlog, role: "qwen35moe, after #3091/#3090/#3714"}
   - {issue: 4378, state: open, role: "NOT ours: P0 owner:la-0.71"}
 staged:
-  - {branch: la-74/wip, head: cefe656c79, rows: [R1, R4, F4, C358-1a, C358-1b], pr: none, slot: "after pb_streak, jetson, #5054 (cop f7 13:1xZ)"}
+  - {branch: la-74/wip, head: d29400c099, rows: [R1, R4, F4, C358-1a, C358-1b, C358-1d], pr: none, slot: "after pb_streak, jetson, #5054 (cop f7 13:1xZ)"}
 questions:
   - {id: Q1, text: "R2: keep or drop the qwen3_5_moe aliases on the qwen3_moe arch-constraints row while qwen35moe is refused?", asked: 2026-10-10, answer: open}
   - {id: Q2, text: "A5 parity pass line: exact greedy-token match for N tokens, or logits cosine >= X?", asked: 2026-10-10, answer: open}
@@ -44,6 +44,6 @@ c358:   # OPERATOR C358 13:32Z (handoff/a3-c358-1332.md): shape yes, numbers no;
   - {step: 1a, status: done, pass: "deleting any required family field turns a test red", measured: "FALSIFY-MF-014 420/420 (28 files x 15 fields from _schema.yaml), 2 planted loader mutants red, core lib 14328 green @17d2531eff", receipt: "handoff/la074-mf14-receipt/", gap: "reads the root copy of the family files only"}
   - {step: 1b, status: done, pass: "regenerating serve arch_requirements from the contract leaves no diff; a hand edit is red", measured: "green 15/15 @cefe656c79; hand edit red, contract-only edit red; control found real drift (generator dropped the contract precondition call), fixed", receipt: "handoff/la074-regen-receipt/"}
   - {step: 1c, status: "first run, 7 of 32 rows comparable", measured: "Qwen3.5-4B Q4_K_M 00fe7986, llama.cpp d1d3c3396, CPU 8 thr, greedy 128: 3 identical, 4 diverge @31/@69/@85/@90 (thinking ON), 427/664 prefix tokens", blocker: "apr run -v prints 30 prompt ids, harness feeds them to llama.cpp; 1-line patch refused by pre-commit complexity hook (pmat --file scans the whole infer/ dir); logged, not routed", receipt: "handoff/la074-ka-receipt/"}
-  - {step: 1d, status: "pins known for the known-good arm (llama.cpp sha, model sha256, quant, prompts file, greedy, threads); not yet in a contract"}
+  - {step: 1d, status: "written: contracts/e7-parity-arm-pins-v1.yaml (inputs + comparable-row precondition, no bar)", falsifier: "FALSIFY-E7PIN-001..003 green, 3 planted mutants red; lint_passes_on_real_contracts green on intel @d29400c099", gap: "INV-003 has no in-tree falsifier; MoE arm pins (model, L, i, j) added when built"}
   - {step: 1f, status: open, pass: "named small break for MoE: two experts swapped in one layer"}
   - {step: 1g, status: open, pass: "print experts reached of total (n/a on the dense known-good model)"}
