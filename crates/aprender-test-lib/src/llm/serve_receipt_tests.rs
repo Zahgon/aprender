@@ -242,6 +242,10 @@ fn red_zero_requests() {
 fn red_no_streamed_ttft() {
     let runs = vec![run(vec![req(0.0, 1370.0, 512, 128)], 0)];
     refusal(report(runs, Some(4000.0), Some(true)), "no streamed TTFT");
+    // A NaN TTFT sorts last, so ttft.max is NaN and `max >= load_ms` is false:
+    // only the finiteness check refuses it.
+    let runs = vec![run(vec![req(f64::NAN, 1370.0, 512, 128)], 0)];
+    refusal(report(runs, Some(4000.0), Some(true)), "no streamed TTFT");
 }
 
 #[test]
