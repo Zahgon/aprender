@@ -68,6 +68,7 @@ fn generate_rust(families: &[FamilyData]) -> String {
                 s.max_position_embeddings
             ));
         }
+        out.push_str(&generate_moe_consts(f));
         out.push('\n');
 
         // Compile-time algebraic proofs (§3.14, §5.6 of spec)
@@ -504,4 +505,35 @@ fn deltanet_expr(f: &FamilyData) -> String {
             d.inner_size, d.state_size, d.conv_kernel, d.group_count, d.full_attention_interval
         ),
     }
+}
+
+/// #5056 (FALSIFY-MF-QWEN3MOE-006): the `moe:` block as constants, plus the
+/// router invariant `0 < num_experts_per_tok <= num_experts` as a
+/// compile-time assert, so a contract that breaks it does not build.
+fn generate_moe_consts(f: &FamilyData) -> String {
+    let Some(m) = &f.moe else {
+        return String::new();
+    };
+    let upper = f.family.to_uppercase();
+    let mut out = String::new();
+    for (key, value) in [
+        ("NUM_EXPERTS", m.num_experts),
+        ("NUM_EXPERTS_PER_TOK", m.num_experts_per_tok),
+        ("MOE_INTERMEDIATE_DIM", m.moe_intermediate_dim),
+        ("SHARED_EXPERT_INTERMEDIATE_DIM", m.shared_expert_intermediate_dim),
+    ] {
+        out.push_str(&format!("pub const {upper}_{key}: usize = {value};\n"));
+    }
+    out.push_str(&format!(
+        "const _: () = assert!({upper}_NUM_EXPERTS_PER_TOK > 0 \
+         && {upper}_NUM_EXPERTS_PER_TOK <= {upper}_NUM_EXPERTS, \
+         \"router: {} needs 0 < num_experts_per_tok <= num_experts\");\n",
+        f.family
+    ));
+    out.push_str(&format!(
+        "const _: () = assert!({upper}_MOE_INTERMEDIATE_DIM > 0, \
+         \"non-degeneracy: {} moe_intermediate_dim must be positive\");\n",
+        f.family
+    ));
+    out
 }

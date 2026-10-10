@@ -26,6 +26,8 @@ struct FamilyData {
     gguf_skip_roles: Vec<String>,          // roles with explicit null in gguf template
     gguf_transpose_weights: bool,          // GH-277: transpose Conv1D→Linear during export
     gguf_fuse: Vec<(String, Vec<String>)>, // GH-277: (gguf_suffix, [source_role, ...])
+    /// #5056: the `moe:` block of a mixture-of-experts family; `None` otherwise.
+    moe: Option<MoeData>,
 }
 
 struct SizeData {
@@ -65,6 +67,28 @@ struct DeltaNetData {
     conv_kernel: usize,
     group_count: usize,
     full_attention_interval: usize,
+}
+
+/// #5056: the expert counts and widths of a family's `moe:` block.
+struct MoeData {
+    num_experts: usize,
+    num_experts_per_tok: usize,
+    moe_intermediate_dim: usize,
+    shared_expert_intermediate_dim: usize,
+}
+
+/// #5056: read the `moe:` block. `num_experts`, `num_experts_per_tok` and
+/// `moe_intermediate_dim` make it an expert block, so a family without all
+/// three yields `None` and keeps dense accounting.
+fn parse_moe_data(content: &str) -> Option<MoeData> {
+    let section = extract_section(content, "moe");
+    Some(MoeData {
+        num_experts: get_usize(&section, "num_experts")?,
+        num_experts_per_tok: get_usize(&section, "num_experts_per_tok")?,
+        moe_intermediate_dim: get_usize(&section, "moe_intermediate_dim")?,
+        shared_expert_intermediate_dim: get_usize(&section, "shared_expert_intermediate_dim")
+            .unwrap_or(0),
+    })
 }
 
 /// #3346: read the Gated DeltaNet shape out of a `constraints:` section.
@@ -248,6 +272,7 @@ fn parse_family_yaml(content: &str, path: &Path) -> FamilyData {
         gguf_skip_roles,
         gguf_transpose_weights,
         gguf_fuse,
+        moe: parse_moe_data(content),
     }
 }
 

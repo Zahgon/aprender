@@ -1215,6 +1215,39 @@ mod contract_falsification {
         );
     }
 
+    // Prediction: build.rs derives the expert constants from the moe block, so
+    // they equal what the file says. A codegen that drops or swaps a key, or a
+    // contract edit the generator does not see, makes them differ.
+    #[test]
+    fn falsify_mf_qwen3moe_006_codegen_derives_moe_block() {
+        use crate::format::model_family::{
+            QWEN3_MOE_MOE_INTERMEDIATE_DIM, QWEN3_MOE_NUM_EXPERTS, QWEN3_MOE_NUM_EXPERTS_PER_TOK,
+            QWEN3_MOE_SHARED_EXPERT_INTERMEDIATE_DIM,
+        };
+        let raw = qwen3_moe_raw();
+        let n = |k: &str| {
+            raw["moe"][k]
+                .as_u64()
+                .and_then(|v| usize::try_from(v).ok())
+                .unwrap_or_else(|| panic!("FALSIFIED QWEN3MOE-006: moe.{k} missing"))
+        };
+        assert_eq!(
+            (
+                QWEN3_MOE_NUM_EXPERTS,
+                QWEN3_MOE_NUM_EXPERTS_PER_TOK,
+                QWEN3_MOE_MOE_INTERMEDIATE_DIM,
+                QWEN3_MOE_SHARED_EXPERT_INTERMEDIATE_DIM,
+            ),
+            (
+                n("num_experts"),
+                n("num_experts_per_tok"),
+                n("moe_intermediate_dim"),
+                n("shared_expert_intermediate_dim"),
+            ),
+            "FALSIFIED QWEN3MOE-006: generated constants differ from the moe block"
+        );
+    }
+
     // ========================================================================
     // FALSIFY-MF-014 (#5056, C358 1a): deleting ANY required field turns red.
     // "Required" is read from the contract (_schema.yaml), not copied here. Every

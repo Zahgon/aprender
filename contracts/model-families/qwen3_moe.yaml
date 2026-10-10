@@ -132,3 +132,7 @@ chat_template:
 #   FALSIFY-MF-QWEN3MOE-004 model_type "qwen3_moe" resolves to this family, not dense qwen3
 #   FALSIFY-MF-QWEN3MOE-005 crates/aprender-core/contracts/model-families/qwen3_moe.yaml
 #                           (what build.rs codegen reads) is byte-identical to this file
+#   FALSIFY-MF-QWEN3MOE-006 build.rs derives QWEN3_MOE_NUM_EXPERTS, _NUM_EXPERTS_PER_TOK,
+#                           _MOE_INTERMEDIATE_DIM, _SHARED_EXPERT_INTERMEDIATE_DIM from the
+#                           moe block; the generated values equal this file, and
+#                           0 < num_experts_per_tok <= num_experts is a compile-time assert
