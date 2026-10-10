@@ -67,7 +67,8 @@ impl ExpertsReached {
         self.num_layers * self.num_experts
     }
 
-    /// One summary line, then one line per layer.
+    /// One summary line, then one line per layer with the reached ids, so
+    /// separate runs can be unioned.
     #[must_use]
     pub fn lines(&self) -> String {
         let mut out = format!(
@@ -78,11 +79,19 @@ impl ExpertsReached {
             self.num_experts
         );
         for layer in 0..self.num_layers {
-            let n = self
-                .seen
-                .get(&layer)
-                .map_or(0, |row| row.iter().filter(|&&s| s).count());
-            out.push_str(&format!("layer {layer}: {n} of {}\n", self.num_experts));
+            let ids: Vec<String> = self.seen.get(&layer).map_or_else(Vec::new, |row| {
+                row.iter()
+                    .enumerate()
+                    .filter(|&(_, &s)| s)
+                    .map(|(e, _)| e.to_string())
+                    .collect()
+            });
+            out.push_str(&format!(
+                "layer {layer}: {} of {} [{}]\n",
+                ids.len(),
+                self.num_experts,
+                ids.join(",")
+            ));
         }
         out
     }
@@ -148,8 +157,8 @@ mod tests {
         );
         let lines = r.lines();
         assert!(lines.starts_with("experts reached: 4 of 24 (3 layers x 8 experts)\n"));
-        assert!(lines.contains("layer 1: 2 of 8\n"));
-        assert!(lines.contains("layer 2: 0 of 8\n"));
+        assert!(lines.contains("layer 1: 2 of 8 [3,7]\n"));
+        assert!(lines.contains("layer 2: 0 of 8 []\n"));
     }
 
     #[test]

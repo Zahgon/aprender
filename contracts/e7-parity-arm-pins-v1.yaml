@@ -50,7 +50,7 @@ equations:
     domain: "every prompt token and every generated token of the arm, apr side"
     codomain: "one line per run, and per layer; a line, not a bar (C358 1g)"
     invariants:
-      - "Recorded on the CPU path only, in gguf/qwen3_moe_load.rs moe_ffn_forward_layer right after route_top_k, keyed by the layer the loader named (router offset -> layer index); written to the file named by APR_MOE_EXPERTS_REACHED each time a new (layer, expert) pair is reached, so the file holds the final line when the run ends. Unset: nothing is recorded"
+      - "Recorded on the CPU path only, in gguf/qwen3_moe_load.rs moe_ffn_forward_layer right after route_top_k, keyed by the layer the loader named (router offset -> layer index); with the reached expert ids per layer so runs can be unioned; written to the file named by APR_MOE_EXPERTS_REACHED each time a new (layer, expert) pair is reached, so the file holds the final line when the run ends. Unset: nothing is recorded"
 proof_obligations:
   - id: E7PIN-INV-001
     type: invariant
