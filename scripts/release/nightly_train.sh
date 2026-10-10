@@ -68,6 +68,8 @@
 #                    [--commit C [--in-run RUN]]
 #   nightly_train.sh --self-test   the case table (fixtures, no network)
 #   nightly_train.sh --mutants     each planted mutant must turn the case table RED
+#   nightly_train.sh --producers   every registered lane names a producer workflow that is a file of the commit
+#                                  checked out here (existence only; RED while any lane has none: #5080)
 #   nightly_train.sh --install --home DIR --out DIR [--inbox FILE] --train SHA --greens SHA --redage SHA
 #                                  pin a bundle copied out of git and install the daily user timer (04:45 UTC)
 set -uo pipefail
@@ -79,7 +81,7 @@ MAX_CALLS=10
 RATE_FLOOR=1000
 UNIT="aprender-nightly-train"
 # lane;kind;release-day check;producer workflow;event pattern;job-name pattern[;required job names, default 1]
-# ('-' producer: none yet; --self-test is RED while any row has one, or names a workflow not on the commit: #5080).
+# ('-' producer: none yet; --producers is RED while any row has one, or names a workflow not on the commit: #5080).
 # A run with fewer distinct matched job names than required measures nothing (void).
 LANES='ci-main;verdict;ci / gate + workspace-test (merge, autopilot wait);.github/workflows/ci.yml;^push$;^(ci / gate|workspace-test)$;2
 deep-doctests;verdict;autopilot deep: cargo test --doc --workspace;.github/workflows/deep-nightly.yml;^schedule$;^deep-doctests$
@@ -631,6 +633,19 @@ producer_gaps() {
         esac
     done < <(printf '%s\n' "$1")
 }
+# producers_report LANES DIR -> the producer gaps of LANES on the commit checked out at DIR (#5080): 'commit C',
+#   'gaps=N', then one line per gap; rc 1 while any gap, or when DIR is in no git work tree. Existence only: a
+#   workflow file on the commit, never that it ran or when. --producers runs it on the real table as its own check,
+#   outside --self-test, so the fixture case table and its mutants stay green and measurable while it is red.
+producers_report() {
+    local top rev o
+    top="$(git -C "$2" rev-parse --show-toplevel 2> /dev/null)" && rev="$(git -C "$top" rev-parse --verify --quiet HEAD)" \
+        || { echo "not in a git work tree: no commit to read the producers from"; return 1; }
+    o="$(producer_gaps "$1" "$top" "$rev")"
+    printf 'commit %s\ngaps=%s\n' "$rev" "$(printf '%s\n' "$o" | awk 'NF { n++ } END { print n + 0 }')"
+    [ -z "$o" ] || printf '%s\n' "$o"
+    [ -z "$o" ]
+}
 # ---------------------------------------------------------------- the case table ----------------------------------
 ST_LANES='v-a;verdict;check A;.github/workflows/a.yml;^schedule$;^job-a$
 v-b;verdict;check B;.github/workflows/b.yml;^schedule$;
@@ -747,15 +762,18 @@ v-e;verdict;check E;-;-;-" "$d" "$v"
 v-e;verdict;check E;;;" "$d" "$v"
     row a_producer_missing_from_the_commit_is_refused 1 "v-b: producer .github/workflows/b.yml is not on ${o:0:10}" "gaps=0" -- \
         st_gaps "$ST_LANES" "$d" "$o"
-    # the real table, against the commit checked out where the self-test runs: in the train job, the commit it judges
-    st_every_registered_lane_has_a_producer_on_this_commit() {
-        local top rev
-        top="$(git rev-parse --show-toplevel 2> /dev/null)" && rev="$(git -C "$top" rev-parse --verify --quiet HEAD)" \
-            || { echo "not in a git work tree: no commit to read the producers from"; return 1; }
-        printf 'commit %s\n' "$rev"; st_gaps "$LANES" "$top" "$rev"
-    }
-    row every_registered_lane_has_a_producer_on_this_commit 0 "gaps=0" "" -- \
-        st_every_registered_lane_has_a_producer_on_this_commit
+    # producers_report (--producers): a fixture commit; the real table is its own check, never a case-table row (#5080)
+    d="$tmp/prodc"; git init -q "$d" && mkdir -p "$d/.github/workflows" && touch "$d/.github/workflows/"{a,c,d}.yml \
+        && git -C "$d" add .github && git -C "$d" -c user.name=t -c user.email=t@t -c core.hooksPath=/dev/null commit -q -m f \
+        || { printf '  BROKE %-44s could not build the producer fixture commit\n' producer_commit; fail=$((fail + 1)); }
+    st_lanes_acd() { printf '%s\n' "$ST_LANES" | awk -F';' '$4 != ".github/workflows/b.yml"'; }
+    row producers_report_no_gap_on_the_commit 0 "gaps=0" "not on" -- producers_report "$(st_lanes_acd)" "$d/.github"
+    row producers_report_refuses_a_file_not_on_the_commit 1 "v-b: producer .github/workflows/b.yml is not on" "gaps=0" -- \
+        producers_report "$ST_LANES" "$d"
+    row producers_report_refuses_no_producer 1 "gaps=1" "gaps=0" -- producers_report "$(st_lanes_acd)
+v-e;verdict;check E;-;-;-" "$d"
+    row producers_report_refuses_no_work_tree 1 "not in a git work tree" "gaps=" -- \
+        env GIT_CEILING_DIRECTORIES="$tmp" bash -c 'cd "$1" && bash "$2" --producers' _ "$tmp" "$SCRIPT_PATH"
     d="$tmp/green1"; fixture "$d"
     st_stdout_is_exactly_one_line() { bash "$SCRIPT_PATH" --from "$d" --out "$tmp/o1" --now 2026-10-04T06:00:00Z | awk "END { print \"lines=\" NR }"; }
     row stdout_is_exactly_one_line 0 "lines=1" "" -- \
@@ -1117,6 +1135,7 @@ m84_lanes_unrun_row_dropped	/if (!(W in got)) print/d
 m85_models_job_misnamed	s/^INRUN_MODELS="models"$/INRUN_MODELS="rehearse"/
 m86_producer_gap_not_refused	s/^producer_gaps() {$/producer_gaps() { return 0/
 m87_producer_file_unchecked	s/ git -C "\$2" cat-file -e "\$3:\$wf" 2> \/dev\/null || / true || /
+m88_producers_report_never_red	s/^producers_report() {$/producers_report() { return 0/
 '
 # each planted mutant must change the file, still parse, and turn at least one row RED
 mutants() {
@@ -1148,6 +1167,7 @@ ARGS_SEEN="$*"
 case "${1:-}" in
     --self-test) self_test; exit $? ;;
     --mutants) mutants; exit $? ;;
+    --producers) producers_report "$LANES" .; exit $? ;;
     --install) shift; install_timer "$@"; exit $? ;;
     --probe-no-token) no_token && echo "no-token: clear"; exit $? ;;
 esac
