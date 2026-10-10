@@ -155,6 +155,11 @@ fn red_negative_or_nan_load_ms() {
         report(green_runs(), Some(f64::NAN), Some(true)),
         "not a measured load",
     );
+    // An infinite load is above every TTFT, so only the finiteness check refuses it.
+    refusal(
+        report(green_runs(), Some(f64::INFINITY), Some(true)),
+        "not a measured load",
+    );
 }
 
 #[test]
@@ -172,6 +177,18 @@ fn red_no_server_uptime() {
     let mut rep = report(green_runs(), Some(4000.0), Some(true));
     rep.server_uptime_after_s = None;
     refusal(rep, "no server uptime");
+}
+
+#[test]
+fn red_an_uptime_or_span_that_is_not_finite() {
+    // An infinite uptime covers any span and a NaN fails every comparison:
+    // neither may pass the restart check.
+    for (uptime, span) in [(f64::INFINITY, 30.0), (f64::NAN, 30.0), (29.5, f64::NAN)] {
+        let mut rep = report(green_runs(), Some(4000.0), Some(true));
+        rep.server_uptime_after_s = Some(uptime);
+        rep.ready_to_end_s = Some(span);
+        refusal(rep, "not a measured time");
+    }
 }
 
 #[test]
@@ -230,6 +247,10 @@ fn red_no_streamed_ttft() {
 #[test]
 fn red_latency_not_above_ttft() {
     let runs = vec![run(vec![req(100.0, 100.0, 512, 128)], 0)];
+    refusal(report(runs, Some(4000.0), Some(true)), "no streamed TTFT");
+    // A NaN latency fails `latency <= ttft` too, so only the finiteness check
+    // refuses it; tg128 over it would be NaN.
+    let runs = vec![run(vec![req(100.0, f64::NAN, 512, 128)], 0)];
     refusal(report(runs, Some(4000.0), Some(true)), "no streamed TTFT");
 }
 

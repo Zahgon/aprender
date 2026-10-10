@@ -17,6 +17,7 @@
 //!   `/health` `uptime_sec` (counted from the moment it finished loading) does
 //!   not cover the span since ready — a restart, by a wrapper or a supervisor,
 //!   would hide a per-request load;
+//! - a load, uptime, span, TTFT or latency that is not a finite number;
 //! - a failed request, zero requests, or no streamed TTFT;
 //! - a request whose TTFT is not below `load_ms` — a request that waited as
 //!   long as a whole load cannot show that the model stayed loaded. This is a
@@ -162,7 +163,7 @@ fn one_process(report: &BenchmarkReport) -> Result<(f64, f64), String> {
         "no load_ms: the server was not started by this producer (--start), so its load was \
          never observed",
     )?;
-    if load_ms.is_nan() || load_ms <= 0.0 {
+    if !load_ms.is_finite() || load_ms <= 0.0 {
         return Err(format!("load_ms is {load_ms}, not a measured load"));
     }
     if report.server_alive_after != Some(true) {
@@ -182,7 +183,14 @@ fn one_process(report: &BenchmarkReport) -> Result<(f64, f64), String> {
             )
         }
     };
-    if uptime.is_nan() || span.is_nan() || uptime + UPTIME_SLACK_S < span {
+    // A NaN fails every comparison and an infinite uptime covers any span, so
+    // both would pass the restart check below without measuring anything.
+    if !uptime.is_finite() || !span.is_finite() {
+        return Err(format!(
+            "server uptime {uptime} s or run span {span} s is not a measured time"
+        ));
+    }
+    if uptime + UPTIME_SLACK_S < span {
         return Err(format!(
             "the server reports {uptime:.1} s of uptime after a {span:.1} s run: it restarted \
              after it was ready, so it did not stay loaded"
@@ -208,10 +216,12 @@ fn measured_requests(report: &BenchmarkReport) -> Result<Vec<&RequestDetail>, St
     if reqs.is_empty() {
         return Err("zero measured requests".to_string());
     }
-    if let Some(r) = reqs
-        .iter()
-        .find(|r| r.ttft_ms.is_nan() || r.ttft_ms <= 0.0 || r.latency_ms <= r.ttft_ms)
-    {
+    if let Some(r) = reqs.iter().find(|r| {
+        !r.ttft_ms.is_finite()
+            || r.ttft_ms <= 0.0
+            || !r.latency_ms.is_finite()
+            || r.latency_ms <= r.ttft_ms
+    }) {
         return Err(format!(
             "a request has no streamed TTFT (ttft {} ms, latency {} ms); run with --stream",
             r.ttft_ms, r.latency_ms

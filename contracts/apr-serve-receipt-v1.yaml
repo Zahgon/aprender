@@ -83,7 +83,7 @@ equations:
 falsification_tests:
 - id: FALSIFY-SERVE-001
   rule: no observed load, no receipt
-  prediction: 'A report with no load_ms, or load_ms <= 0 or NaN, is REFUSED.'
+  prediction: 'A report with no load_ms, or a load_ms that is <= 0, NaN or infinite, is REFUSED.'
   test: 'cargo test -p aprender-test-lib --features llm --lib -- serve_receipt::tests::red_no_load_ms_when_the_server_was_not_started_here serve_receipt::tests::red_zero_load_ms serve_receipt::tests::red_negative_or_nan_load_ms'
   if_fails: 'a receipt claims a one-load serve for a server whose load nobody saw'
   mutation: 'replace the load_ms ok_or with unwrap_or(1.0); red_no_load_ms_... must turn RED'
@@ -108,17 +108,21 @@ falsification_tests:
   mutation: 'widen PROMPT_TOLERANCE to 0.10; the 486 and 538 rows must turn RED'
 - id: FALSIFY-SERVE-005
   rule: a receipt over survivors is not one
-  prediction: 'A failed request, zero requests, or an unstreamed request is REFUSED.'
+  prediction: 'A failed request, zero requests, an unstreamed request, or a request
+    whose TTFT or latency is not a finite number, is REFUSED.'
   test: 'cargo test -p aprender-test-lib --features llm --lib -- serve_receipt::tests::red_a_failed_request serve_receipt::tests::red_zero_requests serve_receipt::tests::red_no_streamed_ttft serve_receipt::tests::red_latency_not_above_ttft'
   if_fails: 'a median over the requests that survived is reported as the runtime'
   mutation: 'drop the failed-request sum; red_a_failed_request must turn RED'
 - id: FALSIFY-SERVE-007
   rule: the server''s own clock shows no restart
-  prediction: 'No /health uptime_sec after the last run, or an uptime more than
-    1 s short of the span since ready, is REFUSED: 28.9 s after a 30 s run is refused, 29.5 s is inside.'
-  test: 'cargo test -p aprender-test-lib --features llm --lib -- serve_receipt::tests::red_no_server_uptime serve_receipt::tests::red_a_server_that_restarted_after_ready'
+  prediction: 'No /health uptime_sec after the last run, an uptime or span that is
+    not a finite number, or an uptime more than 1 s short of the span since ready,
+    is REFUSED: 28.9 s after a 30 s run is refused, 29.5 s is inside.'
+  test: 'cargo test -p aprender-test-lib --features llm --lib -- serve_receipt::tests::red_no_server_uptime serve_receipt::tests::red_an_uptime_or_span_that_is_not_finite serve_receipt::tests::red_a_server_that_restarted_after_ready'
   if_fails: 'a supervisor that restarts the server per request passes as one load'
-  mutation: 'delete the uptime comparison, or widen UPTIME_SLACK_S to 2.0; red_a_server_that_restarted_after_ready (5.0 and 28.9 rows) must turn RED'
+  mutation: 'delete the uptime comparison (red_a_server_that_restarted_after_ready
+    turns RED on its 5.0 and 28.9 rows), or widen UPTIME_SLACK_S to 2.0 (it turns
+    RED on its 28.9 row)'
 - id: FALSIFY-SERVE-008
   rule: the receipt names the device the server reports after the runs
   prediction: 'No /health compute_mode after the last run is REFUSED; a cpu
