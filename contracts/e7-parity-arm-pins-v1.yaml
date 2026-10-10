@@ -1,0 +1,82 @@
+metadata:
+  version: 1.0.0
+  created: '2026-10-10'
+  author: PAIML Engineering
+  description: "E7 (#4001) step 3, C358 1d: every input of a parity arm is pinned HERE before any output is compared — the llama.cpp commit, the model file's sha256, the quantization, the prompts, greedy decoding and the thread count — and a row is compared only when apr's prompt token ids equal llama.cpp's. This contract carries NO pass line: the numbers (tokens, prompt count, any cosine) are the operator's to rule after the known-good arm is measured (C358 1c). It pins inputs only."
+  kind: pattern
+  references:
+    - "cop-inbox handoff/a3-c358-1332.md — OPERATOR C358 13:32Z items 1c-1j (shape yes, numbers not yet)"
+    - "scripts/llama_pin.toml — build_commit and threads, the one declaration of the comparator"
+    - "evidence/crux/0.70.3/prompt-certification.json — the prompts file, its sha256 and the 16 prompts admitted for Qwen3.5-4B/Q4_K_M"
+    - "scripts/crux_inference_dogfood.sh, scripts/lib/crux_cells_greedy.sh — the harness that ran the first known-good arm"
+    - "contracts/pp-llama-001-comparator-pin-v1.yaml — how the comparator pin itself is guarded"
+five_whys:
+  symptom: "The first known-good arm (2026-10-10 17:15Z) compared 7 of 32 rows: on 25, llama.cpp was fed a prompt cut at 30 ids because `apr run -v` prints only the first 30, and nothing refused the row before its output was scored."
+  why_1: "The harness records prompt_ids_equal but the comparison did not require it."
+  why_2: "The arm's inputs lived in a run script on one host, so no check could say which commit, model or prompt set a score came from."
+  why_3: "A parity number without its pins reads as evidence about whatever model the reader assumes."
+  why_4: "The pass line was being set before any arm was measured (C358 1c: 32 tokens, 4 prompts, 0.999 are assumptions)."
+  why_5: "No contract separated the inputs, which can be pinned now, from the bar, which is ruled after measurement."
+  root_cause: "Inputs and judgment were one undated script. This contract pins the inputs and the comparability precondition; the bar is left out on purpose."
+equations:
+  known_good_arm_inputs:
+    formula: "arm = (llama_cpp_commit = d1d3c3396, model = Qwen3.5-4B-Q4_K_M.gguf sha256 00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4, quant = Q4_K_M, prompts = scripts/crux_inference_prompts.v2.json sha256 cea80df5e785213667e27697fe3d139b99dcba95cfc6e970d76ac005d50fc806 restricted to the 16 ids admitted for Qwen3.5-4B/Q4_K_M, decoding = greedy, threads = 8, backend = cpu)"
+    domain: "a model that already passes CRUX smoke (C358 1c); CPU only (C358 1h)"
+    codomain: "per (prompt, thinking mode) row: prompt_ids_equal, apr tokens, llama.cpp tokens, matched-prefix length"
+    invariants:
+      - "llama_cpp_commit equals scripts/llama_pin.toml build_commit; threads equals its threads; no other reference is swapped in (C358 1e)"
+      - "The prompts file hash equals prompt-certification.json prompts_sha256"
+  comparable_row:
+    formula: "comparable(row) <=> row.prompt_ids_equal = true AND the ids fed to llama.cpp are apr's full prompt ids"
+    domain: "one greedy row"
+    codomain: "bool"
+    invariants:
+      - "A non-comparable row is reported as void with its reason, never scored (C358 1d)"
+  moe_named_break:
+    formula: "broken(model, layer L, experts i != j) = model with expert i and expert j swapped in layer L, all else byte-identical"
+    domain: "an MoE model (qwen3_moe); L, i, j recorded in the receipt"
+    codomain: "a negative control that must NOT match the reference; noise is not a break (C358 1f)"
+proof_obligations:
+  - id: E7PIN-INV-001
+    type: invariant
+    property: "The arm's comparator is the pinned llama.cpp build at the pinned thread count"
+    formal: "llama_pin.toml build_commit = d1d3c3396 ∧ threads = 8"
+    applies_to: known_good_arm_inputs
+  - id: E7PIN-INV-002
+    type: invariant
+    property: "The prompts are the certified set for the pinned model"
+    formal: "sha256(prompts file) = prompts_sha256 ∧ ∀ id ∈ prompts: id ∈ admitted(Qwen3.5-4B/Q4_K_M) ∧ model_sha256 ∈ certification"
+    applies_to: known_good_arm_inputs
+  - id: E7PIN-INV-003
+    type: invariant
+    property: "No row is scored unless its prompt ids are equal and complete"
+    formal: "∀ row: score(row) defined ⇒ comparable(row)"
+    applies_to: comparable_row
+falsification_tests:
+  - id: FALSIFY-E7PIN-001
+    rule: "The comparator pin in this contract is the repo's comparator pin"
+    prediction: "scripts/llama_pin.toml declares build_commit = \"d1d3c3396\" and threads = 8"
+    test: "grep -qx 'build_commit = \"d1d3c3396\"' scripts/llama_pin.toml && grep -qx 'threads = 8' scripts/llama_pin.toml"
+    if_fails: "The pin moved without this contract, so a score recorded against it names a comparator that no longer runs. Re-pin here in the same commit, or the arm's scores are void."
+  - id: FALSIFY-E7PIN-002
+    rule: "The prompts file is byte-identical to the certified one"
+    prediction: "sha256 of scripts/crux_inference_prompts.v2.json equals prompt-certification.json prompts_sha256 and the pinned hash above"
+    test: "test \"$(sha256sum scripts/crux_inference_prompts.v2.json | cut -c1-64)\" = cea80df5e785213667e27697fe3d139b99dcba95cfc6e970d76ac005d50fc806 && jq -e '.prompts_sha256 == \"cea80df5e785213667e27697fe3d139b99dcba95cfc6e970d76ac005d50fc806\"' evidence/crux/0.70.3/prompt-certification.json >/dev/null"
+    if_fails: "A prompt changed after certification; the arm would compare against an uncertified prompt set."
+  - id: FALSIFY-E7PIN-003
+    rule: "The 16 pinned prompts are the ones admitted for the pinned model, and the model hash is the certified one"
+    prediction: "admitted[\"Qwen3.5-4B/Q4_K_M\"] has exactly the 16 ids and the certification names sha256 00fe7986…"
+    test: "jq -e '.admitted[\"Qwen3.5-4B/Q4_K_M\"] == [\"ctl-2plus2\",\"ctl-code-add\",\"fact-capital-japan\",\"fact-capital-france\",\"golden-paris\",\"nonascii-water-kanji\",\"arith-17x23\",\"arith-precedence\",\"arith-word-apples\",\"hard-not-prime\",\"hard-reverse-word\",\"hard-count-letters\",\"recall-arith-chain\",\"code-count-vowels\",\"long-primes-10\",\"long-countdown-15\"]' evidence/crux/0.70.3/prompt-certification.json >/dev/null && grep -q 00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4 evidence/crux/0.70.3/prompt-certification.json"
+    if_fails: "The arm would run prompts the model was never certified on, or a model file nobody certified."
+qa_gate:
+  id: F-E7PIN-001
+  name: "E7 parity arm: inputs pinned before any comparison"
+  description: "Pins the known-good arm's inputs and the comparability precondition. Carries no pass line by design (C358 1c). Not wired into any PR, merge-queue or release job: LAB under C324 until the operator rules a bar."
+  checks:
+    - "known_good_arm_inputs"
+    - "comparable_row"
+  pass_criteria: "FALSIFY-E7PIN-{001..003} all PASS"
+  unmeasured:
+    - "E7PIN-INV-003 has no in-tree falsifier yet: the scorer that voids non-comparable rows lives in the receipt (handoff/la074-ka-receipt), and the 30-id print defect blocks a full arm"
+    - "moe_named_break: equation only; the layer and expert pair are chosen and recorded when the MoE arm is built (C358 1f)"
+    - "experts reached of total: printed by the MoE arm, a line not a bar (C358 1g)"

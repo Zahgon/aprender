@@ -496,7 +496,7 @@ proof_obligations:
   type: invariant
   property: MoE substitutes exactly the dense FFN roles
   formal: '∀ (qk, bias): required(qk, bias, moe=false) = required(qk, bias, moe=true)
-    ⊎ {gate_proj, up_proj, down_proj}'
+    ∪ {gate_proj, up_proj, down_proj}, the two sets disjoint'
   applies_to: all
 falsification_tests:
 - id: FALSIFY-ARCH-001
