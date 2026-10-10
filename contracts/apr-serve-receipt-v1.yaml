@@ -116,6 +116,14 @@ falsification_tests:
   test: 'cargo test -p aprender-test-lib --features llm --lib -- serve_receipt::tests::red_a_failed_request serve_receipt::tests::red_zero_requests serve_receipt::tests::red_no_streamed_ttft serve_receipt::tests::red_latency_not_above_ttft'
   if_fails: 'a median over the requests that survived is reported as the runtime'
   mutation: 'drop the failed-request sum; red_a_failed_request must turn RED'
+- id: FALSIFY-SERVE-006
+  rule: the GREEN row computes the stated formulas
+  prediction: 'TTFT 100/120/140 ms on 512 tokens and 1270 ms of decode for 127
+    tokens gives ttft p50 120, p95 140, pp512 512/0.120, tg128 100.0.'
+  test: 'cargo test -p aprender-test-lib --features llm --lib -- serve_receipt::tests::green_a_loaded_once_pp512_tg128_run_is_a_receipt'
+  if_fails: 'a builder that refuses everything looks exactly like a strict one'
+  mutation: 'use completion_tokens instead of completion_tokens - 1 in tg128; the
+    GREEN row must turn RED'
 - id: FALSIFY-SERVE-007
   rule: the server''s own clock shows no restart
   prediction: 'No /health uptime_sec after the last run, an uptime or span that is
@@ -154,14 +162,6 @@ falsification_tests:
   mutation: 'run measure() without the signal race (the test process dies), make
     kill_group a no-op, drop process_group(0), or skip teardown on a signal; each
     turns the test RED'
-- id: FALSIFY-SERVE-006
-  rule: the GREEN row computes the stated formulas
-  prediction: 'TTFT 100/120/140 ms on 512 tokens and 1270 ms of decode for 127
-    tokens gives ttft p50 120, p95 140, pp512 512/0.120, tg128 100.0.'
-  test: 'cargo test -p aprender-test-lib --features llm --lib -- serve_receipt::tests::green_a_loaded_once_pp512_tg128_run_is_a_receipt'
-  if_fails: 'a builder that refuses everything looks exactly like a strict one'
-  mutation: 'use completion_tokens instead of completion_tokens - 1 in tg128; the
-    GREEN row must turn RED'
 
 proof_obligations:
 - id: ASR-INV-001
