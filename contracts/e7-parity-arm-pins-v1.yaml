@@ -40,6 +40,7 @@ equations:
       - "The break swaps the byte slices of experts i and j in all three of blk.L.ffn_gate_exps, ffn_up_exps and ffn_down_exps (expert e is bytes [offset + e*size/n_expert, +size/n_expert), qwen3_moe_load.rs expert_byte_slice); the router blk.L.ffn_gate_inp is untouched, so tokens routed to i reach j's weights"
       - "i and j are experts the arm's prompts reach in layer L (experts_reached), else the break is never exercised and proves nothing"
       - "Pinned 2026-10-10 from the measured experts_reached: L = 24 (the middle of 48), i = 4, j = 8, the two lowest expert ids reached in layer 24 by all 16 prompts (40 such experts); receipt cop-inbox handoff/la074-ka-receipt/moe-1g/"
+      - "Made by gguf/moe_named_break.rs: the byte ranges come from load_qwen3_moe_layer and expert_byte_slice, the loader's own rule, so the break moves exactly the bytes the forward reads for experts i and j; the copy is patched in place and every other byte of the file is unchanged"
   moe_arm_inputs:
     formula: "moe_arm = (llama_cpp_commit = d1d3c3396, model = Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf sha256 6c997b8af17debdfb01d890214400ccbab00db6acc0ba8da5de1cc906c4774d0, quant = Q4_K_M, prompts = the 16 ids of known_good_arm_inputs from the same prompts file, decoding = greedy, threads = 8, backend = cpu)"
     domain: "qwen3moe, 48 layers, 128 experts, 8 used per token; CPU only (C358 1h)"
@@ -90,6 +91,11 @@ falsification_tests:
     prediction: "cargo test -p aprender-serve --lib moe_experts_reached passes: repeats count once, unseen layers stay in the denominator, an unnamed layer is not counted"
     test: "cargo test -p aprender-serve --lib moe_experts_reached"
     if_fails: "The line over- or under-counts, so the operator reads a coverage figure that is not what the prompts reached."
+  - id: FALSIFY-E7PIN-005
+    rule: "The named break swaps experts i and j in the three expert tensors of layer L and changes no other byte"
+    prediction: "cargo test -p aprender-serve --lib moe_named_break passes: applying the plan swaps exactly the i and j slices of gate, up and down, the router and every other byte are unchanged, applying it twice restores the input, and i = j or an id past expert_count is refused"
+    test: "cargo test -p aprender-serve --lib moe_named_break"
+    if_fails: "The broken model differs from the reference by more than the named swap (noise) or by nothing, so a mismatch proves nothing (C358 1f)."
 qa_gate:
   id: F-E7PIN-001
   name: "E7 parity arm: inputs pinned before any comparison"
@@ -97,8 +103,8 @@ qa_gate:
   checks:
     - "known_good_arm_inputs"
     - "comparable_row"
-  pass_criteria: "FALSIFY-E7PIN-{001..004} all PASS"
+  pass_criteria: "FALSIFY-E7PIN-{001..005} all PASS"
   unmeasured:
     - "E7PIN-INV-003 has no in-tree falsifier yet: the scorer that voids non-comparable rows lives in the receipt (handoff/la074-ka-receipt), and the 30-id print defect blocks a full arm"
-    - "moe_named_break: procedure and L/i/j pinned; no swap tool exists in tree yet, so no broken run (C358 1f)"
+    - "moe_named_break: procedure, L/i/j and the tool (005) are in tree; no broken run measured yet (C358 1f)"
     - "experts_reached is apr-side only; llama.cpp routing is not recorded, so equal routing is not shown"
