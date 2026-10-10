@@ -41,6 +41,7 @@ equations:
       - "i and j are experts the arm's prompts reach in layer L (experts_reached), else the break is never exercised and proves nothing"
       - "Pinned 2026-10-10 from the measured experts_reached: L = 24 (the middle of 48), i = 4, j = 8, the two lowest expert ids reached in layer 24 by all 16 prompts (40 such experts); receipt cop-inbox handoff/la074-ka-receipt/moe-1g/"
       - "Made by gguf/moe_named_break.rs: the byte ranges come from load_qwen3_moe_layer and expert_byte_slice, the loader's own rule, so the break moves exactly the bytes the forward reads for experts i and j; the copy is patched in place and every other byte of the file is unchanged"
+      - "Measured 2026-10-10 on intel, CPU: the L=24, i=4, j=8 copy differs from the pinned file only inside the 6 planned ranges (0 bytes outside); apr greedy 32 tokens on the 16 prompts: no token differs from the good model on any prompt; forward_qwen3_moe logits on ctl-2plus2 (26 ids): same argmax, max abs difference 2.095, cosine 0.996107, while good against good gives 0 and 1.000000000 (receipt cop-inbox handoff/la074-ka-receipt/moe-1f/). The break reaches the logits and flips no greedy token here, so a token-match comparison cannot see it. Data, not a bar (C358 1c)"
   moe_arm_inputs:
     formula: "moe_arm = (llama_cpp_commit = d1d3c3396, model = Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf sha256 6c997b8af17debdfb01d890214400ccbab00db6acc0ba8da5de1cc906c4774d0, quant = Q4_K_M, prompts = the 16 ids of known_good_arm_inputs from the same prompts file, decoding = greedy, threads = 8, backend = cpu)"
     domain: "qwen3moe, 48 layers, 128 experts, 8 used per token; CPU only (C358 1h)"
@@ -106,5 +107,5 @@ qa_gate:
   pass_criteria: "FALSIFY-E7PIN-{001..005} all PASS"
   unmeasured:
     - "E7PIN-INV-003 has no in-tree falsifier yet: the scorer that voids non-comparable rows lives in the receipt (handoff/la074-ka-receipt), and the 30-id print defect blocks a full arm"
-    - "moe_named_break: procedure, L/i/j and the tool (005) are in tree; no broken run measured yet (C358 1f)"
+    - "moe_named_break: the broken run is measured on apr only; no llama.cpp run on the broken copy, and logits measured on one prompt (ctl-2plus2)"
     - "experts_reached is apr-side only; llama.cpp routing is not recorded, so equal routing is not shown"
