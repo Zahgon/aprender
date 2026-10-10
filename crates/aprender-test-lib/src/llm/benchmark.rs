@@ -151,7 +151,37 @@ impl Benchmark {
     }
 
     /// Run the full benchmark lifecycle.
+    ///
+    /// With `start_command`, the server runs in its own process group, so the
+    /// terminal's Ctrl-C reaches only this process, and a default SIGINT or
+    /// SIGTERM would end it without `Drop`, leaving the server holding its
+    /// port and its GPU. So the run listens for both: on either, it kills the
+    /// server's group and returns [`LlmClientError::Interrupted`] (#4953).
+    /// tokio keeps a handler installed for the life of the process, so after
+    /// this returns, a SIGINT or SIGTERM no longer ends the process by default.
     pub async fn run(&mut self) -> Result<BenchmarkReport, LlmClientError> {
+        if self.config.start_command.is_none() {
+            return self.measure().await;
+        }
+        let stop = stop_signals();
+        self.run_until(stop).await
+    }
+
+    /// [`Self::measure`], unless `stop` resolves first: then tear the started
+    /// server down and name what stopped the run.
+    async fn run_until(
+        &mut self,
+        stop: impl std::future::Future<Output = &'static str>,
+    ) -> Result<BenchmarkReport, LlmClientError> {
+        let stopped_by = tokio::select! {
+            r = self.measure() => return r,
+            why = stop => why,
+        };
+        self.teardown().await;
+        Err(LlmClientError::Interrupted(stopped_by))
+    }
+
+    async fn measure(&mut self) -> Result<BenchmarkReport, LlmClientError> {
         let client = LlmClient::new(&self.config.url, &self.config.model);
 
         // Phase 1: Start server (if configured). A server that ALREADY answers
@@ -179,7 +209,8 @@ impl Benchmark {
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null());
             // Its own process group, so teardown reaches the server and not only
-            // the `sh` that started it (#4953).
+            // the `sh` that started it (#4953). The terminal's Ctrl-C then
+            // reaches only this process; `run` handles it.
             #[cfg(unix)]
             command.process_group(0);
             let child = command.spawn().map_err(|e| {
@@ -340,6 +371,44 @@ fn kill_group(child: &tokio::process::Child) {
     }
     #[cfg(not(unix))]
     let _ = child;
+}
+
+/// Resolves with the name of the first SIGINT or SIGTERM. Both handlers are
+/// installed by this call, before the server is spawned, so no signal falls
+/// in a gap. A handler that cannot be installed never resolves. SIGHUP is not
+/// handled.
+#[cfg(unix)]
+fn stop_signals() -> impl std::future::Future<Output = &'static str> {
+    use tokio::signal::unix::{signal, SignalKind};
+    let mut int = signal(SignalKind::interrupt()).ok();
+    let mut term = signal(SignalKind::terminate()).ok();
+    async move {
+        tokio::select! {
+            Some(()) = next_signal(&mut int) => "SIGINT",
+            Some(()) = next_signal(&mut term) => "SIGTERM",
+            else => std::future::pending().await,
+        }
+    }
+}
+
+#[cfg(unix)]
+async fn next_signal(s: &mut Option<tokio::signal::unix::Signal>) -> Option<()> {
+    match s {
+        Some(s) => s.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Resolves on the first Ctrl-C; never, if its handler cannot be installed.
+#[cfg(not(unix))]
+fn stop_signals() -> impl std::future::Future<Output = &'static str> {
+    async {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            "Ctrl-C"
+        } else {
+            std::future::pending().await
+        }
+    }
 }
 
 impl Drop for Benchmark {
@@ -602,5 +671,165 @@ mod tests {
         assert_eq!(back.server_uptime_after_s, None);
         assert_eq!(back.ready_to_end_s, None);
         assert_eq!(back.server_compute_mode_after, None);
+    }
+
+    /// The two tests below run `Benchmark::run` with `start_command`, which
+    /// installs this process's SIGINT and SIGTERM handlers, and one of them
+    /// sends those signals to this process. One at a time, so no run sees a
+    /// signal meant for another.
+    static SIGNAL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn owned_server_config(url: String, start: &str, health_timeout: Duration) -> BenchmarkConfig {
+        BenchmarkConfig {
+            url,
+            model: "m".to_string(),
+            start_command: Some(start.to_string()),
+            health_timeout,
+            warmup: Duration::ZERO,
+            duration: Duration::from_secs(1),
+            concurrency: 1,
+            runs: 0,
+            cooldown: Duration::ZERO,
+            prompts: Vec::new(),
+            runtime_name: "test".to_string(),
+            baseline: None,
+            fail_on_regression: None,
+            stream: false,
+            trace_level: None,
+            num_layers: None,
+        }
+    }
+
+    fn current_thread_runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+    }
+
+    /// A listener that answers every request with 200 and `{}`: a server that
+    /// is already up.
+    fn stub_health_server() -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for mut conn in listener.incoming().flatten() {
+                let mut req = Vec::new();
+                let mut buf = [0u8; 1024];
+                while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match conn.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => req.extend_from_slice(&buf[..n]),
+                    }
+                }
+                let _ = conn.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                      Content-Length: 2\r\nConnection: close\r\n\r\n{}",
+                );
+            }
+        });
+        url
+    }
+
+    /// A server already answering before `--start` would make the readiness
+    /// poll return at once and load_ms measure nothing, so the run refuses
+    /// before it spawns anything (#4953, FALSIFY-SERVE-009).
+    #[test]
+    fn a_server_already_answering_is_refused_before_start() {
+        let _serial = SIGNAL_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let url = stub_health_server();
+        let mut bench = Benchmark::new(owned_server_config(url, "true", Duration::from_secs(5)));
+        let result = current_thread_runtime().block_on(bench.run());
+        let Err(e) = result else {
+            panic!("a run against a server that already answers must be refused");
+        };
+        assert!(e.to_string().contains("already answers"), "{e}");
+        assert!(bench.child.is_none(), "the start command ran anyway");
+    }
+
+    /// True once `pid` has exited (gone, or a zombie not yet reaped).
+    #[cfg(target_os = "linux")]
+    fn exited(pid: u32) -> bool {
+        match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Err(_) => true,
+            Ok(stat) => stat
+                .rsplit_once(") ")
+                .is_some_and(|(_, rest)| rest.starts_with('Z')),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn read_pid(path: &std::path::Path) -> u32 {
+        for _ in 0..500 {
+            let pid = std::fs::read_to_string(path)
+                .ok()
+                .and_then(|s| s.trim().parse().ok());
+            if let Some(pid) = pid {
+                return pid;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("the start command never wrote {}", path.display());
+    }
+
+    /// The started server is in its own process group, so the terminal's
+    /// Ctrl-C reaches only this process. A SIGINT or SIGTERM mid-run must still
+    /// kill the server, here a grandchild of `sh` as `apr serve` is under
+    /// `--start`, and end the run with Interrupted (#4953, FALSIFY-SERVE-010).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_signal_mid_run_kills_the_started_server() {
+        let _serial = SIGNAL_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let rt = current_thread_runtime();
+        for sig in ["SIGINT", "SIGTERM"] {
+            let dir = tempfile::tempdir().unwrap();
+            let pidfile = dir.path().join("server.pid");
+            // A port nothing answers on: the run waits for readiness until the signal.
+            let url = format!(
+                "http://{}",
+                std::net::TcpListener::bind("127.0.0.1:0")
+                    .unwrap()
+                    .local_addr()
+                    .unwrap()
+            );
+            let start = format!("sleep 60 & echo $! > '{}'; wait", pidfile.display());
+            let mut bench =
+                Benchmark::new(owned_server_config(url, &start, Duration::from_secs(20)));
+            let signal_this_process = async {
+                let server = read_pid(&pidfile).await;
+                assert!(
+                    !exited(server),
+                    "{sig}: server {server} not running before the signal"
+                );
+                let sent = tokio::process::Command::new("kill")
+                    .arg(format!("-{}", &sig[3..]))
+                    .arg(std::process::id().to_string())
+                    .status()
+                    .await
+                    .unwrap();
+                assert!(sent.success(), "{sig}: kill failed");
+                server
+            };
+            let (result, server) =
+                rt.block_on(async { tokio::join!(bench.run(), signal_this_process) });
+            let Err(e) = result else {
+                panic!("{sig}: an interrupted run returned a report");
+            };
+            assert!(
+                e.to_string().contains(&format!("interrupted by {sig}")),
+                "{e}"
+            );
+            assert!(bench.child.is_none(), "{sig}: the server was not torn down");
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while !exited(server) && std::time::Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            assert!(exited(server), "{sig}: server {server} outlived the run");
+        }
     }
 }

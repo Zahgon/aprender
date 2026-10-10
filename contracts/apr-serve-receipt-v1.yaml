@@ -41,6 +41,9 @@ equations:
        token took a whole load; it does not by itself show one load.'
     - 'A server already answering before --start ran makes load_ms measure
        nothing, so the producer refuses to start.'
+    - 'A SIGINT or SIGTERM during a run kills the started server''s process
+       group and writes no receipt: the group keeps the terminal''s Ctrl-C from
+       the server, so the producer must take it down itself.'
     - 'A server the producer did not start has no observed load, so no receipt.'
     - 'A server that died during the run could have been restarted between
        requests, hiding a per-request load, so no receipt.'
@@ -132,6 +135,25 @@ falsification_tests:
   mutation: 'drop the missing-compute_mode refusal (red_no_compute_mode must turn
     RED), or write "gpu" whatever the server said (a_cpu_fallback_is_recorded_as_cpu
     must turn RED)'
+- id: FALSIFY-SERVE-009
+  rule: a server that already answers is refused before --start runs
+  prediction: 'With a listener already answering 200 at --url, the run returns
+    an "already answers" error and never spawns the start command.'
+  test: 'cargo test -p aprender-test-lib --features llm --lib -- benchmark::tests::a_server_already_answering_is_refused_before_start'
+  if_fails: 'a stale server makes the readiness poll return at once, and load_ms
+    measures nothing'
+  mutation: 'delete the pre-start probe; the run then returns a report and the
+    test turns RED'
+- id: FALSIFY-SERVE-010
+  rule: a signal mid-run kills the started server
+  prediction: 'A SIGINT, and then a SIGTERM, sent to this process while the run
+    waits for readiness returns "interrupted by SIG..." and the server, a
+    grandchild of sh, has exited within 5 s.'
+  test: 'cargo test -p aprender-test-lib --features llm --lib -- benchmark::tests::a_signal_mid_run_kills_the_started_server'
+  if_fails: 'Ctrl-C ends apr without Drop and the server keeps its port and its GPU'
+  mutation: 'run measure() without the signal race (the test process dies), make
+    kill_group a no-op, drop process_group(0), or skip teardown on a signal; each
+    turns the test RED'
 - id: FALSIFY-SERVE-006
   rule: the GREEN row computes the stated formulas
   prediction: 'TTFT 100/120/140 ms on 512 tokens and 1270 ms of decode for 127
@@ -146,7 +168,7 @@ proof_obligations:
   type: invariant
   property: 'Every written receipt has an observed load, a server alive at the end
     whose own uptime covers the run, and every TTFT below load_ms
-    (FALSIFY-SERVE-001..003, FALSIFY-SERVE-007)'
+    (FALSIFY-SERVE-001..003, FALSIFY-SERVE-007, FALSIFY-SERVE-009)'
   formal: '∀ r: r.load_ms > 0 ∧ r.server_uptime_s > 0 ∧ r.ttft_ms.max < r.load_ms'
 - id: ASR-INV-002
   type: invariant

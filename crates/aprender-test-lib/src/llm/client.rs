@@ -81,6 +81,63 @@ pub struct StreamChunk {
     pub timings: Option<ServerTimings>,
 }
 
+/// What a stream has delivered so far. [`LlmClient::chat_completion_stream`]
+/// feeds it one SSE line at a time.
+#[derive(Default)]
+struct StreamTally {
+    content: String,
+    token_timestamps: Vec<Duration>,
+    ttft: Option<Duration>,
+    usage: Option<Usage>,
+    finish_reason: Option<String>,
+    stream_mode: Option<StreamMode>,
+    timings: Option<ServerTimings>,
+}
+
+impl StreamTally {
+    /// Take one trimmed SSE line. True on `data: [DONE]`.
+    fn line(&mut self, line: &str, start: Instant) -> bool {
+        if line == "data: [DONE]" {
+            return true;
+        }
+        let chunk = line
+            .strip_prefix("data: ")
+            .and_then(|json| serde_json::from_str::<StreamChunk>(json).ok());
+        if let Some(chunk) = chunk {
+            self.chunk(chunk, start);
+        }
+        false
+    }
+
+    fn chunk(&mut self, chunk: StreamChunk, start: Instant) {
+        if let Some(choice) = chunk.choices.first() {
+            if let Some(c) = choice.delta.content.as_deref().filter(|c| !c.is_empty()) {
+                let now = start.elapsed();
+                if self.ttft.is_none() {
+                    self.ttft = Some(now);
+                }
+                self.token_timestamps.push(now);
+                self.content.push_str(c);
+            }
+            if choice.finish_reason.is_some() {
+                self.finish_reason.clone_from(&choice.finish_reason);
+            }
+        }
+        // PP-27: the server declares the mechanism on the FIRST chunk. Later
+        // chunks do not carry it, and a later one that did must not overwrite
+        // the first -- the declaration is a property of the stream.
+        if self.stream_mode.is_none() {
+            self.stream_mode = chunk.stream_mode;
+        }
+        if chunk.usage.is_some() {
+            self.usage = chunk.usage;
+        }
+        if chunk.timings.is_some() {
+            self.timings = chunk.timings;
+        }
+    }
+}
+
 /// Result of a streaming chat completion with per-token timestamps.
 #[derive(Debug, Clone)]
 pub struct StreamedChatResponse {
@@ -404,6 +461,10 @@ pub enum LlmClientError {
         /// The parse failure.
         source: serde_json::Error,
     },
+    /// A benchmark that started its own server was stopped by a signal. The
+    /// server's process group was killed before this was returned (#4953).
+    #[error("interrupted by {0}: the started server's process group was killed")]
+    Interrupted(&'static str),
 }
 
 /// OpenAI-compatible HTTP client for LLM inference.
@@ -698,13 +759,7 @@ impl LlmClient {
             });
         }
 
-        let mut content = String::new();
-        let mut token_timestamps = Vec::new();
-        let mut ttft = None;
-        let mut final_usage = None;
-        let mut finish_reason = None;
-        let mut stream_mode = None;
-        let mut timings = None;
+        let mut tally = StreamTally::default();
 
         // Read the response incrementally via chunk() for real per-token timestamps.
         // Each chunk() call returns data as it arrives from the server, so timestamps
@@ -728,41 +783,9 @@ impl LlmClient {
                 let line: String = buffer[..newline_pos].trim().to_string();
                 buffer = buffer[newline_pos + 1..].to_string();
 
-                if line == "data: [DONE]" {
+                if tally.line(&line, start) {
                     done = true;
                     break;
-                }
-                if let Some(json_str) = line.strip_prefix("data: ") {
-                    if let Ok(sse_chunk) = serde_json::from_str::<StreamChunk>(json_str) {
-                        if let Some(choice) = sse_chunk.choices.first() {
-                            if let Some(ref c) = choice.delta.content {
-                                if !c.is_empty() {
-                                    let now = start.elapsed();
-                                    if ttft.is_none() {
-                                        ttft = Some(now);
-                                    }
-                                    token_timestamps.push(now);
-                                    content.push_str(c);
-                                }
-                            }
-                            if choice.finish_reason.is_some() {
-                                finish_reason = choice.finish_reason.clone();
-                            }
-                        }
-                        // PP-27: the server declares the mechanism on the
-                        // FIRST chunk. Later chunks do not carry it, and a
-                        // later one that did must not overwrite the first --
-                        // the declaration is a property of the stream.
-                        if stream_mode.is_none() {
-                            stream_mode = sse_chunk.stream_mode;
-                        }
-                        if sse_chunk.usage.is_some() {
-                            final_usage = sse_chunk.usage;
-                        }
-                        if sse_chunk.timings.is_some() {
-                            timings = sse_chunk.timings;
-                        }
-                    }
                 }
             }
         }
@@ -773,21 +796,21 @@ impl LlmClient {
         // produce a number with the shape of a measurement: a chunk count that
         // is not a token count, and a `ttft` equal to `e2e` that is exactly
         // what a REPLAYED stream looks like.
-        let usage = final_usage.ok_or_else(|| LlmClientError::StreamNoUsage {
+        let usage = tally.usage.ok_or_else(|| LlmClientError::StreamNoUsage {
             url: url.clone(),
-            frames: token_timestamps.len(),
+            frames: tally.token_timestamps.len(),
         })?;
-        let ttft = ttft.ok_or(LlmClientError::StreamNoContent { url })?;
+        let ttft = tally.ttft.ok_or(LlmClientError::StreamNoContent { url })?;
 
         Ok(StreamedChatResponse {
-            content,
+            content: tally.content,
             latency,
             ttft,
-            token_timestamps,
+            token_timestamps: tally.token_timestamps,
             usage,
-            stream_mode,
-            timings,
-            finish_reason,
+            stream_mode: tally.stream_mode,
+            timings: tally.timings,
+            finish_reason: tally.finish_reason,
         })
     }
 
@@ -1191,23 +1214,15 @@ mod tests {
         }
     }
 
-    /// Serve one scripted SSE response and hand the request body back.
+    /// Read one HTTP request and return its body; None if the peer closed
+    /// or the read failed first.
     #[cfg(feature = "llm")]
-    async fn serve_scripted_sse(
-        mut sock: tokio::net::TcpStream,
-        script: SseScript,
-        bodies: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
-    ) {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    async fn read_request_body(sock: &mut tokio::net::TcpStream) -> Option<String> {
+        use tokio::io::AsyncReadExt;
         let mut buf = vec![0_u8; 8192];
         let mut seen = Vec::new();
         loop {
-            let Ok(n) = sock.read(&mut buf).await else {
-                return;
-            };
-            if n == 0 {
-                return;
-            }
+            let n = sock.read(&mut buf).await.ok().filter(|&n| n > 0)?;
             seen.extend_from_slice(&buf[..n]);
             let text = String::from_utf8_lossy(&seen).to_string();
             let Some(head_end) = text.find("\r\n\r\n") else {
@@ -1221,11 +1236,23 @@ mod tests {
                 .and_then(|t| t.trim().parse().ok())
                 .unwrap_or(0);
             if seen.len() >= head_end + 4 + len {
-                let body = String::from_utf8_lossy(&seen[head_end + 4..]).to_string();
-                bodies.lock().unwrap_or_else(|e| e.into_inner()).push(body);
-                break;
+                return Some(String::from_utf8_lossy(&seen[head_end + 4..]).to_string());
             }
         }
+    }
+
+    /// Serve one scripted SSE response and hand the request body back.
+    #[cfg(feature = "llm")]
+    async fn serve_scripted_sse(
+        mut sock: tokio::net::TcpStream,
+        script: SseScript,
+        bodies: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    ) {
+        use tokio::io::AsyncWriteExt;
+        let Some(body) = read_request_body(&mut sock).await else {
+            return;
+        };
+        bodies.lock().unwrap_or_else(|e| e.into_inner()).push(body);
 
         let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\
                     Cache-Control: no-cache\r\nConnection: close\r\n\r\n";
