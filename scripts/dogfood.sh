@@ -1081,14 +1081,18 @@ if command -v bashrs >/dev/null 2>&1; then
       # linted; the sentinel guarantees >=2, and the parser skips it anyway.)
       # jq -s reads the stream of concatenated objects; everything before the first
       # `{` (the ANSI line) is cut off first. jq is the LAST command of the pipe, so
-      # `|| PARSE_ERROR` sees jq's status (#4377: this was python3).
+      # `|| PARSE_ERROR` sees jq's status (#4377: this was python3). An absent
+      # `diagnostics` holds none; one that is present but not a list is a
+      # PARSE_ERROR, as it was under python3.
       # The soft-code filter sits on one quoted line of its own: check_bashrs_gate.sh
       # greps for it verbatim, and check_dogfood_row_order.sh reads an unquoted
       # `(. ` as a shell `.` (source) between the rows.
       BR_OFF=$(grep -bo '{' "$BR_DIR/out.json" 2>/dev/null | head -n 1 | cut -d: -f1)
       BR_SOFT='select(. == "SC1020" or . == "SC1035" or . == "SC1140")'
       BR_CLASS=$( { [ -n "$BR_OFF" ] && tail -c +"$((BR_OFF + 1))" "$BR_DIR/out.json"; } \
-        | jq -rs '[.[] | (.diagnostics // [])[] | select(.severity == "error") | (.code // "")] as $c
+        | jq -rs '[.[] | (if has("diagnostics") then .diagnostics else [] end)
+          | if type == "array" then .[] else error("bashrs diagnostics is not a list") end
+          | select(.severity == "error") | (.code // "")] as $c
           | ($c | map(select(test("^(SEC|DET|IDEM)")))) as $g
           | ($c | map('"$BR_SOFT"') | length) as $soft
           | "\($g | length) \($soft) \(($c | length) - ($g | length) - $soft) \($g | unique | join(" "))"' \

@@ -64,6 +64,36 @@ row tp-missing-targets transports '{"packages":[{"name":"foo","metadata":{"trans
 # all or nothing: a bad transport after a good one prints nothing, not half a plan
 row tp-error-prints-nothing transports "{\"packages\":[{\"name\":\"foo\",$TGT,\"metadata\":{\"transports\":{\"a\":{},\"b\":\"bad\"}}}]}" ERROR
 
+# ── bashrs classifier ───────────────────────────────────────────────────────
+# Inline in scripts/dogfood.sh (check_bashrs_gate.sh greps it there), so the
+# block is lifted from BR_OFF to the PARSE_ERROR fallback and run on a fixture
+# `bashrs --format json` output. Want: "<gating> <soft> <other> <rules>", or
+# PARSE_ERROR. A present `diagnostics` that is not a list is a PARSE_ERROR, as
+# it was under python3; an absent one holds none.
+BLK=$(mktemp) || { echo "ENV  mktemp failed" >&2; exit 2; }
+BRD=$(mktemp -d) || { echo "ENV  mktemp failed" >&2; exit 2; }
+trap 'rm -f "${BLK:?}"; rm -rf "${BRD:?}"' EXIT
+awk '/^ *BR_OFF=\$\(grep -bo/ {on=1} on {print} on && /\|\| echo "PARSE_ERROR"\)$/ {exit}' \
+  "$ROOT/scripts/dogfood.sh" > "$BLK"
+[ "$(grep -c 'PARSE_ERROR' "$BLK")" = 1 ] || { echo "ENV  could not lift the bashrs classifier" >&2; exit 2; }
+brrow() { # brrow <name> <bashrs json output> <expected>
+  local name=$1 want=$3 got
+  printf '%s' "$2" > "$BRD/out.json"
+  # shellcheck disable=SC1090
+  got=$(BR_DIR=$BRD; . "$BLK"; printf '%s' "$BR_CLASS")
+  rows=$((rows + 1))
+  if [ "$got" = "$want" ]; then
+    printf 'ok    %-34s [%s]\n' "$name" "$want"
+  else
+    printf 'FAIL  %-34s want [%s] got [%s]\n' "$name" "$want" "$got"
+    fails=$((fails + 1))
+  fi
+}
+brrow br-mixed-after-ansi-line $'\e[2mINFO linting\e[0m\n{"diagnostics":[{"severity":"error","code":"DET002"},{"severity":"error","code":"SC1035"},{"severity":"error","code":"SC2086"},{"severity":"warning","code":"SEC001"}]}{"diagnostics":[{"severity":"error","code":"SEC010"}]}' '2 1 1 DET002 SEC010'
+brrow br-absent-diagnostics '{"file":"a.sh"}{"diagnostics":[]}' '0 0 0 '
+brrow br-null-diagnostics '{"diagnostics":[{"severity":"error","code":"DET002"}]}{"diagnostics":null}' PARSE_ERROR
+brrow br-string-diagnostics '{"diagnostics":"none"}' PARSE_ERROR
+
 if [ "$fails" -ne 0 ]; then
   printf 'FAIL  %d of %d rows\n' "$fails" "$rows"
   exit 1

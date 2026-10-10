@@ -631,7 +631,7 @@ resolve_scope() {
     # rc is jq's own status, read before any filter: through a pipe it would be awk's.
     declared=$(jq -r --arg crate "$crate" -f "$REPO_ROOT/scripts/lib/dogfood_gates.jq" "$meta")
     rc=$?
-    declared=$(printf '%s\n' "$declared" | awk '$1=="GATE"{sub(/^GATE /,""); print}')
+    declared=$(printf '%s\n' "$declared" | awk '$1=="GATE"{print $2}')
     rm -f "$meta"
     # NOPKG/NODECL/EMPTY/BADSHAPE all yield no GATE lines: the declaration
     # verifies nothing, and a scan over an empty universe would report clean.
