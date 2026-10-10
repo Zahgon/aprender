@@ -9,12 +9,17 @@
 /// NESTING, which is why flattening the nine flat `unwrap_or` arms alone did not move
 /// the number. Behaviour is unchanged: same lock, same stop-token-ends-the-turn
 /// callback, same `on_gpu` store, same error forwarded down the channel.
+///
+/// #4954: a turn that completes sends its phase split down `timing_tx`, so the
+/// stream's terminal chunk carries `timings` (prompt_ms, predicted_ms and the
+/// load and first-token edges). A failed turn drops the sender: no timings.
 fn spawn_streaming_generate(
     session: Arc<crate::api::Qwen35Served>,
     input_ids: Vec<u32>,
     gen_config: crate::gguf::QuantizedGenerateConfig,
     stop_tokens: Vec<u32>,
     tx: tokio::sync::mpsc::Sender<Result<u32, String>>,
+    timing_tx: tokio::sync::oneshot::Sender<crate::api::PhaseTimings>,
     sink_metrics: Arc<crate::metrics::MetricsCollector>,
 ) {
     tokio::task::spawn_blocking(move || {
@@ -25,10 +30,18 @@ fn spawn_streaming_generate(
                     // The stop token ends the turn; it is not content.
                     stop_tokens.contains(&tok) || sink(tok)
                 });
+                let decode_ended = std::time::Instant::now();
                 session
                     .on_gpu
                     .store(s.on_gpu(), std::sync::atomic::Ordering::Relaxed);
-                r.map(|_| ()).map_err(|e| e.to_string())
+                r.map(|turn| {
+                    let _ = timing_tx.send(crate::api::PhaseTimings::from_marks(
+                        turn.prefill_started,
+                        turn.prefill_ended,
+                        decode_ended,
+                    ));
+                })
+                .map_err(|e| e.to_string())
             },
             Err(_) => Err(POISONED.to_string()),
         };
@@ -150,6 +163,7 @@ async fn try_qwen35_backend(
 
     if request.stream {
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<u32, String>>(64);
+        let (timing_tx, timing_rx) = tokio::sync::oneshot::channel::<crate::api::PhaseTimings>();
         let sink_metrics = state.metrics.clone();
         spawn_streaming_generate(
             session,
@@ -157,6 +171,7 @@ async fn try_qwen35_backend(
             gen_config,
             stop_tokens,
             tx,
+            timing_tx,
             sink_metrics,
         );
         return Some(crate::api::openai_handlers::true_streaming_sse_response(
@@ -168,7 +183,7 @@ async fn try_qwen35_backend(
             start,
             budget,
             prompt_token_count,
-            None,
+            Some(timing_rx),
             request.stop.as_deref(),
             crate::api::stream_tool_calls::StreamTools::from_request(request),
         ));
@@ -185,6 +200,7 @@ async fn try_qwen35_backend(
                 layers: time_layers,
             });
             let r = s.generate_traced(&input_ids, &gen_config, &mut |_| true, trace);
+            let decode_ended = std::time::Instant::now();
             let layers = if time_layers {
                 s.take_layer_timings()
             } else {
@@ -198,13 +214,14 @@ async fn try_qwen35_backend(
             session
                 .on_gpu
                 .store(s.on_gpu(), std::sync::atomic::Ordering::Relaxed);
-            r.map(|turn| (turn, measured)).map_err(|e| e.to_string())
+            r.map(|turn| (turn, measured, decode_ended))
+                .map_err(|e| e.to_string())
         },
         Err(_) => Err(POISONED.to_string()),
     })
     .await;
-    let (turn, measured) = match turn {
-        Ok(Ok(turn)) => turn,
+    let (turn, measured, decode_ended) = match turn {
+        Ok(Ok(done)) => done,
         Ok(Err(e)) => {
             state.metrics.record_failure();
             return Some(fail_response(
@@ -233,6 +250,14 @@ async fn try_qwen35_backend(
     let completion_tokens = generated_ids.len();
     let response_text = clean_chat_output(&decode_mapped.model.decode(&generated_ids));
 
+    // #4954: the same phase split the stream reports; no stream, so no
+    // first-content edge.
+    let timings = crate::api::PhaseTimings::from_marks(
+        turn.prefill_started,
+        turn.prefill_ended,
+        decode_ended,
+    )
+    .to_timings_at(prompt_token_count, completion_tokens, start, None);
     let duration = start.elapsed();
     state.metrics.record_success(completion_tokens, duration);
     let traces = crate::api::serve_trace::traces_for(&crate::api::serve_trace::ServeTrace {
@@ -255,7 +280,7 @@ async fn try_qwen35_backend(
         traces,
         request.tools.as_deref(),
         request_tool_choice(request),
-        None,
+        timings,
         // #3719: what THIS turn ran on, measured by the session at its end. A forced-GPU
         // turn that fell back to the CPU still answers 200; this is how the client
         // (`apr code`'s document) can tell.
