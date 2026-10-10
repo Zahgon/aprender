@@ -645,6 +645,10 @@ open(p, "w").write(s)
 PY
     fi
     printf '#!/usr/bin/env bash\nexit 0\n' > "$r/scripts/bump-version.sh"
+    # the autopilot judges the standing release policy first (unreadable = STOP): the real reader and a
+    # ladder with no policy block, so 9.9.9 runs the pre-policy train these rows were written for
+    mkdir -p "$r/scripts/lib" "$r/contracts" && cp -- "$ROOT/scripts/lib/release_policy.sh" "$ROOT"/scripts/lib/release_policy_*.awk "$r/scripts/lib/" \
+        && printf 'ladder:\n  emergency_scopes:\n' > "$r/contracts/model-capability-ladder-v1.yaml" || return 2
     # the post-publish dogfood: runs the REAL gate over the receipts it is pointed at, then writes the
     # receipt a real run writes, with the verdict/deferred the row picks
     cat > "$r/scripts/dogfood.sh" <<'STUB'
@@ -665,6 +669,8 @@ STUB
         && git -C "$r" commit -q -m 'release: 9.9.9' && git -C "$r" remote add origin "$d/origin.git" \
         && git -C "$r" push -q origin main && git -C "$r" fetch -q origin || return 2
     git -C "$r" rev-parse HEAD > "$d/mc"
+    # #4950: the cascade step records the clean-room run it proved; the ledger step folds it in
+    printf '{"cleanroom_run":"777","tag":"v9.9.9","sha":"%s"}\n' "$(cat "$d/mc")" > "$d/ap/cascade-cleanroom.json" || return 2
     : > "$d/state/dogfood.log"; : > "$d/state/ssh.log"; : > "$d/state/gh.log"; : > "$d/state/wrap.log"; : > "$d/state/pkg.log"
 }
 # autopilot NAME FROM TO [ENV=VAL ...] -> rc in $TMP/NAME/rc; lambda (the train host) runs locally
@@ -886,6 +892,7 @@ l1_ledger_pr() {
         grep -qx "evidence/dogfood/9.9.9/$h.json" <<< "$files" || { printf 'the ledger branch lacks %s'"'"'s receipt\n' "$h"; return 1; }
     done
     grep -Eqx "docs/build-ledger/[0-9]{4}-[0-9]{2}-[0-9]{2}/$mc-lambda-vector-train\.json" <<< "$files" || { printf 'the ledger branch lacks the train record\n'; return 1; }
+    jq -e --arg s "$(cat "$d/mc")" '.cascade_cleanroom == {cleanroom_run: "777", tag: "v9.9.9", sha: $s}' "$d"/ap/"$mc"-lambda-vector-train.json > /dev/null || { printf 'the train record lacks the cascade clean-room run id and sha\n'; return 1; }
     [ "$(git --git-dir="$d/origin.git" rev-parse ledger/9.9.9^)" = "$(git --git-dir="$d/origin.git" rev-parse main)" ] || { printf 'the ledger commit is not on top of main\n'; return 1; }
     grep -q '^pr create --repo paiml/aprender --base main --head ledger/9.9.9 ' "$d/state/gh.log" || { printf 'no ledger PR was opened\n'; return 1; }
     ! grep -Eq '^pr merge|--auto' "$d/state/gh.log" || { printf 'the ledger PR was armed\n'; return 1; }

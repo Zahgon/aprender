@@ -478,8 +478,17 @@ clean_room_tested_shas() {
 # clean_room_gate ROOT TAG -- 0 only when a completed `clean-room (aprender)`
 # job, whose log records exactly one tested commit resolving to TAG's commit,
 # concluded `success`. Every other outcome prints a REFUSE line and returns 1.
+# clean_room_gate ROOT TAG RUN_ID -- the same, but only the run RUN_ID (a run id
+# recorded earlier) is examined; a green run other than that one does not count.
+# An empty RUN_ID is refused: passing the third argument means a run was recorded.
 clean_room_gate() {
-  local root=$1 tag=$2
+  local root=$1 tag=$2 pin="" pinned=""
+  if [ "$#" -ge 3 ]; then
+    pin=$3
+    case "$pin" in
+      ''|*[!0-9]*) echo "CLEAN-ROOM REFUSE: recorded clean-room run id '$pin' for tag $tag is not a run id"; return 1 ;;
+    esac
+  fi
   local repo="paiml/infra" workflow="clean-room.yml" job_name="clean-room (aprender)"
   local assert_step="Assert the commit under test"
   local want epoch runs_json runs examined=0 seen=""
@@ -499,7 +508,20 @@ clean_room_gate() {
     echo "CLEAN-ROOM REFUSE: looked for $want (tag $tag); gh is unauthenticated or erroring -- cannot prove clean-room ran on it"
     return 1
   fi
-  if ! runs_json=$(gh run list --repo "$repo" --workflow "$workflow" --limit 30 \
+  if [ -n "$pin" ]; then
+    # PINNED (PMAT-4687): judge exactly the recorded run and no other. It is read
+    # through the same parser and loop below, so it passes only on the same proof.
+    if ! pinned=$(gh api "repos/$repo/actions/runs/$pin" \
+          --jq '.path, ([{databaseId: .id, status: .status, conclusion: .conclusion, createdAt: .created_at}] | tojson)' 2>/dev/null); then
+      echo "CLEAN-ROOM REFUSE: looked for $want (tag $tag); recorded run $pin could not be read from $repo"
+      return 1
+    fi
+    if [ "$(head -n 1 <<< "$pinned")" != ".github/workflows/$workflow" ]; then
+      echo "CLEAN-ROOM REFUSE: looked for $want (tag $tag); recorded run $pin is not a $workflow run (path: $(head -n 1 <<< "$pinned"))"
+      return 1
+    fi
+    runs_json=$(sed -n '2p' <<< "$pinned")
+  elif ! runs_json=$(gh run list --repo "$repo" --workflow "$workflow" --limit 30 \
         --json databaseId,status,conclusion,createdAt 2>/dev/null); then
     echo "CLEAN-ROOM REFUSE: looked for $want (tag $tag); gh run list --repo $repo --workflow $workflow failed"
     return 1
@@ -591,21 +613,29 @@ clean_room_gate() {
     seen="$seen"$'\n'"  - run $rid job $jid: tested $tested = the tag commit, conclusion=$jconcl [$tsource]"
   done <<< "$runs"
 
-  echo "CLEAN-ROOM REFUSE: looked for $want (tag $tag); no green '$job_name' run tested it ($examined $workflow run(s) created after that commit examined)${seen:- -- found none}"
+  echo "CLEAN-ROOM REFUSE: looked for $want (tag $tag); no green '$job_name' run tested it${pin:+ -- only recorded run $pin was examined} ($examined $workflow run(s) created after that commit examined)${seen:- -- found none}"
   return 1
 }
 
 # THE GATE (F-9, PMAT-745). Every mode that uploads passes through
 # scripts/check_publish_preflight.sh first: clean tree, version from cargo
-# metadata, tag at HEAD, HEAD on origin/release/<version> (#4286), dogfood receipt GO for this commit
+# metadata, tag at HEAD, HEAD on origin/main or origin/release/<version> (P5, #4286), dogfood receipt GO for this commit
 # and version. --check and --order-check upload nothing and are not gated. The
 # drain re-runs this script per pass, so the gate is re-asked before every pass.
+# Under the standing release policy the preflight's R7 judges CRUX smoke from
+# MODEL_LADDER_CRUX_DIR and CRUX_CERT, inherited from the caller: the autopilot's
+# cascade step hands down the receipts its preflight step judged (D4). A hand run
+# passes them the same way, or R7 refuses.
 #
 # The clean-room gate runs FIRST, before the preflight and before any upload.
 # There is no mode, flag or variable that skips it for a publishing run;
 # --check REPORTS its verdict (it uploads nothing, so there is nothing to bypass).
+# --rehearse asks both gates the way the night can answer them, in the block after
+# this one, and exits before the config backup and every upload. It sits AFTER the
+# publishing path's block so that block stays the first of both calls in this file:
+# check_cascade_clean_room_gate.sh reads the first call of each to prove the order.
 case "$MODE" in
-  --check|--order-check) : ;;
+  --check|--order-check|--rehearse) : ;;
   *)
     if ! clean_room_gate "$REPO_ROOT" "v$TARGET_VERSION"; then
       echo "⛔ clean-room gate refused (clean-room.yml is not green on exactly the v$TARGET_VERSION commit); nothing was published." >&2
@@ -617,6 +647,33 @@ case "$MODE" in
     fi
     ;;
 esac
+
+# THE RELEASE REHEARSAL (scripts/release/rehearse.sh, APR-071 B1/H10): the two gates above, asked
+# the way the night can answer them, then a stop before the config backup and every upload. No tag
+# exists, so the clean-room fact is the night's cleanroom-cpu lane on C (the bump's parent), and the
+# preflight's R3 judges the tag the tag step would have made. Both gates are asked even when the
+# first refuses, so one night names both. Refused outright unless RELEASE_REHEARSAL=1.
+if [ "$MODE" = --rehearse ]; then
+  [ "${RELEASE_REHEARSAL:-}" = 1 ] || { echo "⛔ --rehearse runs only under RELEASE_REHEARSAL=1 (scripts/release/rehearse.sh)" >&2; exit 2; }
+  # shellcheck source=scripts/release/lib_rehearsal.sh
+  . "$REPO_ROOT/scripts/release/lib_rehearsal.sh" || exit 2
+  reh_rc=0
+  if reh_run=$(rehearsal_lane cleanroom-cpu); then
+    echo "CLEAN-ROOM OK (rehearsal): the night's cleanroom-cpu run $reh_run is green on C ${RELEASE_REHEARSAL_C:0:9}"
+  else
+    echo "⛔ clean-room gate refused (rehearsal): lane cleanroom-cpu on C: $reh_run; nothing was published." >&2
+    reh_rc=1
+  fi
+  PUBLISH_PREFLIGHT_WOULD_TAG=$(cat "${RELEASE_AP:-/nonexistent}/would-tag" 2>/dev/null) || PUBLISH_PREFLIGHT_WOULD_TAG=""
+  export PUBLISH_PREFLIGHT_WOULD_TAG
+  if ! bash "$REPO_ROOT/scripts/check_publish_preflight.sh"; then
+    echo "⛔ check_publish_preflight.sh refused; nothing was published." >&2
+    reh_rc=1
+  fi
+  [ "$reh_rc" = 0 ] || exit 1
+  echo "REHEARSAL: every publishing gate asked and green; stopped before the config backup and the uploads"
+  exit 0
+fi
 
 # Backup .cargo/config.toml once (publish needs a clean one without [patch.crates-io]).
 # The backup lives OUTSIDE the tree. Beside the config it was an untracked file

@@ -47,6 +47,68 @@ pb_splice() {
     printf '%s' "${s%%"$anchor"*}$anchor"$'\n'"$sec"$'\n'"$rest" > "$1"
 }
 
+# pb_policy_covers ROOT VERSION -> rc 0 the standing release policy (ladder.release_policy) covers VERSION,
+# 1 it does not, 2 the policy could not be read (never "not covered").
+pb_policy_covers() {
+    local root=$1 v=$2
+    ( . "$root/scripts/lib/release_policy.sh" || exit 2
+      t=$(mktemp) || exit 2
+      release_policy_ladder "$root/contracts/model-capability-ladder-v1.yaml" "$v" > "$t"; r=$?
+      lad=$(cat "$t"); rm -f "${t:?}"
+      [ -z "$lad" ] || [ "$lad" = "$root/contracts/model-capability-ladder-v1.yaml" ] || rm -f "${lad:?}"
+      [ "$r" = 0 ] || { echo "release policy: $RP_WHY" >&2; exit 2; }
+      [ "$RP_APPLIES" = 1 ] )
+}
+# pb_carry_cert ROOT VERSION BASE -> under the standing release policy, ROOT/evidence/crux/VERSION/ holds the CRUX
+# prompt certification the models lane requires at the release commit (models_t1.sh crux mode). 0.70.1 carried it
+# by hand: the newest earlier version's certification, apr_commit set to the tree it was cut from, the inventory
+# verbatim. A certification for a different prompt set is not carried: that needs a new certification run.
+# rc 0 carried, present already, or not covered; 1 refused (no earlier certification, prompts changed);
+# 2 the policy or a file could not be read.
+pb_carry_cert() {
+    local root=$1 v=$2 base=$3 dst src prev p pv vc lad got want
+    pb_policy_covers "$root" "$v" || { [ $? = 1 ] && { echo "CERT not carried: the standing release policy does not cover $v"; return 0; }; return 2; }
+    dst="$root/evidence/crux/$v"
+    if [ -f "$dst/prompt-certification.json" ]; then echo "CERT present: $dst/prompt-certification.json"; return 0; fi
+    . "$root/scripts/lib/release_policy.sh" || return 2
+    vc=$(rp_core "$v") || return 2
+    prev=""
+    for p in "$root"/evidence/crux/*/prompt-certification.json; do
+        [ -f "$p" ] && [ -f "${p%.json}-inventory.json" ] || continue
+        pv=${p%/prompt-certification.json}; pv=${pv##*/}
+        pv=$(rp_core "$pv") || continue
+        [ "$pv" != "$vc" ] && rp_ge "$vc" "$pv" || continue
+        [ -z "$prev" ] || [ "$(printf '%s\n%s\n' "${prev%%	*}" "$pv" | sort -V | tail -n 1)" = "$pv" ] && prev="$pv	$p"
+    done
+    [ -n "$prev" ] || { echo "CERT refused: no earlier evidence/crux/<version>/prompt-certification.json below $v to carry" >&2; return 1; }
+    src=${prev#*	}
+    want=$(jq -er .prompts_sha256 "$src") && p=$(jq -er .prompts "$src") || { echo "CERT refused: $src names no prompts or prompts_sha256" >&2; return 2; }
+    got=$(sha256sum < "$root/$p" 2>/dev/null | cut -d' ' -f1) || got=""
+    [ "$got" = "$want" ] || { echo "CERT refused: $p is not the prompt set $src certified (sha256 ${got:-unreadable}, certified $want) -- run a new certification" >&2; return 1; }
+    mkdir -p "$dst" && cp -- "${src%.json}-inventory.json" "$dst/prompt-certification-inventory.json" \
+        && jq --arg c "$base" '.apr_commit = $c' "$src" > "$dst/prompt-certification.json" || return 2
+    echo "CERT carried: $src -> $dst (apr_commit $base)"
+}
+
+# C345 Q9: "No pass starts without its three receipts." pb_streak SCRIPT REPO DIR -> rc 0 the pass may start, 1 it may not
+# (the reason on stderr). The count is SCRIPT --streak's on REPO's origin/main, made before the bump is cut, with its read
+# cached in DIR and its RECEIPT lines kept in DIR/streak.txt (quorum 09:34Z). The pass start is the release path, so its one
+# read has no rate floor. In a rehearsal night (RELEASE_REHEARSAL=1) the floor stays and a not-ready streak (rc 1) is
+# allowed, since a night cannot need its own three nights; not_measured (2) or a caller error (3) stops it there too.
+pb_streak() {
+    local script=$1 repo=$2 dir=$3 rc=0 a
+    a=(--commit origin/main --as-of "$(date -u +%F)" --cache "$dir" --repo "$repo")  # bashrs disable-line=DET002
+    [ "${RELEASE_REHEARSAL:-}" = 1 ] || a+=(--release-path)
+    mkdir -p -- "$dir" || return 1
+    bash "$script" --streak "${a[@]}" > "$dir/streak.txt" 2>&1 || rc=$?
+    cat -- "$dir/streak.txt"
+    case "$rc:${RELEASE_REHEARSAL:-}" in
+        0:*) return 0 ;;
+        1:1) echo "REHEARSAL: the streak is not ready (rc 1), allowed in a night: it cannot need its own three nights"; return 0 ;;
+        *) echo "C345 Q9: no pass starts without its three receipts (--streak rc $rc, $dir/streak.txt)" >&2; return 1 ;;
+    esac
+}
+
 pb_self_test() {
     local d fail=0 got; d=$(mktemp -d) || return 2
     printf '%s' '[{"number":4,"title":"fixup: d"},{"number":1,"title":"Fix(x)!: a"},{"number":2,"title":"feat: b"},{"number":3,"title":"chore: c"}]' > "$d/m.json"
@@ -63,6 +125,74 @@ pb_self_test() {
     if pb_splice "$d/c.md" "$d/n.md" 2>/dev/null; then echo "  FAIL splice accepted two [Unreleased] anchors"; fail=1; else echo "  ok   splice refuses two anchors"; fi
     printf '# C\n' > "$d/c.md"
     if pb_splice "$d/c.md" "$d/n.md" 2>/dev/null; then echo "  FAIL splice accepted no anchor"; fail=1; else echo "  ok   splice refuses no anchor"; fi
+    # pb_carry_cert: a fixture tree with this checkout's policy reader, a ladder per case and certifications
+    local r lib rc
+    lib="$(cd "$(dirname "$0")/.." && pwd)/lib"
+    pb_cert_tree() { # pb_cert_tree DIR POLICY(covers|none|bad) VERSIONS... -> DIR with a certification per VERSION
+        local t=$1 pol=$2 x; shift 2
+        mkdir -p "$t/scripts/lib" "$t/contracts" && cp -- "$lib/release_policy.sh" "$lib"/release_policy_*.awk "$t/scripts/lib/" || return 2
+        printf 'P1\n' > "$t/prompts.json"
+        {   printf 'ladder:\n'
+            [ "$pol" = none ] || printf '  release_policy:\n    name: crux-smoke\n    since: "0.0.0"\n    date: "d"\n    quote: "q"\n    hosts: [lambda, gx10]\n    thinking: ["off"]\n    larger_rows: nightly\n    red_row_needs: ticket\n    ticket_owner: "#1"\n'
+            [ "$pol" != covers ] || printf '    release_notes: known_failures\n'
+            printf '  emergency_scopes:\n'
+        } > "$t/contracts/model-capability-ladder-v1.yaml"
+        for x in "$@"; do
+            mkdir -p "$t/evidence/crux/$x"
+            printf '{"prompts":"prompts.json","prompts_sha256":"%s","apr_commit":"old-%s"}\n' "$(sha256sum < "$t/prompts.json" | cut -d' ' -f1)" "$x" > "$t/evidence/crux/$x/prompt-certification.json"
+            printf '{"inv":"%s"}\n' "$x" > "$t/evidence/crux/$x/prompt-certification-inventory.json"
+        done
+    }
+    r="$d/c1"; pb_cert_tree "$r" covers 0.69.1 0.70.1 0.9.0 0.72.0 || return 2
+    pb_carry_cert "$r" 0.71.0 base1 > /dev/null 2>&1; rc=$?
+    if [ "$rc" = 0 ] && [ "$(jq -r .apr_commit "$r/evidence/crux/0.71.0/prompt-certification.json" 2>/dev/null)" = base1 ] \
+        && [ "$(jq -r .inv "$r/evidence/crux/0.71.0/prompt-certification-inventory.json" 2>/dev/null)" = 0.70.1 ]; then
+        echo "  ok   cert: covered 0.71.0 carries the newest earlier one (0.70.1, not 0.9.0 or 0.72.0), apr_commit = the base"
+    else echo "  FAIL cert carry (rc $rc): $(cat "$r/evidence/crux/0.71.0/"*.json 2>/dev/null | tr '\n' ' ')"; fail=1; fi
+    r="$d/c2"; pb_cert_tree "$r" none 0.70.1 || return 2
+    pb_carry_cert "$r" 0.71.0 base1 > /dev/null 2>&1; rc=$?
+    if [ "$rc" = 0 ] && [ ! -e "$r/evidence/crux/0.71.0" ]; then echo "  ok   cert: no policy -> nothing carried"
+    else echo "  FAIL cert: uncovered version (rc $rc) wrote evidence/crux/0.71.0"; fail=1; fi
+    r="$d/c3"; pb_cert_tree "$r" covers 0.70.1 0.71.0 || return 2
+    pb_carry_cert "$r" 0.71.0 base1 > /dev/null 2>&1; rc=$?
+    if [ "$rc" = 0 ] && [ "$(jq -r .apr_commit "$r/evidence/crux/0.71.0/prompt-certification.json")" = old-0.71.0 ]; then echo "  ok   cert: one already present is kept as it is"
+    else echo "  FAIL cert: a present certification was rewritten (rc $rc)"; fail=1; fi
+    r="$d/c4"; pb_cert_tree "$r" covers 0.70.1 || return 2
+    printf 'P2\n' > "$r/prompts.json"
+    pb_carry_cert "$r" 0.71.0 base1 > /dev/null 2>&1; rc=$?
+    if [ "$rc" = 1 ] && [ ! -e "$r/evidence/crux/0.71.0" ]; then echo "  ok   cert: a changed prompt set is refused, not carried"
+    else echo "  FAIL cert: changed prompts gave rc $rc"; fail=1; fi
+    r="$d/c5"; pb_cert_tree "$r" covers 0.72.0 || return 2
+    pb_carry_cert "$r" 0.71.0 base1 > /dev/null 2>&1; rc=$?
+    if [ "$rc" = 1 ] && [ ! -e "$r/evidence/crux/0.71.0" ]; then echo "  ok   cert: only a later version's -> refused (never carried backwards)"
+    else echo "  FAIL cert: no earlier certification gave rc $rc"; fail=1; fi
+    r="$d/c6"; pb_cert_tree "$r" bad 0.70.1 || return 2
+    pb_carry_cert "$r" 0.71.0 base1 > /dev/null 2>&1; rc=$?
+    if [ "$rc" = 2 ] && [ ! -e "$r/evidence/crux/0.71.0" ]; then echo "  ok   cert: an unreadable policy is rc 2, not \"no policy\""
+    else echo "  FAIL cert: unreadable policy gave rc $rc"; fail=1; fi
+    # pb_streak: a planted --streak that records its arguments and exits STUB_RC, both polarities, in and out of a night
+    printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" > "$STUB_ARGS"; echo "RECEIPT planted"; exit "$STUB_RC"\n' > "$d/streak.sh"
+    local want mode
+    for r in 0:pass:0 1:pass:1 2:pass:1 3:pass:1 0:night:0 1:night:0 2:night:1 3:night:1; do
+        IFS=: read -r rc mode want <<< "$r"
+        if [ "$mode" = night ]; then got=0; RELEASE_REHEARSAL=1 STUB_RC=$rc STUB_ARGS="$d/args" pb_streak "$d/streak.sh" "$d" "$d/st" > /dev/null 2>&1 || got=$?
+        else got=0; RELEASE_REHEARSAL='' STUB_RC=$rc STUB_ARGS="$d/args" pb_streak "$d/streak.sh" "$d" "$d/st" > /dev/null 2>&1 || got=$?; fi
+        if [ "$got" = "$want" ]; then echo "  ok   streak: --streak rc $rc in a $mode -> $([ "$want" = 0 ] && echo starts || echo stops)"
+        else echo "  FAIL streak: --streak rc $rc in a $mode gave $got (want $want)"; fail=1; fi
+    done
+    RELEASE_REHEARSAL='' STUB_RC=0 STUB_ARGS="$d/args" pb_streak "$d/streak.sh" "$d" "$d/st" > /dev/null 2>&1
+    got=$(cat "$d/args" 2>/dev/null)
+    if [[ $got == "--streak --commit origin/main --as-of "????-??-??" --cache $d/st --repo $d --release-path" ]] && grep -q '^RECEIPT planted$' "$d/st/streak.txt"
+    then echo "  ok   streak: the pass reads origin/main with no rate floor and keeps the receipts"
+    else echo "  FAIL streak: pass arguments: $got"; fail=1; fi
+    RELEASE_REHEARSAL=1 STUB_RC=1 STUB_ARGS="$d/args" pb_streak "$d/streak.sh" "$d" "$d/st" > /dev/null 2>&1
+    got=$(cat "$d/args" 2>/dev/null)
+    if [[ $got == *"--commit origin/main"* && $got != *--release-path* ]]; then echo "  ok   streak: a night keeps the rate floor"
+    else echo "  FAIL streak: night arguments: $got"; fail=1; fi
+    if awk '/^  git fetch -q origin main /{ f = 1 } f && /^  pb_streak "\$REPO_ROOT\/scripts\/release\/rehearse.sh" "\$REPO_ROOT" "\$AP\/streak" \\$/{ ok = 1 }
+            /^  git worktree add /{ exit !ok } END { if (!f) exit 1 }' "$0"
+    then echo "  ok   streak: wired after the fetch, before the bump worktree is cut"
+    else echo "  FAIL streak: pb_streak is not called between the fetch and the bump worktree"; fail=1; fi
     rm -rf -- "${d:?}"
     if [ "$fail" -eq 0 ]; then echo "prepare_bump self-test: PASS"; else echo "prepare_bump self-test: FAIL"; fi
     return "$fail"
@@ -83,11 +213,14 @@ export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 if [ "${2:-}" != "--ship" ]; then
   cd "$REPO_ROOT" || die "no repo"
   git fetch -q origin main || die "fetch failed"
+  pb_streak "$REPO_ROOT/scripts/release/rehearse.sh" "$REPO_ROOT" "$AP/streak" \
+    || die "C345 Q9: no pass starts without its three receipts: rehearse.sh --streak on origin/main ($AP/streak/streak.txt)"
   [ -e "$B" ] && die "$B exists: review it, or 'git worktree remove' it to start over"
   git worktree add -q -b "$BR" "$B" origin/main || die "worktree add failed"
   cd "$B" || die "cd $B"
   bash scripts/bump-version.sh "$V" > "$AP/bump.log" 2>&1 || die "bump-version.sh $V failed ($AP/bump.log)"
   bash scripts/bump-version.sh --check >> "$AP/bump.log" 2>&1 || die "bump-version.sh --check failed after the bump"
+  pb_carry_cert "$PWD" "$V" "$(git rev-parse HEAD)" || die "the CRUX prompt certification for $V could not be carried (see above)"
   since=$(git log -1 --format=%cI "$LAST_TAG") || die "no tag $LAST_TAG"
   gh pr list --repo $REPO --state merged --search "merged:>=$since" --limit 500 --json number,title > "$AP/merged.json" || die "gh pr list failed"
   pb_section "$AP/merged.json" "$V" "$MARK" "$AP/section.md" || die "CHANGELOG draft from $AP/merged.json failed"
@@ -126,11 +259,21 @@ bash "$CLOSES_GUARD" --body "$AP/pr_body.md" > "$AP/r2.log" 2>&1 || die "the bum
 # measured until after the tag. This script does not PRODUCE them (scripts/model_ladder.sh, on each
 # required host, with an apr built from this tree): it refuses without them, judged by the SAME
 # judge the dogfood runs. `git add -A` below commits whatever the judge read, unless it is ignored.
-bash scripts/check_model_ladder.sh --version "$V" > "$AP/ladder.log" 2>&1 || {
-  grep -E '^(FAIL|decline)' "$AP/ladder.log" >&2
-  die "model-ladder receipts for $V are not green in the bump tree; nothing committed, pushed or opened ($AP/ladder.log)"
-}
-ignored=$(git ls-files --others --ignored --exclude-standard -- "evidence/dogfood/models/$V")
+# Under the standing release policy the bump carries no smoke receipts: CRUX smoke is measured at T-1
+# on the merged release commit (autopilot.sh t1_models), and the tag step and preflight R7 judge those
+# receipts. A receipt committed here would be from a pre-bump binary. The certification still rides.
+pb_policy_covers "$PWD" "$V"; prc=$?
+case $prc in
+  0) [ -f "evidence/crux/$V/prompt-certification.json" ] \
+       || die "the standing release policy covers $V but the bump tree has no evidence/crux/$V/prompt-certification.json"
+     echo "LADDER not judged at the bump: the standing release policy covers $V -- CRUX smoke is measured at T-1 on the release commit" | tee "$AP/ladder.log" ;;
+  1) bash scripts/check_model_ladder.sh --version "$V" > "$AP/ladder.log" 2>&1 || {
+       grep -E '^(FAIL|decline)' "$AP/ladder.log" >&2
+       die "model-ladder receipts for $V are not green in the bump tree; nothing committed, pushed or opened ($AP/ladder.log)"
+     } ;;
+  *) die "the standing release policy cannot be judged for $V; nothing committed, pushed or opened" ;;
+esac
+ignored=$(git ls-files --others --ignored --exclude-standard -- "evidence/dogfood/models/$V" "evidence/crux/$V")
 [ -z "$ignored" ] || die "model-ladder receipts for $V are gitignored, so the bump would not commit them: $ignored"
 cargo_bin() { "${CARGO_HOME:-$HOME/.cargo}"/bin/cargo "$@"; }
 cargo_bin fmt --all -- --check > /dev/null 2>&1 || die "cargo fmt --check failed"
@@ -147,6 +290,15 @@ deep (T-1, local), pre-publish dogfood, tag + release, clean-room.yml dispatched
 Pmat-Ticket: PMAT-$EPIC
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 MSG
+# REHEARSAL (APR-071 B1, H10; scripts/release/rehearse.sh): every gate above ran for real and the bump
+# commit exists in the rehearsal's own clone. The push, the PR and the arm are WOULD lines; the commit
+# stays local and rehearse.sh hands it to autopilot.sh as the release commit. Unset, nothing changes.
+if [ "${RELEASE_REHEARSAL:-}" = 1 ]; then
+  printf 'WOULD git push -q -u origin %s\nWOULD gh pr create --repo %s --base main --head %s --milestone %s --title "release: %s" --body-file %s\nWOULD bash %s <the PR number>\n' \
+    "$BR" "$REPO" "$BR" "$MS" "$V" "$AP/pr_body.md" "$REPO_ROOT/scripts/arm_pr_automerge.sh"
+  printf 'REHEARSED BUMP %s on %s (local; nothing pushed, opened or armed)\n' "$(git rev-parse HEAD)" "$parent"
+  exit 0
+fi
 git push -q -u origin "$BR" || die "push failed"
 url=$(gh pr create --repo $REPO --base main --head "$BR" --milestone "$MS" --title "release: $V" --body-file "$AP/pr_body.md") || die "gh pr create failed"
 n=${url##*/}
