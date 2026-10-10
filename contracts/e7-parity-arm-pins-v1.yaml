@@ -39,6 +39,7 @@ equations:
     invariants:
       - "The break swaps the byte slices of experts i and j in all three of blk.L.ffn_gate_exps, ffn_up_exps and ffn_down_exps (expert e is bytes [offset + e*size/n_expert, +size/n_expert), qwen3_moe_load.rs expert_byte_slice); the router blk.L.ffn_gate_inp is untouched, so tokens routed to i reach j's weights"
       - "i and j are experts the arm's prompts reach in layer L (experts_reached), else the break is never exercised and proves nothing"
+      - "Pinned 2026-10-10 from the measured experts_reached: L = 24 (the middle of 48), i = 4, j = 8, the two lowest expert ids reached in layer 24 by all 16 prompts (40 such experts); receipt cop-inbox handoff/la074-ka-receipt/moe-1g/"
   moe_arm_inputs:
     formula: "moe_arm = (llama_cpp_commit = d1d3c3396, model = Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf sha256 6c997b8af17debdfb01d890214400ccbab00db6acc0ba8da5de1cc906c4774d0, quant = Q4_K_M, prompts = the 16 ids of known_good_arm_inputs from the same prompts file, decoding = greedy, threads = 8, backend = cpu)"
     domain: "qwen3moe, 48 layers, 128 experts, 8 used per token; CPU only (C358 1h)"
@@ -51,6 +52,7 @@ equations:
     codomain: "one line per run, and per layer; a line, not a bar (C358 1g)"
     invariants:
       - "Recorded on the CPU path only, in gguf/qwen3_moe_load.rs moe_ffn_forward_layer right after route_top_k, keyed by the layer the loader named (router offset -> layer index); with the reached expert ids per layer so runs can be unioned; written to the file named by APR_MOE_EXPERTS_REACHED each time a new (layer, expert) pair is reached, so the file holds the final line when the run ends. Unset: nothing is recorded"
+      - "Measured 2026-10-10 18:51-19:2xZ on intel, apr CPU greedy, 32 max tokens, the 16 prompts, all rc 0: per prompt 3180 to 4184 of 6144; union 5636 of 6144, per layer 107 to 127 of 128 (receipt cop-inbox handoff/la074-ka-receipt/moe-1g/). A line, not a bar"
 proof_obligations:
   - id: E7PIN-INV-001
     type: invariant
@@ -98,5 +100,5 @@ qa_gate:
   pass_criteria: "FALSIFY-E7PIN-{001..004} all PASS"
   unmeasured:
     - "E7PIN-INV-003 has no in-tree falsifier yet: the scorer that voids non-comparable rows lives in the receipt (handoff/la074-ka-receipt), and the 30-id print defect blocks a full arm"
-    - "moe_named_break: the procedure is pinned; L, i and j are pinned after experts_reached is measured, and no swap tool exists in tree yet (C358 1f)"
-    - "experts_reached on a real MoE run: the recorder is unit-tested (004), the arm run that reads it is not done (C358 1g)"
+    - "moe_named_break: procedure and L/i/j pinned; no swap tool exists in tree yet, so no broken run (C358 1f)"
+    - "experts_reached is apr-side only; llama.cpp routing is not recorded, so equal routing is not shown"

@@ -32,7 +32,7 @@ issues:
   - {issue: 4801, state: open, milestone: backlog, role: "qwen35moe, after #3091/#3090/#3714"}
   - {issue: 4378, state: open, role: "NOT ours: P0 owner:la-0.71"}
 staged:
-  - {branch: la-74/wip, head: 10217cbadf, rows: [R1, R4, F4, C358-1a, C358-1b, C358-1d, C358-1e], pr: none, slot: "after pb_streak, jetson, #5054 (cop f7 13:1xZ)"}
+  - {branch: la-74/wip, head: 10217cbadf, rows: [R1, R4, F4, C358-1a, C358-1b, C358-1d, C358-1e, C358-1g], pr: none, slot: "after pb_streak, jetson, #5054 (cop f7 13:1xZ)"}
 questions:
   - {id: Q1, text: "R2: keep or drop the qwen3_5_moe aliases on the qwen3_moe arch-constraints row while qwen35moe is refused?", asked: 2026-10-10, answer: open}
   - {id: Q2, text: "A5 parity pass line: exact greedy-token match for N tokens, or logits cosine >= X?", asked: 2026-10-10, answer: open}
@@ -46,5 +46,5 @@ c358:   # OPERATOR C358 13:32Z (handoff/a3-c358-1332.md): shape yes, numbers no;
   - {step: 1c, status: "first run, 7 of 32 rows comparable", measured: "Qwen3.5-4B Q4_K_M 00fe7986, llama.cpp d1d3c3396, CPU 8 thr, greedy 128: 3 identical, 4 diverge @31/@69/@85/@90 (thinking ON), 427/664 prefix tokens", blocker: "apr run -v prints 30 prompt ids, harness feeds them to llama.cpp; 1-line patch refused by pre-commit complexity hook (pmat --file scans the whole infer/ dir); logged, not routed", receipt: "handoff/la074-ka-receipt/"}
   - {step: 1d, status: "written: contracts/e7-parity-arm-pins-v1.yaml (inputs + comparable-row precondition, no bar)", falsifier: "FALSIFY-E7PIN-001..003 green, 3 planted mutants red; lint_passes_on_real_contracts green on intel @d29400c099", gap: "INV-003 has no in-tree falsifier; MoE arm pins (model, L, i, j) added when built"}
   - {step: 1e, status: "measured: llama.cpp d1d3c3396 loads Qwen3-30B-A3B-Instruct-2507 Q4_K_M (sha 6c997b8a, 48 layers, 128 experts, 8 used) and decodes greedily on CPU 8 thr; no row to the operator", receipt: "handoff/la074-ka-receipt/moe-1e/"}
-  - {step: 1f, status: "procedure pinned in e7-parity-arm-pins-v1 (swap i,j in gate/up/down exps of layer L, router untouched, i,j reached); L/i/j unpinned; no swap tool in tree (needs GGUF data offsets, which no apr command prints)"}
-  - {step: 1g, status: "defined in contract (of 48*128); counter unbuilt: apr trace takes no prompt and saves router ids only at the last position. Plan: forward_qwen3_moe{,_with_cache} call the drift-guarded moe_ffn_forward_layer_with_router and record (layer, ids)"}
+  - {step: 1f, status: "procedure + L=24, i=4, j=8 pinned in e7-parity-arm-pins-v1 from measured routing (2 lowest ids all 16 prompts reach in layer 24); swap tool unbuilt (needs GGUF data offsets), so no broken run yet", receipt: "handoff/la074-ka-receipt/moe-1g/"}
+  - {step: 1g, status: "built + measured: recorder in serve gguf/moe_experts_reached.rs (FALSIFY-E7PIN-004, planted mutant red); apr CPU greedy 32 tok, 16 prompts rc 0: union 5636 of 6144 (48x128), per prompt 3180-4184, per layer 107-127 of 128; apr side only", receipt: "handoff/la074-ka-receipt/moe-1g/"}
