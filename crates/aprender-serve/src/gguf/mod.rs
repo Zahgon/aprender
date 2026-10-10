@@ -49,6 +49,7 @@ mod io;
 pub(crate) mod keys;
 mod loader;
 mod model;
+pub mod moe_experts_reached;
 mod owned;
 #[cfg(feature = "cuda")]
 pub mod parity;

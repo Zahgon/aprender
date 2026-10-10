@@ -48,7 +48,9 @@ equations:
   experts_reached:
     formula: "experts_reached = |{(layer, e) : route_top_k selects e in layer for some token of some prompt}| of 48 * 128"
     domain: "every prompt token and every generated token of the arm, apr side"
-    codomain: "one printed line per run, and per layer; a line, not a bar (C358 1g)"
+    codomain: "one line per run, and per layer; a line, not a bar (C358 1g)"
+    invariants:
+      - "Recorded on the CPU path only, in gguf/qwen3_moe_load.rs moe_ffn_forward_layer right after route_top_k, keyed by the layer the loader named (router offset -> layer index); written to the file named by APR_MOE_EXPERTS_REACHED each time a new (layer, expert) pair is reached, so the file holds the final line when the run ends. Unset: nothing is recorded"
 proof_obligations:
   - id: E7PIN-INV-001
     type: invariant
@@ -81,6 +83,11 @@ falsification_tests:
     prediction: "admitted[\"Qwen3.5-4B/Q4_K_M\"] has exactly the 16 ids and the certification names sha256 00fe7986…"
     test: "jq -e '.admitted[\"Qwen3.5-4B/Q4_K_M\"] == [\"ctl-2plus2\",\"ctl-code-add\",\"fact-capital-japan\",\"fact-capital-france\",\"golden-paris\",\"nonascii-water-kanji\",\"arith-17x23\",\"arith-precedence\",\"arith-word-apples\",\"hard-not-prime\",\"hard-reverse-word\",\"hard-count-letters\",\"recall-arith-chain\",\"code-count-vowels\",\"long-primes-10\",\"long-countdown-15\"]' evidence/crux/0.70.3/prompt-certification.json >/dev/null && grep -q 00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4 evidence/crux/0.70.3/prompt-certification.json"
     if_fails: "The arm would run prompts the model was never certified on, or a model file nobody certified."
+  - id: FALSIFY-E7PIN-004
+    rule: "The experts-reached line counts distinct (layer, expert) pairs of layers * experts, and only routed experts"
+    prediction: "cargo test -p aprender-serve --lib moe_experts_reached passes: repeats count once, unseen layers stay in the denominator, an unnamed layer is not counted"
+    test: "cargo test -p aprender-serve --lib moe_experts_reached"
+    if_fails: "The line over- or under-counts, so the operator reads a coverage figure that is not what the prompts reached."
 qa_gate:
   id: F-E7PIN-001
   name: "E7 parity arm: inputs pinned before any comparison"
@@ -88,8 +95,8 @@ qa_gate:
   checks:
     - "known_good_arm_inputs"
     - "comparable_row"
-  pass_criteria: "FALSIFY-E7PIN-{001..003} all PASS"
+  pass_criteria: "FALSIFY-E7PIN-{001..004} all PASS"
   unmeasured:
     - "E7PIN-INV-003 has no in-tree falsifier yet: the scorer that voids non-comparable rows lives in the receipt (handoff/la074-ka-receipt), and the 30-id print defect blocks a full arm"
     - "moe_named_break: the procedure is pinned; L, i and j are pinned after experts_reached is measured, and no swap tool exists in tree yet (C358 1f)"
-    - "experts_reached: apr has no per-prompt record; apr trace saves moe_router_indices only for the last position of a fixed input, so the counter is unbuilt (C358 1g)"
+    - "experts_reached on a real MoE run: the recorder is unit-tested (004), the arm run that reads it is not done (C358 1g)"

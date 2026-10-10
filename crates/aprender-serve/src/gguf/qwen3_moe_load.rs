@@ -246,6 +246,7 @@ pub fn load_qwen3_moe_layer(
     // one function every MoE load path goes through (`from_gguf_for_moe` and
     // both `infer::qwen3_moe_generate` loaders), so no caller can skip it.
     validate_moe_layer_tensors(layer_idx, &layer)?;
+    super::moe_experts_reached::note_layer(layer.router.offset, layer_idx);
     Ok(layer)
 }
 
@@ -612,6 +613,11 @@ pub fn moe_ffn_forward_layer(
 
     // ---- Softmax, top-k, renormalize ----
     let topk_renorm = route_top_k(&logits, num_experts_per_tok);
+    super::moe_experts_reached::record(
+        layer.router.offset,
+        num_experts,
+        &topk_renorm.iter().map(|&(e, _)| e).collect::<Vec<_>>(),
+    );
 
     // ---- Per-expert SwiGLU + weighted accumulate ----
     //
