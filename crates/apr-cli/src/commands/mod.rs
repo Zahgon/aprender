@@ -55,6 +55,7 @@ pub(crate) mod devices;
 pub(crate) mod dry_sampling_classifier;
 pub(crate) mod dry_sampling_lint;
 pub(crate) mod embed;
+pub(crate) mod embed_gguf;
 pub(crate) mod embed_viz;
 pub(crate) mod embed_viz_classifier;
 pub(crate) mod embed_viz_lint;

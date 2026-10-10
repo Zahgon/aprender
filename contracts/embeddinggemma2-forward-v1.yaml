@@ -1,5 +1,5 @@
 metadata:
-  version: 1.0.0
+  version: 1.1.0
   created: '2026-10-07'
   author: PAIML Engineering
   description: EmbeddingGemma 2 forward pass -- tokens to a unit-norm, projected, optionally truncated embedding (APR-EMBED-001 EG-0 f)
@@ -26,19 +26,20 @@ equations:
     postconditions:
     - 'every layer has exactly one kind and the kind set is {local, global}'
   local_attention:
-    formula: A_local(x)_i = softmax_j( q_i . k_j / sqrt(d_head) + M_ij ) v_j with M_ij = 0 if |i - j| < W else -inf
+    formula: A_local(x)_i = softmax_j( q_i . k_j + M_ij ) v_j with M_ij = 0 if |i - j| <= floor(W / 2) else -inf
     domain: x in R^{n x d_model}, W = sliding_window read from metadata
     codomain: R^{n x d_model}
     invariants:
     - The mask is symmetric (bidirectional); no causal term (attention.causal = false)
-    - Positions with |i - j| >= W receive exactly zero weight
+    - Positions with |i - j| > floor(W / 2) receive exactly zero weight; the window is centred, W / 2 on each side (llama.cpp symmetric SWA)
+    - The score scale is 1.0, not 1 / sqrt(d_head), as in the reference forward
     preconditions:
     - W > 0
     - n > 0
     postconditions:
     - 'output.shape == input.shape and all output values are finite'
   global_attention:
-    formula: A_global(x)_i = softmax_j( q_i . k_j / sqrt(d_head) + P_ij ) v_j with P_ij = 0 for real tokens, -inf for padding
+    formula: A_global(x)_i = softmax_j( q_i . k_j + P_ij ) v_j with P_ij = 0 for real tokens, -inf for padding
     domain: x in R^{n x d_model}
     codomain: R^{n x d_model}
     invariants:
@@ -112,7 +113,7 @@ proof_obligations:
 - id: EG2-INV-002
   type: invariant
   property: Local attention window
-  formal: "∀ l ∈ local, ∀ i, j: abs(i - j) ≥ W ⇒ weight(i, j) = 0"
+  formal: "∀ l ∈ local, ∀ i, j: abs(i - j) > ⌊W/2⌋ ⇒ weight(i, j) = 0 ∧ abs(i - j) ≤ ⌊W/2⌋ ⇒ weight(i, j) > 0"
   applies_to: all
 - id: EG2-INV-003
   type: invariant
@@ -163,8 +164,8 @@ falsification_tests:
 - id: FALSIFY-EG2-002
   rule: Local attention window
   prediction: Attention weights beyond the window are exactly zero in local layers
-  test: proptest over n in [1, 3W] with random q, k; inspect the weight matrix
-  if_fails: Window off by one, or a causal mask applied instead of a symmetric one
+  test: unit test over n in [1, 3W] with random q, k and a V that marks each position; the boundary pair abs(i - j) = floor(W / 2) is inside, floor(W / 2) + 1 is outside
+  if_fails: Window off by one, the full W taken on each side instead of W / 2, or a causal mask applied instead of a symmetric one
 - id: FALSIFY-EG2-003
   rule: Bidirectional global attention
   prediction: Reversing token order permutes, but does not change the set of, attention weights in global layers

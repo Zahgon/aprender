@@ -813,7 +813,7 @@ commands:
 
   - name: embed
     category: inference
-    description: "Produce sentence embeddings from a BERT bi-encoder loaded from an APR file (GH-326 Phase 6). Loads encoder-only `BertModel` checkpoints (e.g. `sentence-transformers/all-MiniLM-L6-v2`), tokenises text with WordPiece, runs the encoder forward, then pools hidden states with `--pool cls` ([CLS] hidden state) or `--pool mean` (mean of token positions; sentence-transformers default). Optionally L2-normalises (`--normalize`, default true). Repeatable `--text` for batch encoding. Outputs `{ text, embedding: [f32; hidden_dim], dim }` per input."
+    description: "Produce sentence embeddings from a BERT APR file or an EmbeddingGemma 2 GGUF file; the file's magic bytes pick the path. An APR file (GH-326 Phase 6) loads encoder-only `BertModel` checkpoints (e.g. `sentence-transformers/all-MiniLM-L6-v2`), tokenises text with WordPiece (`--vocab`, required), runs the encoder forward, then pools hidden states with `--pool cls` ([CLS] hidden state) or `--pool mean` (mean of token positions; sentence-transformers default), optionally L2-normalised (`--normalize`, default true). A GGUF file (APR-EMBED-001) takes its tokenizer, sizes and mean pooling from the file and gives unit-length vectors; `--task` applies the model card's prompt, `--title` names a `--task document`, and `--dim 512|256|128` keeps a re-normalised Matryoshka prefix. Repeatable `--text` for batch encoding. Outputs `{ text, embedding: [f32; dim], dim }` per input."
     requires_model: true
     kinds: {generative: refuse, embedding: receipt}
     use_instead: {generative: run}

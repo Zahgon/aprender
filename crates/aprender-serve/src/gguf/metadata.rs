@@ -54,7 +54,21 @@ impl GGUFModel {
                 reason: format!("Offset {} exceeds platform usize limit", tensor.offset),
             })?;
         let offset = self.tensor_data_start + tensor_offset;
+        Self::dequantize_at(tensor.qtype, file_data, offset, size)
+    }
 
+    /// `size` elements of ggml type `qtype` stored at byte `offset` of `file_data`, dequantized
+    /// to f32 — the one type match behind [`Self::get_tensor_f32`]. APR-EMBED-001 EG-2 reads a
+    /// single row of a quantized token table through it (I-10: no second quant match).
+    ///
+    /// # Errors
+    /// A byte range outside `file_data`, or a type with no dequantizer here.
+    pub(crate) fn dequantize_at(
+        qtype: u32,
+        file_data: &[u8],
+        offset: usize,
+        size: usize,
+    ) -> Result<Vec<f32>> {
         // Extract and dequantize based on qtype. A block type reads whole blocks and trims the
         // padding the last block carries; every type checks its byte range against the file first.
         use crate::quantize::{
@@ -64,7 +78,7 @@ impl GGUFModel {
         };
         type Dequant = fn(&[u8]) -> Result<Vec<f32>>;
         // (elements per block, bytes per block, dequantizer)
-        let blocked: Option<(usize, usize, Dequant)> = match tensor.qtype {
+        let blocked: Option<(usize, usize, Dequant)> = match qtype {
             GGUF_TYPE_Q4_0 => Some((32, 18, dequantize_q4_0)),
             GGUF_TYPE_Q8_0 => Some((32, 34, dequantize_q8_0_simd)),
             GGUF_TYPE_Q2_K => Some((QK_K, 84, dequantize_q2_k)),
@@ -83,7 +97,7 @@ impl GGUFModel {
             values.truncate(size);
             return Ok(values);
         }
-        match tensor.qtype {
+        match qtype {
             GGUF_TYPE_F32 => Ok(tensor_byte_range(file_data, offset, size * 4)?
                 .as_chunks::<4>()
                 .0
@@ -102,7 +116,7 @@ impl GGUFModel {
             )?)),
             _ => Err(RealizarError::UnsupportedOperation {
                 operation: "get_tensor_f32".to_string(),
-                reason: format!("Unsupported quantization type: {}", tensor.qtype),
+                reason: format!("Unsupported quantization type: {qtype}"),
             }),
         }
     }

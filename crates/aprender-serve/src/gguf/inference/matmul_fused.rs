@@ -136,6 +136,17 @@ impl OwnedQuantizedModel {
         input: &[f32],
         weight: &OwnedQuantizedTensor,
     ) -> Result<Vec<f32>> {
+        Self::matmul_any(input, weight)
+    }
+
+    /// The one CPU quant dispatcher behind [`Self::fused_matmul`], as an associated
+    /// function: it reads no model field, so a forward that is not an
+    /// `OwnedQuantizedModel` (APR-EMBED-001 EG-2, the embedding forward) runs the same
+    /// arms instead of a second quant match (I-10).
+    ///
+    /// # Errors
+    /// An empty or undersized weight buffer, or a type with no arm here.
+    pub(crate) fn matmul_any(input: &[f32], weight: &OwnedQuantizedTensor) -> Result<Vec<f32>> {
         use crate::quantize::{dequantize_q4_1, dequantize_q5_0, dequantize_q5_1};
 
         let in_dim = weight.in_dim;
@@ -167,7 +178,7 @@ impl OwnedQuantizedModel {
         //              arm, the IQ*/Q2_K/Q3_K dequant fallback (PMAT-3477 / #3091)
         let data = &weight.data;
         match weight.qtype {
-            GGUF_TYPE_F32 => Ok(self.fused_matmul_f32(input, data, in_dim, out_dim, seq_len)),
+            GGUF_TYPE_F32 => Ok(Self::fused_matmul_f32(input, data, in_dim, out_dim, seq_len)),
             GGUF_TYPE_BF16 => Ok(float16_matmul(
                 input,
                 data,
@@ -185,7 +196,7 @@ impl OwnedQuantizedModel {
                 Float16Kind::F16,
             )),
             GGUF_TYPE_Q4_0 | GGUF_TYPE_Q8_0 => {
-                self.fused_matmul_q4_q8(input, weight, in_dim, out_dim, seq_len)
+                Self::fused_matmul_q4_q8(input, weight, in_dim, out_dim, seq_len)
             },
             GGUF_TYPE_Q4_1 => dequant_f32_matmul(
                 input,
@@ -230,13 +241,12 @@ impl OwnedQuantizedModel {
                 let w = crate::apr::dequant::dequantize_apr_q8(data, in_dim * out_dim);
                 dequant_f32_matmul(input, w, "APR-Q8", in_dim, out_dim, seq_len)
             },
-            _ => self.fused_matmul_k_quants(input, weight, in_dim, out_dim, seq_len),
+            _ => Self::fused_matmul_k_quants(input, weight, in_dim, out_dim, seq_len),
         }
     }
 
     /// F32 zero-copy rayon matmul (extracted for complexity)
     fn fused_matmul_f32(
-        &self,
         input: &[f32],
         data: &[u8],
         in_dim: usize,
@@ -307,7 +317,6 @@ impl OwnedQuantizedModel {
 
     /// Fused integer SIMD matmul for Q4_0 and Q8_0
     fn fused_matmul_q4_q8(
-        &self,
         input: &[f32],
         weight: &OwnedQuantizedTensor,
         in_dim: usize,
@@ -336,7 +345,6 @@ impl OwnedQuantizedModel {
 
     /// Fused K-quant kernels for Q4_K, Q5_K, Q6_K
     fn fused_matmul_k_quants(
-        &self,
         input: &[f32],
         weight: &OwnedQuantizedTensor,
         in_dim: usize,
@@ -358,7 +366,7 @@ impl OwnedQuantizedModel {
                     // PMAT-3477 / #3091: the IQ formats real unsloth GGUFs ship (and
                     // Q2_K/Q3_K) take the dequantize-then-dot path; anything else is
                     // refused by name, in the same default arm as before.
-                    _ => self.dequant_fallback_or_refuse(x, weight, in_dim, out_dim, 1)?,
+                    _ => Self::dequant_fallback_or_refuse(x, weight, in_dim, out_dim, 1)?,
                 };
                 output.extend_from_slice(&row_output);
             }
@@ -368,7 +376,7 @@ impl OwnedQuantizedModel {
                 GGUF_TYPE_Q4_K => fused_q4k_parallel_matvec(&weight.data, input, in_dim, out_dim),
                 GGUF_TYPE_Q5_K => fused_q5k_parallel_matvec(&weight.data, input, in_dim, out_dim),
                 GGUF_TYPE_Q6_K => fused_q6k_parallel_matvec(&weight.data, input, in_dim, out_dim),
-                _ => self.dequant_fallback_or_refuse(input, weight, in_dim, out_dim, 1),
+                _ => Self::dequant_fallback_or_refuse(input, weight, in_dim, out_dim, 1),
             }
         }
     }
