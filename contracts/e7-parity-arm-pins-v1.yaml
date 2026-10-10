@@ -107,5 +107,5 @@ qa_gate:
   pass_criteria: "FALSIFY-E7PIN-{001..005} all PASS"
   unmeasured:
     - "E7PIN-INV-003 has no in-tree falsifier yet: the scorer that voids non-comparable rows lives in the receipt (handoff/la074-ka-receipt), and the 30-id print defect blocks a full arm"
-    - "moe_named_break: the broken run is measured on apr only; no llama.cpp run on the broken copy, and logits measured on one prompt (ctl-2plus2)"
+    - "moe_named_break: logits measured on one prompt (ctl-2plus2) only. MoE arm measured 2026-10-10 (receipt handoff/la074-ka-receipt/moe-arm/): apr vs llama.cpp d1d3c3396, CPU 8 thr, greedy 32, 8 rows with complete prompt ids 8 of 8 identical (139 tokens), the other 8 not comparable (30-id print); on the broken copy 0 of 16 full-prompt rows change in either engine, 2 rows change in llama.cpp on truncated prompts. Data, not a bar (C358 1c)"
     - "experts_reached is apr-side only; llama.cpp routing is not recorded, so equal routing is not shown"
