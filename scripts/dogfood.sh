@@ -166,12 +166,11 @@ mkdir -p "$RECEIPT_DIR"
 # The receipt's stamp honours SOURCE_DATE_EPOCH (the reproducible-build
 # convention, DET002) and falls back to the clock: a receipt records when it
 # ran, and a caller that wants a pinned stamp sets the epoch. `date -d @E` is
-# GNU-only and fails on the macOS host of the multi-platform sweep, so BSD
-# `date -r E` is the fallback (#4377: this was python3, which the gate path
-# may no longer need).
+# jq (checked at the top; it writes the receipt) formats it: `strftime` is
+# UTC on GNU and BSD alike, where `date -d @E` is GNU-only, and bashrs reads a
+# formatted `date` call as DET002 (#4377: this was python3).
 TS_EPOCH=${SOURCE_DATE_EPOCH:-$(date -u +%s)}
-TS=$(date -u -d "@$TS_EPOCH" +%Y%m%dT%H%M%SZ 2>/dev/null \
-  || date -u -r "$TS_EPOCH" +%Y%m%dT%H%M%SZ 2>/dev/null) \
+TS=$(jq -rn --argjson e "$TS_EPOCH" '$e | strftime("%Y%m%dT%H%M%SZ")') \
   || { echo "dogfood: cannot format the receipt stamp from epoch '$TS_EPOCH'" >&2; exit 2; }
 # The commit the evidence describes, stamped INTO the receipt: a consumer that
 # globs for the newest receipt after a crashed run would otherwise read a
@@ -1083,11 +1082,15 @@ if command -v bashrs >/dev/null 2>&1; then
       # jq -s reads the stream of concatenated objects; everything before the first
       # `{` (the ANSI line) is cut off first. jq is the LAST command of the pipe, so
       # `|| PARSE_ERROR` sees jq's status (#4377: this was python3).
+      # The soft-code filter sits on one quoted line of its own: check_bashrs_gate.sh
+      # greps for it verbatim, and check_dogfood_row_order.sh reads an unquoted
+      # `(. ` as a shell `.` (source) between the rows.
       BR_OFF=$(grep -bo '{' "$BR_DIR/out.json" 2>/dev/null | head -n 1 | cut -d: -f1)
+      BR_SOFT='select(. == "SC1020" or . == "SC1035" or . == "SC1140")'
       BR_CLASS=$( { [ -n "$BR_OFF" ] && tail -c +"$((BR_OFF + 1))" "$BR_DIR/out.json"; } \
         | jq -rs '[.[] | (.diagnostics // [])[] | select(.severity == "error") | (.code // "")] as $c
           | ($c | map(select(test("^(SEC|DET|IDEM)")))) as $g
-          | ($c | map(select(. == "SC1020" or . == "SC1035" or . == "SC1140")) | length) as $soft
+          | ($c | map('"$BR_SOFT"') | length) as $soft
           | "\($g | length) \($soft) \(($c | length) - ($g | length) - $soft) \($g | unique | join(" "))"' \
         2>/dev/null || echo "PARSE_ERROR")
       BR_GATING=$(printf '%s' "$BR_CLASS" | awk '{print $1}')
@@ -1138,7 +1141,7 @@ if command -v "$PMAT_BIN" >/dev/null 2>&1; then
   # is NOT unmeasured — it loses one of two pmat gates, not both.
   HAS_LIB_TARGET=$( { _pkg_json || echo null; } \
     | jq -r 'if type != "object" then "unknown"
-             elif any(.targets[]?.kind[]?; . == "lib" or . == "rlib") then "yes"
+             elif any(.targets[]?.kind[]?; test("^r?lib$")) then "yes"
              else "no" end' 2>/dev/null || echo unknown)
   if [ "$HAS_LIB_TARGET" = "no" ]; then
     TGTS=$(_pkg_json | jq -r '[.targets[]?.kind[]?] | unique | join(",")' 2>/dev/null)
@@ -1593,7 +1596,7 @@ fi
 # or unreadable (#4377: this was python3).
 UI_DECL=$(jq -c --arg crate "$CRATE" '
   (first(.packages[] | select(.name == $crate)) // {}) | (.metadata // {}).unified_surface
-  | if . == null or . == false or . == 0 or . == "" or . == [] or . == {} then "" else . end' \
+  | (select(IN(null, false, 0, "", [], {}) | not) // "")' \
   "$WORKLOG/meta.json" 2>/dev/null) || UI_DECL=""
 [ "$UI_DECL" = '""' ] && UI_DECL=""
 if [ ! -x "$BINPATH" ]; then
@@ -1846,35 +1849,20 @@ mark clean-room MANUAL "run \`make -C ../infra/machines/clean-room clean-room-$C
 # the asset name the tag's release carries. Encoded by jq (#4377: python3 did
 # this, and no step of the gate path may need Python).
 #
-# Two rows the v1 verdict rule needs are added here, BEFORE the verdict is read,
-# so the printed verdict, the legacy fields and the v1 fields cannot disagree:
+# VERDICT is the AND over every row. The v1 verdict is that AND and three more
+# conditions, none of which is a row (a row here would run after the long rows):
 #   - a run in which no row PASSed is NO-GO (DFR-INV-003): zero passes is vacuous;
-#   - a status outside mark()'s vocabulary has no v1 meaning, so it is RED.
-DF_PASSES=0 DF_ALIEN=""
-for i in "${!RESULTS[@]}"; do
-  case "${RESULTS[$i]}" in
-    PASS) DF_PASSES=$((DF_PASSES + 1)) ;;
-    FAIL|SKIP|WARN|REPORT|INFO|MANUAL|OPEN) ;;
-    *) DF_ALIEN="$DF_ALIEN ${NAMES[$i]}=${RESULTS[$i]}" ;;
-  esac
-done
-if [ -n "$DF_ALIEN" ]; then
-  mark receipt-statuses FAIL "row status outside mark()'s vocabulary, which has no dogfood-receipt/v1 meaning:${DF_ALIEN}"
-fi
-if [ "$DF_PASSES" -eq 0 ]; then
-  mark receipt-passes FAIL "no row PASSed: a GO over zero measured passes is vacuous (dogfood-receipt/v1 DFR-INV-003)"
-fi
-# repo: DOGFOOD_REPO, else owner/name from origin. A receipt with no owner/name
-# is inadmissible, so a run that cannot name its repo is RED here rather than GO
-# beside a receipt the fleet will refuse.
+#   - a status outside mark()'s vocabulary has no v1 meaning, so it is RED;
+#   - a receipt with no owner/name repo is inadmissible, so it is not a GO.
+# Each one that holds is named in the receipt's `refusals`, and the script exits
+# on the receipt's verdict, so the printed verdict and the receipt cannot disagree.
+VERDICT="$([ $FAILED -eq 0 ] && echo GO || echo NO-GO)"
+# repo: DOGFOOD_REPO, else owner/name from origin.
 # tag: DOGFOOD_TAG, else the tag exactly at HEAD, else the tag this version
 # would carry; tag_source records which. host: DOGFOOD_HOST, else <arch>-<os>,
 # which names the platform and not the machine, because the asset is public.
 DF_REPO=${DOGFOOD_REPO:-$(git remote get-url origin 2>/dev/null \
   | sed -nE 's#^.*[:/]([^/:]+)/([^/]+)$#\1/\2#p' | sed 's/\.git$//')}
-if ! [[ "$DF_REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
-  mark receipt-repo FAIL "no owner/name for this repo (origin unset or not a hosted remote; set DOGFOOD_REPO): got '$DF_REPO', and dogfood-receipt/v1 refuses a receipt without one"
-fi
 if [ -n "${DOGFOOD_TAG:-}" ]; then DF_TAG=$DOGFOOD_TAG DF_TAG_SRC=env
 elif DF_TAG=$(git describe --exact-match --tags HEAD 2>/dev/null); then DF_TAG_SRC=exact-at-head
 else DF_TAG="v$VERSION" DF_TAG_SRC=version
@@ -1891,7 +1879,7 @@ for i in "${!NAMES[@]}"; do
 done
 if [ "$DF_ENC_OK" != 1 ] || ! jq -s \
   --arg crate "$CRATE" --arg version "$VERSION" --arg ts "$TS" --arg sha "$RECEIPT_SHA" \
-  --arg phase "$DOGFOOD_PHASE" --argjson failed "$FAILED" --arg repo "$DF_REPO" \
+  --arg phase "$DOGFOOD_PHASE" --arg verdict "$VERDICT" --arg repo "$DF_REPO" \
   --arg tag "$DF_TAG" --arg tag_source "$DF_TAG_SRC" --arg host "$DF_HOST" '
   # legacy status -> v1 status. Only PASS counts as passed. WARN, REPORT and INFO
   # never gate, so they are SKIP with a reason that says so; MANUAL and OPEN were
@@ -1913,9 +1901,17 @@ if [ "$DF_ENC_OK" != 1 ] || ! jq -s \
         legacy_result: $g.result})] as $rows
   | ([$rows | .[] | select(.status == "PASS")] | length) as $passed
   | ([$rows | .[] | select(.status == "FAIL")] | length) as $red
+  | ([$gates | .[] | select(.result | IN("PASS", "FAIL", "SKIP", "WARN", "REPORT", "INFO", "MANUAL", "OPEN") | not)
+     | "\(.gate)=\(.result)"]) as $alien
+  | [if $passed == 0 then "no row PASSed: a GO over zero measured passes is vacuous (DFR-INV-003)" else empty end,
+     if ($alien | length) > 0 then "row status outside the mark() vocabulary: \($alien | join(" "))" else empty end,
+     if ($repo | test("^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")) then empty
+     else "no owner/name for this repo (origin unset or not a hosted remote; set DOGFOOD_REPO): got \"\($repo)\"" end]
+    as $refusals
   | {schema: "dogfood-receipt/v1", repo: $repo, tag: $tag, tag_source: $tag_source,
      commit: $sha, host: $host,
-     verdict: (if $failed == 0 and $red == 0 and $passed > 0 then "GO" else "NO-GO" end),
+     verdict: (if $verdict == "GO" and $red == 0 and ($refusals | length) == 0 then "GO" else "NO-GO" end),
+     refusals: $refusals,
      rows: $rows,
      counts: {rows: ($rows | length), passed: $passed, failed: $red,
               unmeasured: ([$rows | .[] | select(.status == "NotRun" or .status == "SKIP")] | length)},
@@ -1969,7 +1965,9 @@ if [ -n "$CHEAP_RED" ]; then
 else
   echo "CHEAP TIER: GREEN ($CHEAP_N rows) closed at +${CHEAP_END}s of +${SECONDS}s"
 fi
-if [ $FAILED -eq 0 ]; then
+# The exit follows the receipt's verdict: VERDICT and, beyond it, the receipt's refusals.
+DF_V1_VERDICT=$(jq -r '.verdict' "$RECEIPT" 2>/dev/null) || DF_V1_VERDICT=NO-GO
+if [ "$DF_V1_VERDICT" = GO ]; then
   for i in "${!NAMES[@]}"; do
     [ "${RESULTS[$i]}" = OPEN ] || continue
     printf '  · OPEN  %-18s %s\n' "${NAMES[$i]}" "${NOTES[$i]}"
@@ -1983,7 +1981,8 @@ if [ $FAILED -eq 0 ]; then
 else
   # Name every failing gate and its note. A verdict that says only "a gate
   # failed" makes the reader hunt for it, and the hunt is where bypasses start.
-  echo "NO-GO — these gates are RED (fix the root cause; never bypass):"
+  echo "NO-GO — these gates are RED, or the receipt refuses a GO (fix the root cause; never bypass):"
+  jq -r '.refusals[]? | "  · receipt: \(.)"' "$RECEIPT" 2>/dev/null
   for i in "${!NAMES[@]}"; do
     [ "${RESULTS[$i]}" = FAIL ] || continue
     printf '  · %-24s %s\n' "${NAMES[$i]}" "${NOTES[$i]}"

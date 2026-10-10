@@ -24,12 +24,12 @@ DOGFOOD="$ROOT/scripts/dogfood.sh"
 TMP=$(mktemp -d) || { echo "ENV  mktemp failed" >&2; exit 2; }
 trap 'rm -rf "${TMP:?}"' EXIT
 
-# ── lift the block: from the verdict-rule rows to the end of the asset copy ──
-awk '/^DF_PASSES=0 DF_ALIEN=""$/ {on=1}
+# ── lift the block: from the VERDICT line to the end of the asset copy ──────
+awk 'index($0, "VERDICT=\"$([ $FAILED -eq 0 ]") == 1 {on=1}
      on {print}
      on && /^  echo "FATAL: could not write \$RECEIPT_V1"/ {tail=1}
      tail && /^fi$/ {exit}' "$DOGFOOD" > "$TMP/block.sh"
-grep -q 'RECEIPT_V1' "$TMP/block.sh" && tail -n 1 "$TMP/block.sh" | grep -qx 'fi' \
+grep -q 'RECEIPT_V1' "$TMP/block.sh" && [ "$(tail -n 1 "$TMP/block.sh")" = fi ] \
   || { echo "ENV  could not lift the receipt block from $DOGFOOD (anchors moved?)" >&2; exit 2; }
 
 # A repo with a known origin and one commit, so repo/commit/tag are deterministic.
@@ -113,9 +113,9 @@ command -v arbiter >/dev/null 2>&1 && echo "note  arbiter on PATH: every receipt
   || echo "note  arbiter not on PATH: the four invariants are checked here, the arbiter lint is not run"
 expect_ok "$B" green  GO    7 2 0 5 || fails=$((fails + 1))
 expect_ok "$B" red    NO-GO 2 1 1 0 || fails=$((fails + 1))
-expect_ok "$B" nopass NO-GO 3 0 1 2 || fails=$((fails + 1))   # + the receipt-passes row
+expect_ok "$B" nopass NO-GO 2 0 0 2 || fails=$((fails + 1))   # refused: no row PASSed
 expect_ok "$B" dup    GO    3 2 0 1 || fails=$((fails + 1))
-expect_ok "$B" alien  NO-GO 3 1 2 0 || fails=$((fails + 1))   # + the receipt-statuses row
+expect_ok "$B" alien  NO-GO 2 1 1 0 || fails=$((fails + 1))   # BOGUS is FAIL in v1, and refused
 expect_ok "$B" open   GO    2 1 0 1 || fails=$((fails + 1))
 
 # notes survive byte for byte: newline, quote, backslash, tab
@@ -139,19 +139,19 @@ git -C "$REPO" tag v1.2.3-rc1
 tagcheck v1.2.3-rc1 exact-at-head - || fails=$((fails + 1))
 git -C "$REPO" tag -d v1.2.3-rc1 >/dev/null
 
-# repo: DOGFOOD_REPO overrides origin; a value that is not owner/name is a FAIL row and NO-GO
-repocheck() { # repocheck <want verdict> <want receipt-repo result or -> [env...]
+# repo: DOGFOOD_REPO overrides origin; a value that is not owner/name is refused, and NO-GO
+repocheck() { # repocheck <want verdict> <want repo refusals 0|1> [env...]
   local o="$TMP/out-repo-$((SEQ += 1))" t
   run_case "$B" green "$o" "${@:3}"
-  t=$(jq -r '"\(.verdict) \([.gates[] | select(.gate == "receipt-repo") | .result][0] // "-")"' "$o"/dogfood-receipt-v1.*.json)
+  t=$(jq -r '"\(.verdict) \([.refusals[] | select(startswith("no owner/name"))] | length)"' "$o"/dogfood-receipt-v1.*.json)
   if [ "$t" = "$1 $2" ]; then echo "ok    repo     ${*:3} -> $t"; return 0; fi
   echo "FAIL  repo     ${*:3} got [$t], want [$1 $2]"; return 1
 }
-repocheck GO - DOGFOOD_REPO=acme/other || fails=$((fails + 1))
-repocheck NO-GO FAIL DOGFOOD_REPO=widget || fails=$((fails + 1))
-repocheck NO-GO FAIL DOGFOOD_REPO=a/b/c || fails=$((fails + 1))
+repocheck GO 0 DOGFOOD_REPO=acme/other || fails=$((fails + 1))
+repocheck NO-GO 1 DOGFOOD_REPO=widget || fails=$((fails + 1))
+repocheck NO-GO 1 DOGFOOD_REPO=a/b/c || fails=$((fails + 1))
 git -C "$REPO" remote remove origin
-repocheck NO-GO FAIL || fails=$((fails + 1))
+repocheck NO-GO 1 || fails=$((fails + 1))
 git -C "$REPO" remote add origin https://github.com/acme/widget.git
 
 # ── mutants: each must turn at least one case RED ───────────────────────────
@@ -161,25 +161,25 @@ mutant() { # mutant <name> <old text> <new text>
   n=$(grep -cF -- "$old" "$B")
   [ "$n" = 1 ] || { echo "FAIL  mutant $name: anchor found $n times, want 1"; fails=$((fails + 1)); return; }
   printf '%s\n' "${src/"$old"/"$new"}" > "$TMP/m-$name.sh"
-  for k in "green GO 7 2 0 5" "red NO-GO 2 1 1 0" "nopass NO-GO 3 0 1 2" "dup GO 3 2 0 1" "alien NO-GO 3 1 2 0"; do
+  for k in "green GO 7 2 0 5" "red NO-GO 2 1 1 0" "nopass NO-GO 2 0 0 2" "dup GO 3 2 0 1" "alien NO-GO 2 1 1 0"; do
     # shellcheck disable=SC2086
     expect_ok "$TMP/m-$name.sh" $k > /dev/null 2>&1 || red=1
   done
   if [ "$red" = 1 ]; then echo "ok    mutant $name turns RED"; else echo "FAIL  mutant $name survived"; fails=$((fails + 1)); fi
 }
 mutant warn-passes 'WARN: "SKIP"' 'WARN: "PASS"'
-mutant no-zero-pass-row 'if [ "$DF_PASSES" -eq 0 ]; then' 'if false; then'
+mutant no-zero-pass-refusal 'if $passed == 0 then' 'if false then'
 mutant ids-not-unique 'else "\($g.gate)#\(.[$g.gate])" end)' 'else $g.gate end)'
 mutant no-asset-copy 'cp "$RECEIPT" "$RECEIPT_V1.partial" && mv "$RECEIPT_V1.partial" "$RECEIPT_V1"' 'true'
-# no-repo-row: the repo cases above are the only ones that can see it, so it runs them
-a='if ! [[ "$DF_REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then'
+# no-repo-refusal: the repo cases above are the only ones that can see it, so it runs them
+a='if ($repo | test("^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")) then empty'
 if [ "$(grep -cF -- "$a" "$B")" = 1 ]; then
-  src=$(cat "$B") z='if false; then'
-  printf '%s\n' "${src/"$a"/"$z"}" > "$TMP/m-no-repo-row.sh"
-  if B="$TMP/m-no-repo-row.sh" repocheck NO-GO FAIL DOGFOOD_REPO=widget > /dev/null 2>&1; then
-    echo "FAIL  mutant no-repo-row survived"; fails=$((fails + 1))
-  else echo "ok    mutant no-repo-row turns RED"; fi
-else echo "FAIL  mutant no-repo-row: anchor not found once"; fails=$((fails + 1)); fi
+  src=$(cat "$B") z='if true then empty'
+  printf '%s\n' "${src/"$a"/"$z"}" > "$TMP/m-no-repo-refusal.sh"
+  if B="$TMP/m-no-repo-refusal.sh" repocheck NO-GO 1 DOGFOOD_REPO=widget > /dev/null 2>&1; then
+    echo "FAIL  mutant no-repo-refusal survived"; fails=$((fails + 1))
+  else echo "ok    mutant no-repo-refusal turns RED"; fi
+else echo "FAIL  mutant no-repo-refusal: anchor not found once"; fails=$((fails + 1)); fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL  $fails check(s)"; exit 1; fi
 echo "PASS  receipt block writes an admissible dogfood-receipt/v1 and every mutant turns RED"
