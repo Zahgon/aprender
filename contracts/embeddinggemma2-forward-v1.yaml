@@ -112,8 +112,8 @@ proof_obligations:
   applies_to: all
 - id: EG2-INV-002
   type: invariant
-  property: Local attention window
-  formal: "∀ l ∈ local, ∀ i, j: abs(i - j) > ⌊W/2⌋ ⇒ weight(i, j) = 0 ∧ abs(i - j) ≤ ⌊W/2⌋ ⇒ weight(i, j) > 0"
+  property: Local attention window, half width h = W / 2 rounded down
+  formal: "∀ l ∈ local, ∀ i, j: abs(i - j) > h ⇒ weight(i, j) = 0 ∧ abs(i - j) ≤ h ⇒ weight(i, j) > 0"
   applies_to: all
 - id: EG2-INV-003
   type: invariant

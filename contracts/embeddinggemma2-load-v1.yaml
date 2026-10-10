@@ -141,12 +141,12 @@ falsification_tests:
 - id: FALSIFY-EG2L-007
   rule: Generative verbs refuse by kind on every host
   prediction: apr chat and apr serve on a gemma-embedding2 GGUF fail with ModelLoadFailed (exit 6) naming apr embed, before a tokenizer or backend is built and with no GPU; generative and unparsed files pass through to the loaders
-  test: falsify_eg2l_007_*
+  test: falsify_eg2l_007_
   if_fails: The refusal ran only inside the CUDA preload, so the CPU chat path ended an empty session with exit 0
 - id: FALSIFY-EG2L-008
   rule: SPM-style BPE ids equal the reference tokenizer
   prediction: Merges apply by text, lowest rank first and leftmost on ties; stale pairs are skipped; a space becomes U+2581 with no prefix; words split at newline runs; unknown symbols become <0xXX> tokens; specials split out first; a gemma4 file without merges is refused by name
-  test: gguf::spm_bpe::tests::*
+  test: gguf::spm_bpe::tests
   if_fails: The gemma4 vocabulary fell back to greedy longest-match, or a merge order, space or byte rule departs from llama.cpp; scripts/tokenizer_parity.sh reports the first id mismatch on a real file
 qa_gate:
   id: F-EG2L-001
