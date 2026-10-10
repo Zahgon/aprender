@@ -36,6 +36,19 @@ equations:
     formula: "broken(model, layer L, experts i != j) = model with expert i and expert j swapped in layer L, all else byte-identical"
     domain: "an MoE model (qwen3_moe); L, i, j recorded in the receipt"
     codomain: "a negative control that must NOT match the reference; noise is not a break (C358 1f)"
+    invariants:
+      - "The break swaps the byte slices of experts i and j in all three of blk.L.ffn_gate_exps, ffn_up_exps and ffn_down_exps (expert e is bytes [offset + e*size/n_expert, +size/n_expert), qwen3_moe_load.rs expert_byte_slice); the router blk.L.ffn_gate_inp is untouched, so tokens routed to i reach j's weights"
+      - "i and j are experts the arm's prompts reach in layer L (experts_reached), else the break is never exercised and proves nothing"
+  moe_arm_inputs:
+    formula: "moe_arm = (llama_cpp_commit = d1d3c3396, model = Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf sha256 6c997b8af17debdfb01d890214400ccbab00db6acc0ba8da5de1cc906c4774d0, quant = Q4_K_M, prompts = the 16 ids of known_good_arm_inputs from the same prompts file, decoding = greedy, threads = 8, backend = cpu)"
+    domain: "qwen3moe, 48 layers, 128 experts, 8 used per token; CPU only (C358 1h)"
+    codomain: "the same per-row record as known_good_arm_inputs, plus experts_reached"
+    invariants:
+      - "C358 1e measured 2026-10-10 17:59Z on intel: llama-completion at d1d3c3396 loads this file and decodes greedily on CPU at 8 threads (receipt cop-inbox handoff/la074-ka-receipt/moe-1e/)"
+  experts_reached:
+    formula: "experts_reached = |{(layer, e) : route_top_k selects e in layer for some token of some prompt}| of 48 * 128"
+    domain: "every prompt token and every generated token of the arm, apr side"
+    codomain: "one printed line per run, and per layer; a line, not a bar (C358 1g)"
 proof_obligations:
   - id: E7PIN-INV-001
     type: invariant
@@ -78,5 +91,5 @@ qa_gate:
   pass_criteria: "FALSIFY-E7PIN-{001..003} all PASS"
   unmeasured:
     - "E7PIN-INV-003 has no in-tree falsifier yet: the scorer that voids non-comparable rows lives in the receipt (handoff/la074-ka-receipt), and the 30-id print defect blocks a full arm"
-    - "moe_named_break: equation only; the layer and expert pair are chosen and recorded when the MoE arm is built (C358 1f)"
-    - "experts reached of total: printed by the MoE arm, a line not a bar (C358 1g)"
+    - "moe_named_break: the procedure is pinned; L, i and j are pinned after experts_reached is measured, and no swap tool exists in tree yet (C358 1f)"
+    - "experts_reached: apr has no per-prompt record; apr trace saves moe_router_indices only for the last position of a fixed input, so the counter is unbuilt (C358 1g)"
