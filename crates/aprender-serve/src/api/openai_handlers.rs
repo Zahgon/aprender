@@ -471,6 +471,8 @@ mod pmat821_chat_handler_threading_tests {
             ignore_eos: None,
             n: crate::api::ChoiceCount::ONE,
             stream: false,
+            logprobs: None,
+            top_logprobs: None,
             stop: None,
             user: None,
             tools: None,
@@ -752,6 +754,40 @@ pub(crate) fn build_chat_response_traced(
     timings: Option<super::Timings>,
     used_gpu: Option<bool>,
 ) -> Response {
+    Json(chat_response_body(
+        request_id,
+        model,
+        text,
+        prompt_tokens,
+        completion_tokens,
+        max_tokens,
+        stops,
+        traces,
+        tools,
+        tool_choice,
+        timings,
+        used_gpu,
+    ))
+    .into_response()
+}
+
+/// The body [`build_chat_response_traced`] serializes, for an arm that adds
+/// to it (the Qwen3.5 arm's `logprobs`, #4026).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn chat_response_body(
+    request_id: String,
+    model: String,
+    text: String,
+    prompt_tokens: usize,
+    completion_tokens: usize,
+    max_tokens: usize,
+    stops: Option<&[String]>,
+    traces: (Option<TraceData>, Option<TraceData>, Option<TraceData>),
+    tools: Option<&[super::OpenAiTool]>,
+    tool_choice: Option<crate::grammar::ToolChoice>,
+    timings: Option<super::Timings>,
+    used_gpu: Option<bool>,
+) -> ChatCompletionResponse {
     let (brick_trace, step_trace, layer_trace) = traces;
     let (text, finish_reason) = finalize_chat_text(text, stops, completion_tokens, max_tokens);
 
@@ -770,7 +806,7 @@ pub(crate) fn build_chat_response_traced(
         ),
     };
 
-    Json(ChatCompletionResponse {
+    ChatCompletionResponse {
         used_gpu,
         id: request_id,
         object: "chat.completion".to_string(),
@@ -790,8 +826,7 @@ pub(crate) fn build_chat_response_traced(
         step_trace,
         layer_trace,
         timings,
-    })
-    .into_response()
+    }
 }
 
 /// Serialize a value to an SSE event, returning `None` if serialization fails.
