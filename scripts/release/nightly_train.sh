@@ -51,6 +51,14 @@
 #   GraphQL query (every producer's recent runs with their check runs, plus main's head and its check rollup), and one
 #   run read per green verdict-lane candidate for run_attempt (GraphQL has no attempt field). Core remaining under
 #   min(RATE_FLOOR, limit/5) makes no further call: the read failed, every producer lane is not_measured.
+# STALE PIN. A pinned run (the timer) is judged by the judge merged on main, not by whatever was pinned last. Line 1 is
+#   `bundle=<dir> sums=<digest>`. Up to 6 more calls: per script the newest main commit that touched it (path=, ETag)
+#   and, when that is not the pin, a compare. A pin that does not contain it makes the line
+#   `NOT RELEASABLE: nightly-train, stale-pin (pin=<sha> main=<sha> <script>)`; a script not read makes it
+#   `stale-pin not_measured (...)`, never green. The lanes' own line is kept in bundle.tsv as `# judged`.
+# LANES RUN. The scheduled release-lanes run checks out C (its pick job), not its own head. Without --in-run, one more
+#   call reads the newest such run's jobs when its head is not C: a job counts for C only through its succeeded
+#   `Assert HEAD is <C>` step. An unread list, or no job that asserted C, leaves the run on its head: not_measured.
 #
 # --commit C judges C (40-hex) in place of the night's scheduled run: the one GraphQL query reads C by object(oid:), and a read of any
 #   other commit fails (every producer lane not_measured). The nightly rehearsal passes its pick C (B1 Q1).
@@ -354,6 +362,7 @@ fetch() {
     commit_ok "$raw" "$want" || return 0
     normalize "$raw/graphql.json" "$raw/workflows.json" > "$raw/runs.tsv" 2>/dev/null || { printf 'failed: response did not normalize\n' > "$raw/read"; return 0; }
     if [ -n "$INRUN" ]; then inrun_read "$raw" "$INRUN" && inrun_rows "$raw" || return 0; fi
+    [ -n "$INRUN" ] || lanes_rows "$raw"
     printf 'ok\n' > "$raw/read"
     # run_attempt for each green verdict candidate (GraphQL has none); an unread attempt stays unread -> not_measured
     ids="$(evaluate "$LANES" "$raw" cand | sort -u)"
@@ -364,6 +373,67 @@ fetch() {
         case "$a" in ''|*[!0-9]*) a="?" ;; esac
         printf '%s\t%s\n' "$r" "$a" >> "$raw/attempts.tsv"
     done
+}
+# fresh_read RAW CACHE PINFILE -> RAW/fresh, one row per pinned script: script, pin, main, state. main is the newest
+#   commit on main that touched the script; state is fresh (the pin contains it), stale (it does not) or "unread: why".
+#   Per script one commits read (path=, ETag: a 304 is free) and, when main's commit is not the pin, one compare read
+#   (main...pin: ahead or identical = fresh, behind or diverged = stale). A pair's answer never changes, so it is cached.
+fresh_read() {
+    local raw="$1" cache="$2" pinf="$3" k s p m st c hdr lim rem fl
+    : > "$raw/fresh"
+    MAX_CALLS=$((MAX_CALLS + 6))
+    mkdir -p "$cache"
+    read -r lim rem <<< "$(gh api rate_limit --jq '"\(.resources.core.limit) \(.resources.core.remaining)"' 2>/dev/null)"
+    fl=""; case "$lim:$rem" in *[!0-9:]*|:*|*:) ;; *) fl=$((lim / 5)); [ "$fl" -le "$RATE_FLOOR" ] || fl="$RATE_FLOOR" ;; esac
+    for k in train:nightly_train greens:nightly_greens redage:red_age; do
+        s="${k#*:}.sh"; k="${k%%:*}"; m=""; st=""
+        p="$(awk -v k="$k" '$1 == k { print $2 }' "$pinf" 2>/dev/null)"
+        if [ -z "$fl" ]; then st="unread: rate_limit unreadable"
+        elif [ "$rem" -lt "$fl" ]; then st="unread: core remaining $rem under $fl"
+        elif ! [[ "$p" =~ ^[0-9a-f]{40}$ ]]; then st="unread: the $k pin is not a sha"
+        elif ! call_ok; then st="unread: call budget"
+        else
+            hdr=()
+            [ -s "$cache/fresh-$k.etag" ] && [ -s "$cache/fresh-$k.json" ] && hdr=(-H "If-None-Match: $(cat "$cache/fresh-$k.etag")")
+            gh api -i "${hdr[@]}" "repos/$REPO/commits?sha=main&path=scripts/release/$s&per_page=1" > "$raw/fresh.http" 2>/dev/null
+            c="$(awk 'NR == 1 { print $2; exit }' "$raw/fresh.http")"
+            if [ "$c" = "200" ]; then
+                awk 'f { print } /^\r?$/ { f = 1 }' "$raw/fresh.http" > "$cache/fresh-$k.json"
+                awk 'tolower($1) == "etag:" { sub(/\r$/, ""); sub(/^[^:]*: */, ""); print; exit }' "$raw/fresh.http" > "$cache/fresh-$k.etag"
+            elif [ "$c" = "304" ]; then CALLS=$((CALLS - 1))
+            else st="unread: commits HTTP ${c:-none}"; fi
+            [ -n "$st" ] || m="$(jq -r '.[0].sha // empty' "$cache/fresh-$k.json" 2>/dev/null)"
+            [ -n "$st" ] || [[ "$m" =~ ^[0-9a-f]{40}$ ]] || st="unread: no main commit touches $s"
+        fi
+        if [ -z "$st" ]; then
+            if [ "$m" = "$p" ]; then st=fresh
+            else
+                c="$(cat "$cache/fresh-cmp-$m-$p" 2>/dev/null)"
+                if [ -z "$c" ]; then
+                    if call_ok; then c="$(gh api "repos/$REPO/compare/$m...$p" --jq .status 2>/dev/null)"; else st="unread: call budget"; fi
+                fi
+                case "$c" in
+                    ahead|identical) st=fresh; printf '%s\n' "$c" > "$cache/fresh-cmp-$m-$p" ;;
+                    behind|diverged) st=stale; printf '%s\n' "$c" > "$cache/fresh-cmp-$m-$p" ;;
+                    *) [ -n "$st" ] || st="unread: compare ${c:-failed}" ;;
+                esac
+            fi
+        fi
+        printf '%s\t%s\t%s\t%s\n' "$s" "${p:-none}" "${m:-none}" "$st" >> "$raw/fresh"
+    done
+}
+# fresh_state RAW -> nothing when all three pinned scripts are fresh; else the reason the night is not releasable:
+#   a stale pin (it wins), or not_measured when any script was not read. A failed read is never fresh.
+fresh_state() {
+    [ -s "$1/fresh" ] || { printf 'stale-pin not_measured (no freshness read)\n'; return 0; }
+    awk -F '\t' '
+        $4 == "stale" && s == "" { s = "stale-pin (pin=" substr($2, 1, 10) " main=" substr($3, 1, 10) " " $1 ")" }
+        $4 != "fresh" && $4 != "stale" && u == "" { u = "stale-pin not_measured (" $1 " " $4 ")" }
+        $4 == "fresh" { n++ }
+        END {
+            if (s != "") print s; else if (u != "") print u
+            else if (n < 3) print "stale-pin not_measured (" n + 0 " of 3 scripts read)"
+        }' "$1/fresh"
 }
 # commit_ok RAW [WANT] -> 1, with RAW/read saying why, when the read is not of WANT (default --commit's C)
 commit_ok() {
@@ -471,6 +541,40 @@ inrun_rows() {
     mv -- "$raw/runs.next" "$raw/runs.tsv" || return 1
     { awk -F '\t' -v R="$id" '$1 != R' "$raw/attempts.tsv" 2>/dev/null; printf '%s\t%s\n' "$id" "$att"; } > "$raw/attempts.next" && mv -- "$raw/attempts.next" "$raw/attempts.tsv"
 }
+# lanes_rows RAW -> (no --in-run) RAW/runs.tsv with the newest scheduled INRUN_WF run whose head is not C re-read: its
+#   pick job chose C (the night's commit), not the run's own head, so its lane jobs check out C and assert it. One REST
+#   read of that run's latest attempt; a job is a row of C only when its own `Assert HEAD is <C>` step succeeded, the
+#   rest of the run votes on nothing. A failed read, or no job that asserted C, leaves the run's rows as they were: on
+#   another commit, so its lanes read not_measured, never green (#5087).
+lanes_rows() {
+    local raw="$1" c id
+    c="$(cat "$raw/C" 2>/dev/null)"
+    id="$(awk -F '\t' -v W="$INRUN_WF" -v C="$c" '$2 == W && $4 == "schedule" && $7 > t { t = $7; id = $3; h = $6 } END { if (id != "" && h != C) print id }' "$raw/runs.tsv")"
+    case "$id" in ''|*[!0-9]*) return 0 ;; esac
+    MAX_CALLS=$((MAX_CALLS + 1))
+    call_ok || return 0
+    gh api "repos/$REPO/actions/runs/$id/jobs?per_page=100" --jq '
+        (.jobs // []) as $j
+        | ($j[] | [.name, .status, (.conclusion // ""), (.started_at // ""), (.completed_at // ""),
+             ([(.steps // [])[] | select(.conclusion == "success") | (.name // "") | capture("^Assert HEAD is (?<s>[0-9a-f]{40})$") | .s] | first // "")]
+             | map(tostring) | join("\t")),
+          (if (.total_count // 0) > ($j | length) then "#truncated\tcompleted\ttruncated\t\t\t" else empty end)' > "$raw/lanes.jobs.tsv" 2>/dev/null \
+        || { : > "$raw/lanes.jobs.tsv"; return 0; }
+    awk -F '\t' -v OFS='\t' -v C="$c" -v R="$id" '
+        FILENAME == ARGV[1] { if ($1 == "#truncated" || $6 == C) { n++; J[n] = $0 }; next }
+        $3 == R { if (!(R in got)) { got[R] = 1; for (i = 1; i <= 9; i++) H[i] = $i } ; old[++o] = $0; next }
+        { print }
+        END {
+            if (n == 0) { for (i = 1; i <= o; i++) print old[i]; exit }
+            for (k = 1; k <= n; k++) {
+                split(J[k], a, "\t"); cnt[a[1]]++
+            }
+            for (k = 1; k <= n; k++) {
+                split(J[k], a, "\t")
+                print H[1], H[2], H[3], H[4], H[5], C, H[7], H[8], H[9], a[1], toupper(a[2]), toupper(a[3]), a[4], a[5], cnt[a[1]]
+            }
+        }' "$raw/lanes.jobs.tsv" "$raw/runs.tsv" > "$raw/runs.next" && mv -- "$raw/runs.next" "$raw/runs.tsv"
+}
 # ---------------------------------------------------------------- the run -----------------------------------------
 STEP="start"; PRINTED=""; HISTDONE=""; OUTDIR=""; INBOXF=""; DAY=""; CSHA=""; PIN=""; PINNED=""; EXIT_VERDICT=""; COMMIT=""; INRUN=""
 step() { STEP="$1"; [ "${NIGHTLY_TRAIN_FAULT:-}" != "$1" ] || { STEP="$1 (planted fault)"; exit 1; }; }
@@ -523,7 +627,7 @@ on_exit() {
     exit 2
 }
 run_train() {
-    local from="$1" raw line g concl budget pin_t pin_g pin_r hrow
+    local from="$1" raw line g concl budget pin_t pin_g pin_r hrow fresh=""
     trap on_exit EXIT
     DAY="${NOW%%T*}"   # before any step that can fail, so every failure leaves its line and its history row
     step no-token
@@ -540,6 +644,8 @@ run_train() {
         # what runs must be what was pinned: an edited bundle refuses (the trap line names the step)
         (cd "$HERE" && sha256sum --quiet -c SHA256SUMS) > /dev/null 2>&1 || { PIN="$PIN!modified"; exit 1; }
     else PIN="unpinned"; fi
+    # line 1 of a pinned run names the bundle it runs, and the digest of its sums: what ran, not what was meant to
+    [ "$PIN" = unpinned ] || printf 'bundle=%s sums=%s\n' "$HERE" "$(sha256sum < "$HERE/SHA256SUMS" | cut -c 1-12)" || :
     step tools
     for t in jq awk sort date; do command -v "$t" > /dev/null || exit 1; done
     [ -n "$from" ] || command -v gh > /dev/null || exit 1
@@ -548,11 +654,17 @@ run_train() {
     mkdir -p "$raw" || exit 1
     step read
     if [ -n "$from" ]; then
-        for f in C read runs.tsv attempts.tsv tree night ${INRUN:+inrun.run inrun.jobs.tsv}; do [ "$from/$f" -ef "$raw/$f" ] || cp "$from/$f" "$raw/$f" 2>/dev/null || : > "$raw/$f"; done
+        for f in C read runs.tsv attempts.tsv tree night fresh ${INRUN:+inrun.run inrun.jobs.tsv}; do [ "$from/$f" -ef "$raw/$f" ] || cp "$from/$f" "$raw/$f" 2>/dev/null || : > "$raw/$f"; done
         # with --commit a replay judges only a read of that commit; with --in-run it re-reads the run's jobs from the copied files
         if [ "$(cat "$raw/read" 2>/dev/null)" = ok ] && commit_ok "$raw" && [ -n "$INRUN" ]; then inrun_rows "$raw" || :; fi
     else fetch "$raw" "$OUTDIR/cache"; fi
     CSHA="$(cat "$raw/C" 2>/dev/null)"
+    # a pinned run is judged by the judge on main: a pin behind main on any of its three scripts is RED (stale-pin)
+    if [ "$PIN" != unpinned ]; then
+        step fresh
+        [ -n "$from" ] || fresh_read "$raw" "$OUTDIR/cache" "$HERE/PIN"
+        fresh="$(fresh_state "$raw")"
+    fi
     step judge
     decide "$LANES" "$raw" "$NOW" || exit 1
     step rank
@@ -560,7 +672,9 @@ run_train() {
     cp "$raw/reds.tsv" "$OUTDIR/$DAY/reds.tsv" || exit 1
     step greens
     line="$(cat "$raw/line") [C=${CSHA:0:10} pin=$PIN]"
-    case "$line" in "RELEASABLE "*) concl=success ;; *) if awk -F '\t' '$2 == "verdict" && $3 == "red" { f = 1 } END { exit !f }' "$raw/lanes.tsv"; then concl=failure; else concl=neutral; fi ;; esac
+    # a stale or unread pin replaces the lanes' line, never joins it: the lanes' line stays in the bundle as "# judged"
+    [ -z "$fresh" ] || line="NOT RELEASABLE: nightly-train, $fresh [C=${CSHA:0:10} pin=$PIN]"
+    case "$line" in "RELEASABLE "*) concl=success ;; "NOT RELEASABLE: nightly-train, stale-pin ("*) concl=failure ;; *) if awk -F '\t' '$2 == "verdict" && $3 == "red" { f = 1 } END { exit !f }' "$raw/lanes.tsv"; then concl=failure; else concl=neutral; fi ;; esac
     # tonight's row goes into a copy first: history.tsv gets exactly one row per run, written after everything but stdout
     if [ -f "$OUTDIR/history.tsv" ]; then cp "$OUTDIR/history.tsv" "$raw/history.next" || exit 1
     else printf 'run_id\tcreated_at\tbranch\tevent\tconclusion\tattempt\n' > "$raw/history.next" || exit 1; fi
@@ -576,6 +690,10 @@ run_train() {
         printf '# budget\tfirst start %s, last end %s, %s (6 h budget; info only, not in the verdict)\n' "${budget%%	*}" "${budget##*	}" "$(span "${budget%%	*}" "${budget##*	}")"
         printf '# github calls\t%s\n# greens in a row\t%s\n# as of\t%s\n' "$CALLS" "$g" "$NOW"
         [ -z "$INRUN" ] || printf '# in-run\t%s\n' "$INRUN"
+        if [ "$PIN" != unpinned ]; then
+            printf '# judged\t%s\n# bundle\t%s\n' "$(cat "$raw/line")" "$HERE"
+            awk -F '\t' '{ print "# fresh\t" $1 "\tpin=" $2 "\tmain=" $3 "\t" $4 }' "$raw/fresh" 2>/dev/null
+        fi
         # the read C, and where it came from: the night's scheduled run (id, created, head), or --commit
         printf '# read C\t%s\t%s\n' "${CSHA:-none}" "$(if [ -n "$COMMIT" ]; then printf -- '--commit'; elif [ -s "$raw/night" ]; then printf 'scheduled %s run %s' "$NIGHT_WF" "$(tr '\t' ' ' < "$raw/night")"; else printf 'no night read'; fi)"
     } > "$OUTDIR/$DAY/bundle.tsv" || exit 1
@@ -708,6 +826,7 @@ fixture() {
         printf 'wf\t.github/workflows/d.yml\t401\tschedule\tmain\t%s\t2026-10-04T03:00:00Z\tCOMPLETED\tSUCCESS\td\tCOMPLETED\tSUCCESS\t2026-10-04T03:01:00Z\t2026-10-04T03:20:00Z\t1\n' "$ST_C"
     } > "$1/runs.tsv"
     printf '101\t1\n201\t1\n301\t1\n' > "$1/attempts.tsv"
+    printf '%s\t%s\t%s\tfresh\n' nightly_train.sh "$ST_C" "$ST_C" nightly_greens.sh "$ST_C" "$ST_C" red_age.sh "$ST_C" "$ST_C" > "$1/fresh"
 }
 # st_decide DIR -> the line, the lanes and the reds, as one text
 st_decide() { decide "$ST_LANES" "$1" 2026-10-04T06:00:00Z; cat "$1/line" "$1/lanes.tsv" "$1/reds.tsv"; }
@@ -996,6 +1115,46 @@ v-e;verdict;check E;-;-;-" "$d"
         bash "$tmp/pd/nightly_train.sh" --pinned --from "$d" --out "$tmp/od" --now 2026-10-04T06:00:00Z
     row sums_that_omit_pin_refuse 2 "NOT RELEASABLE: nightly-train, pin failed" "RELEASABLE H=" -- \
         bash "$tmp/pf/nightly_train.sh" --pinned --from "$d" --out "$tmp/of" --now 2026-10-04T06:00:00Z
+    # ---- stale-pin (A3 #2): a pinned run is judged by the judge on main. The replay rows read RAW/fresh; the read rows
+    #      run fresh_read against a stub gh (no network).
+    st_first_line() { bash "$tmp/pe/nightly_train.sh" --pinned --from "$d" --out "$tmp/og" --now 2026-10-04T06:00:00Z > "$tmp/og.out"; head -n 1 "$tmp/og.out"; }
+    row a_pinned_run_names_its_bundle_on_line_1 0 "bundle=$tmp/pe sums=" "NOT RELEASABLE" -- st_first_line
+    for x in stale unread empty; do cp -r "$d" "$tmp/fr-$x"; done
+    printf 'nightly_train.sh\t%s\t%s\tstale\n' "$ST_C" "$ST_X" > "$tmp/fr-stale/fresh"
+    sed -i "2s/\tfresh\$/\tunread: commits HTTP 502/" "$tmp/fr-unread/fresh"
+    : > "$tmp/fr-empty/fresh"
+    row a_pin_behind_main_is_red 0 "NOT RELEASABLE: nightly-train, stale-pin (pin=aaaaaaaaaa main=bbbbbbbbbb nightly_train.sh) [C=" "RELEASABLE H=" -- \
+        bash "$tmp/pe/nightly_train.sh" --pinned --from "$tmp/fr-stale" --out "$tmp/os" --now 2026-10-04T06:00:00Z
+    st_a_stale_pin_is_a_failure_and_keeps_the_judged_line() { awk -F "\t" "NR > 1 { print \"concl=\" \$5 }" "$tmp/os/history.tsv"; grep -c "^# judged	NOT RELEASABLE: ci-main, not_measured" "$tmp/os/2026-10-04/bundle.tsv"; }
+    row a_stale_pin_is_a_failure_and_keeps_the_judged_line 0 "$(printf 'concl=failure\n1')" "" -- st_a_stale_pin_is_a_failure_and_keeps_the_judged_line
+    row an_unread_pin_is_not_measured 0 "stale-pin not_measured (nightly_greens.sh unread: commits HTTP 502)" "RELEASABLE H=" -- \
+        bash "$tmp/pe/nightly_train.sh" --pinned --from "$tmp/fr-unread" --out "$tmp/ou" --now 2026-10-04T06:00:00Z
+    row no_freshness_read_is_not_measured 0 "stale-pin not_measured (no freshness read)" "RELEASABLE H=" -- \
+        bash "$tmp/pe/nightly_train.sh" --pinned --from "$tmp/fr-empty" --out "$tmp/oy" --now 2026-10-04T06:00:00Z
+    row an_unpinned_run_reads_no_freshness 0 "NOT RELEASABLE: ci-main, not_measured (+14 more) [C=aaaaaaaaaa pin=unpinned]" "stale-pin" -- \
+        bash "$SCRIPT_PATH" --from "$tmp/fr-stale" --out "$tmp/oz" --now 2026-10-04T06:00:00Z
+    mkdir -p "$tmp/fb"
+    printf '%s\n' '#!/bin/bash' 'case "$*" in' \
+        '  *rate_limit*) echo "5000 ${STUB_REM:-5000}" ;;' \
+        '  *commits\?*) printf "HTTP/2.0 %s X\r\netag: \"f1\"\r\n\r\n" "${STUB_HTTP:-200}"; printf "[{\"sha\":\"%s\"}]\n" "$STUB_MAIN" ;;' \
+        '  *compare/*) echo "$STUB_CMP"; echo "$*" >> "$STUB_LOG" ;;' \
+        '  *) exit 1 ;;' 'esac' > "$tmp/fb/gh"; chmod +x "$tmp/fb/gh"
+    printf 'train %s\ngreens %s\nredage %s\n' "$ST_C" "$ST_C" "$ST_C" > "$tmp/fb/PIN"
+    st_fresh() {   # st_fresh NAME MAIN CMP [HTTP] -> fresh_state, the rows, and the compare count
+        local f="$tmp/fq-$1"; mkdir -p "$f"; : > "$f/log"; CALLS=0; MAX_CALLS=0
+        PATH="$tmp/fb:$PATH" STUB_MAIN="$2" STUB_CMP="$3" STUB_HTTP="${4:-200}" STUB_LOG="$f/log" fresh_read "$f" "$f/cache" "$tmp/fb/PIN"
+        printf 'state=[%s]\n' "$(fresh_state "$f")"; cat "$f/fresh"; printf 'compares=%s calls=%s\n' "$(wc -l < "$f/log")" "$CALLS"
+    }
+    row fresh_read_equal_pin_is_fresh_without_a_compare 0 "$(printf 'state=[]\nnightly_train.sh\t%s\t%s\tfresh' "$ST_C" "$ST_C")" "compares=1" -- st_fresh eq "$ST_C" ""
+    row fresh_read_main_behind_the_pin_is_fresh 0 "state=[]" "stale" -- st_fresh ahead "$ST_X" ahead
+    row fresh_read_pin_behind_main_is_stale 0 "state=[stale-pin (pin=aaaaaaaaaa main=bbbbbbbbbb nightly_train.sh)]" "" -- st_fresh behind "$ST_X" behind
+    row fresh_read_a_diverged_pin_is_stale 0 "state=[stale-pin (pin=aaaaaaaaaa" "" -- st_fresh diverged "$ST_X" diverged
+    row fresh_read_a_failed_compare_is_not_measured 0 "state=[stale-pin not_measured (nightly_train.sh unread: compare failed)]" "" -- st_fresh nocmp "$ST_X" ""
+    row fresh_read_a_failed_commits_read_is_not_measured 0 "state=[stale-pin not_measured (nightly_train.sh unread: commits HTTP 502)]" "" -- st_fresh http "$ST_X" behind 502
+    st_fresh_floor() { STUB_REM=999 st_fresh floor "$ST_X" behind; }
+    row fresh_read_under_the_rate_floor_is_not_measured 0 "unread: core remaining 999 under 1000" "fresh" -- st_fresh_floor
+    st_fresh_cached() { st_fresh cached "$ST_X" behind > /dev/null; mv "$tmp/fq-cached" "$tmp/fq-c2"; mkdir -p "$tmp/fq-cached"; cp -r "$tmp/fq-c2/cache" "$tmp/fq-cached/"; st_fresh cached "$ST_X" ahead; }
+    row fresh_read_a_cached_pair_reads_no_compare 0 "compares=0" "state=[]" -- st_fresh_cached
     # ---- --commit C and --in-run RUN (B1 Q1, Q3): C by oid, and the rehearsal's own lane jobs, each on C only where it
     #      asserted C. Against a stub gh (no network); the replay rows read a jobs TSV fixture.
     ST_IR_LANES='v-a;verdict;check A;.github/workflows/a.yml;^schedule$;^job-a$
@@ -1008,6 +1167,7 @@ l-mod;verdict;check M;.github/workflows/models-nightly.yml;^schedule$;^models$'
         '  *actions/workflows*) printf "HTTP/2.0 200 OK\r\netag: \"e1\"\r\n\r\n"; cat "$STUB_WF" ;;' \
         '  *graphql*) cat "$STUB_GQL" ;;' \
         '  *actions/runs/7001/attempts/*) jq -r "$q" "$STUB_JOBS" ;;' \
+        '  *actions/runs/900/jobs*) [ -n "${STUB_LJOBS:-}" ] || exit 1; echo "$*" >> "$STUB_LJOBS.log"; jq -r "$q" "$STUB_LJOBS" ;;' \
         '  *"actions/runs/7001 "*) jq -r "$q" "$STUB_RUN" ;;' \
         '  *) echo 1 ;;' 'esac' > "$tmp/ir/bin/gh"; chmod +x "$tmp/ir/bin/gh"
     printf '{"workflows":[{"node_id":"WA","path":".github/workflows/a.yml"},{"node_id":"WL","path":"%s"},{"node_id":"WM","path":"%s"}]}\n' "$INRUN_WF" "$INRUN_MODELS_WF" > "$tmp/ir/wf.json"
@@ -1110,6 +1270,26 @@ l-mod;verdict;check M;.github/workflows/models-nightly.yml;^schedule$;^models$'
     row inrun_a_cut_job_list_leaves_the_models_lane_unmeasured 0 "run 7001: its job list was cut" "green" -- st_ir_lane cut l-mod
     row inrun_a_run_on_no_c_is_named_for_the_models_lane 0 "no run on C; newest run 7001 on bbbbbbbbbb" "" -- st_ir_lane otherc l-mod
     row inrun_a_run_on_no_c_is_named_for_a_called_lane 0 "no run on C; newest run 7001 on bbbbbbbbbb" "" -- st_ir_lane otherc l-gpu
+    # st_lr NAME [GPU-ASSERT GPU-CONCLUSION [DRY-ASSERT]] -> (no --in-run) fetch with --commit C, where INRUN_WF's own scheduled run
+    #   900 picked C but ran on X, then judge ST_IR_LANES; NAME "noread" has no job list, "onc" leaves run 900 on C
+    st_lr() {
+        local f="$tmp/lr/$1"; mkdir -p "$f"; : > "$f/jobs.json.log"
+        if [ "$1" = onc ]; then cp "$tmp/ir/gql.json" "$f/gql.json"
+        else jq -c --argjson id 900 --arg x "$ST_X" '(.. | objects | select(.databaseId? == $id) | .checkSuite.commit.oid) |= $x' "$tmp/ir/gql.json" > "$f/gql.json"; fi
+        printf '{"total_count":3,"jobs":[%s,%s,%s]}\n' "$(ir_job pick completed '"success"')" \
+            "$(ir_job cleanroom-gpu completed "\"${3:-success}\"" "${2:-$ST_C}" success)" "$(ir_job publish-dryrun completed '"success"' "${4:-$ST_C}" success)" > "$f/jobs.json"
+        local lj="$f/jobs.json"; [ "$1" != noread ] || lj=""
+        COMMIT="$ST_C"; INRUN=""; CALLS=0
+        PATH="$tmp/ir/bin:$PATH" STUB_WF="$tmp/ir/wf.json" STUB_GQL="$f/gql.json" STUB_LJOBS="$lj" LANES="$ST_IR_LANES" fetch "$f" "$f/cache"
+        printf 'read=%s calls=%s jobreads=%s\n' "$(cat "$f/read")" "$CALLS" "$(wc -l < "$f/jobs.json.log")"
+        decide "$ST_IR_LANES" "$f" 2026-10-04T06:00:00Z; cat "$f/line" "$f/lanes.tsv"
+    }
+    row lanes_a_scheduled_run_that_asserted_c_counts_for_c 0 "RELEASABLE H=$ST_C" "NOT RELEASABLE" -- st_lr base
+    row lanes_a_run_already_on_c_reads_no_job_list 0 "jobreads=0" "" -- st_lr onc
+    row lanes_a_job_that_asserted_another_commit_votes_on_nothing 0 "NOT RELEASABLE" "" -- st_lr other "$ST_X" success
+    row lanes_a_red_job_that_asserted_c_is_red 0 "run 900: cleanroom-gpu=failure" "" -- st_lr red "$ST_C" failure
+    row lanes_an_unread_job_list_leaves_the_run_on_its_head 0 "newest run 900 on ${ST_X:0:10}" "RELEASABLE H=" -- st_lr noread
+    row lanes_a_run_where_no_job_asserted_c_stays_on_its_head 0 "newest run 900 on ${ST_X:0:10}" "RELEASABLE H=" -- st_lr none "$ST_X" success "$ST_X"
     # without --in-run the models lane is INRUN_MODELS_WF's own scheduled run, as before
     st_noir() {
         local f="$tmp/ir/noir"; mkdir -p "$f"; COMMIT="$ST_C"; INRUN=""; CALLS=0
@@ -1263,6 +1443,17 @@ m94_setup_fault_row_drops_its_c	s/(r == "" ? OH : RH\[r\])/(r == "" ? "" : RH[r]
 m95_producer_gap_not_refused	s/^producer_gaps() {$/producer_gaps() { return 0/
 m96_producer_file_unchecked	s/ git -C "\$2" cat-file -e "\$3:\$wf" 2> \/dev\/null || / true || /
 m97_producers_report_never_red	s/^producers_report() {$/producers_report() { return 0/
+m98_stale_pin_counts_fresh	s/behind|diverged) st=stale;/behind|diverged) st=fresh;/
+m99_compare_dropped	s/if \[ "\$m" = "\$p" \]; then st=fresh/if true; then st=fresh/
+m100_unread_pin_counts_fresh	s/\$4 != "fresh" \&\& \$4 != "stale" \&\& u == ""/0/
+m101_stale_pin_never_replaces_the_line	s/^    \[ -z "\$fresh" \] || line=/    : || line=/
+m102_bundle_line_unprinted	s/bundle=%s sums=/bundle-off=%s sums=/
+m103_pinned_freshness_skipped	s/^    if \[ "\$PIN" != unpinned \]; then$/    if false; then/
+m104_empty_fresh_read_is_fresh	s/^    \[ -s "\$1\/fresh" \] || {/    true || {/
+m105_lanes_run_never_reread	s/^    \[ -n "\$INRUN" \] || lanes_rows "\$raw"$/    :/
+m106_lanes_assert_ignored	s/if (\$1 == "#truncated" || \$6 == C) { n++/if (1) { n++/
+m107_lanes_unread_run_dropped	s/if (n == 0) { for (i = 1; i <= o; i++) print old\[i\]; exit }/if (n == 0) exit/
+m108_lanes_run_on_c_reread	s/if (id != "" \&\& h != C) print id/if (id != "") print id/
 '
 # each planted mutant must change the file, still parse, and turn at least one row RED
 mutants() {
