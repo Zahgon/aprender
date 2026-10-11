@@ -64,7 +64,8 @@ commands:
     category: inference
     description: "Inference server (plan/run)"
     requires_model: true
-    kinds: {generative: receipt, embedding: receipt}
+    kinds: {generative: receipt, embedding: refuse}
+    use_instead: {embedding: embed}
     side_effects: [network, filesystem]
     subcommands: [plan, run]
 

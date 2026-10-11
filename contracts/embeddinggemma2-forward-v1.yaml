@@ -159,12 +159,12 @@ falsification_tests:
 - id: FALSIFY-EG2-001
   rule: Layer kind from the file
   prediction: A synthetic file whose global and local blocks are swapped yields swapped layer kinds
-  test: unit test over a synthetic tensor-shape table, no layer-index arithmetic in the classifier
+  test: falsify_eg2l_003_swapped_shapes_swap_kinds
   if_fails: Layer kind derived from an index pattern or an architecture constant (I-9)
 - id: FALSIFY-EG2-002
   rule: Local attention window
   prediction: Attention weights beyond the window are exactly zero in local layers
-  test: unit test over n in [1, 3W] with random q, k and a V that marks each position; the boundary pair abs(i - j) = floor(W / 2) is inside, floor(W / 2) + 1 is outside
+  test: a_position_outside_the_window_has_no_effect_eg2
   if_fails: Window off by one, the full W taken on each side instead of W / 2, or a causal mask applied instead of a symmetric one
 - id: FALSIFY-EG2-003
   rule: Bidirectional global attention
@@ -189,12 +189,12 @@ falsification_tests:
 - id: FALSIFY-EG2-007
   rule: Unit norm and finite
   prediction: Every output vector has norm 1 within 1e-5 and no NaN or Inf
-  test: every corpus item at every declared dimension
+  test: embeds_to_a_unit_vector_of_the_output_width_eg2
   if_fails: Missing normalisation, or a float16 activation overflow (I-5)
 - id: FALSIFY-EG2-008
   rule: Truncation re-normalises the leading dims
   prediction: The 256 response equals the leading 256 of the 768 response, re-normalised
-  test: compare responses at 768, 512, 256 and 128 for every corpus item
+  test: truncation_keeps_the_prefix_direction_at_unit_length_eg2
   if_fails: Truncation without re-normalisation, or the 512 response taken from the trunk
 - id: FALSIFY-EG2-009
   rule: Batch and order invariance
