@@ -9,6 +9,7 @@ use super::{choose_token, turn_budget, witness, ArchForward, Entry, EntryKind, S
 use crate::constrain::{ConstraintError, TokenConstraint};
 use crate::error::{RealizarError, Result};
 use crate::gguf::{OwnedQuantizedModel, QuantizedGenerateConfig};
+use std::time::Instant;
 
 /// Why a constrained generation ended (#3793).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,15 +78,20 @@ impl<F: ArchForward> Session<F> {
             turn_budget(prompt.len(), config.max_tokens, context_length);
         self.reserve(prompt.len() + budget)?;
 
+        let prefill_started = Instant::now();
         let reused = self.prepare_prompt(prompt)?;
         let mut rng = rand::rngs::StdRng::seed_from_u64(config.seed);
         let mut tokens = prompt.to_vec();
         let mut stop = None;
+        // The first choice runs the prompt's forward, so prefill ends when it
+        // returns (#4954). A turn that chose nothing ends it here.
+        let mut prefill_ended = None;
         for generated in 0..budget {
             if config.cancel.is_cancelled() {
                 break;
             }
             let next = self.constrained_choice(&tokens, config, constraint, &mut rng)?;
+            prefill_ended.get_or_insert_with(Instant::now);
             if config.stop_tokens.contains(&next) {
                 stop = Some(constrained_end(constraint, next, generated)?);
                 break;
@@ -104,6 +110,8 @@ impl<F: ArchForward> Session<F> {
             reused,
             used_gpu: self.on_gpu(),
             context_capped,
+            prefill_started,
+            prefill_ended: prefill_ended.unwrap_or_else(Instant::now),
         };
         Ok((turn, stop))
     }
