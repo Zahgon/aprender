@@ -30,6 +30,8 @@ jobs:
           bash scripts/tests/nightly_lanes_rows_test.sh --mutants
           bash scripts/release/nightly_train_andon.sh --self-test
           bash scripts/release/nightly_train_andon.sh --mutants
+          bash scripts/tests/nightly_checkout_c_test.sh
+          bash scripts/tests/nightly_checkout_c_test.sh --mutants
       - name: RELEASABLE or NOT RELEASABLE for main's head
         env:
           GH_TOKEN: ${{ github.token }}

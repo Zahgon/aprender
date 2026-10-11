@@ -76,10 +76,13 @@ jobs:
       # a PR branch would otherwise publish that branch as "nightly" (operator
       # 2026-09-28). gate resolves main's head ONCE; build and publish check out that
       # exact sha, so a push to main mid-run cannot split one nightly across two heads.
+      # A scheduled run builds its own head_sha (github.sha, main's head when the run was
+      # created), never main's tip when this step starts: the train and the producers
+      # judge the night by that head_sha, and runs start hours after their cron (#5082).
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          ref: main
+          ref: ${{ github.event_name == 'schedule' && github.sha || 'main' }}
 
       - name: Case table
         run: |
