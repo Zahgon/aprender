@@ -1,4 +1,4 @@
-//! APR-MONO Integration Tests — Monorepo Strutural Invariants
+//! APR-MONO Integration Tests — Monorepo Structural Invariants
 //!
 //! Verifies the invariants defined in:
 //! - `docs/specifications/aprender-monorepo-consolidation.md`
