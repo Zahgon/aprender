@@ -39,7 +39,9 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use crate::error::{RealizarError, Result};
-use crate::gguf::{OwnedQuantizedModel, QuantizedGenerateConfig};
+use crate::gguf::{
+    logsumexp_full, top_k_logprobs, OwnedQuantizedModel, QuantizedGenerateConfig, StepLogprobs,
+};
 
 /// One architecture's forward on one backend: the only per-arch code a verb
 /// reaches, and only through a [`Session`].
@@ -165,7 +167,7 @@ pub struct LayerTiming {
 }
 
 /// What one [`Session::generate`] call did.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Turn {
     /// The prompt followed by the generated tokens.
     pub tokens: Vec<u32>,
@@ -186,6 +188,24 @@ pub struct Turn {
     /// prefill and the start of decode (#4954). Earlier than the first
     /// `on_token` call, so time a caller spends there is never prefill.
     pub prefill_ended: Instant,
+    /// One record per generated token when `config.logprobs_top_k` > 0
+    /// (#4026), else empty.
+    pub steps: Vec<StepLogprobs>,
+}
+
+// #4026: the steps of the last turn a session generated on this thread, for
+// `apr run`, whose dispatch drops the `Turn` inside per-backend helpers. Same
+// idiom as `infer`'s generation-start mark: cleared before a dispatch, taken
+// after it. `None` after a dispatch means the engine did not serve it.
+std::thread_local! {
+    static LAST_TURN_STEPS: std::cell::RefCell<Option<Vec<StepLogprobs>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Take the steps [`Session::generate`] last recorded on this thread (#4026).
+/// `None` when no turn with `logprobs_top_k` > 0 ran since the last take.
+pub fn take_last_turn_steps() -> Option<Vec<StepLogprobs>> {
+    LAST_TURN_STEPS.with(std::cell::RefCell::take)
 }
 
 /// A loaded model plus its decode state: the one engine (#4263).
@@ -378,13 +398,21 @@ impl<F: ArchForward> Session<F> {
     /// return it and how many leading tokens were already held. A greedy
     /// choice with no repetition penalty goes through
     /// [`ArchForward::forward_greedy`] when the backend has it.
+    ///
+    /// With `config.logprobs_top_k` > 0 the choice always comes from host
+    /// logits (the device argmax never shows them), and one [`StepLogprobs`]
+    /// is pushed to `steps`, ranked on the logits the FORWARD produced —
+    /// before the repetition penalty — so it records what the model said,
+    /// not what the sampler was handed (#4026).
     fn advance_and_choose(
         &mut self,
         tokens: &[u32],
         config: &QuantizedGenerateConfig,
         rng: &mut rand::rngs::StdRng,
+        steps: &mut Vec<StepLogprobs>,
     ) -> Result<(u32, usize)> {
-        if is_greedy(config) && !penalty_active(config) {
+        let recording = config.logprobs_top_k > 0;
+        if !recording && is_greedy(config) && !penalty_active(config) {
             let start = if self.extends(tokens) {
                 self.processed.len()
             } else {
@@ -408,13 +436,27 @@ impl<F: ArchForward> Session<F> {
             }
         }
         let (mut logits, reused) = self.advance_to(tokens)?;
+        // The forward's logits, before the penalty edits them in place: the
+        // chosen token's logprob is read from these, not the penalised row.
+        let raw = recording.then(|| logits.clone());
         OwnedQuantizedModel::apply_repeat_penalty(
             &mut logits,
             tokens,
             config.repeat_penalty,
             config.repeat_last_n,
         );
-        Ok((choose_token(&logits, config, rng), reused))
+        let chosen = choose_token(&logits, config, rng);
+        if let Some(raw) = raw {
+            let lse = logsumexp_full(&raw);
+            steps.push(StepLogprobs {
+                step: steps.len(),
+                chosen,
+                top: top_k_logprobs(&raw, config.logprobs_top_k),
+                chosen_logprob: raw.get(chosen as usize).map_or(f32::NAN, |&x| x - lse),
+                logsumexp_full: lse,
+            });
+        }
+        Ok((chosen, reused))
     }
 
     fn reserve(&mut self, positions: usize) -> Result<()> {
@@ -505,7 +547,8 @@ impl<F: ArchForward> Session<F> {
         let prefill_started = Instant::now();
         let reused = self.prepare_prompt(prompt)?;
         let mut rng = rand::rngs::StdRng::seed_from_u64(config.seed);
-        let (mut next, _) = self.advance_and_choose(prompt, config, &mut rng)?;
+        let mut steps = Vec::new();
+        let (mut next, _) = self.advance_and_choose(prompt, config, &mut rng, &mut steps)?;
         let prefill_ended = Instant::now();
         record(tracer, TraceStep::TransformerBlock, 0, prefill_started);
         let mut tokens = prompt.to_vec();
@@ -519,7 +562,9 @@ impl<F: ArchForward> Session<F> {
             // never computes a token it throws away (#4325).
             if generated > 1 {
                 let clock = std::time::Instant::now();
-                next = self.advance_and_choose(&tokens, config, &mut rng)?.0;
+                next = self
+                    .advance_and_choose(&tokens, config, &mut rng, &mut steps)?
+                    .0;
                 record(tracer, TraceStep::TransformerBlock, generated - 1, clock);
             }
             tokens.push(next);
@@ -534,6 +579,12 @@ impl<F: ArchForward> Session<F> {
                 break;
             }
         }
+        // The prefill's step when the turn was cancelled before its token was
+        // pushed is not part of the turn (#4026; #4325 computes no later one).
+        steps.truncate(tokens.len() - prompt.len());
+        if config.logprobs_top_k > 0 {
+            LAST_TURN_STEPS.with(|c| c.replace(Some(steps.clone())));
+        }
         Ok(Turn {
             tokens,
             reused,
@@ -541,6 +592,7 @@ impl<F: ArchForward> Session<F> {
             context_capped,
             prefill_started,
             prefill_ended,
+            steps,
         })
     }
 
