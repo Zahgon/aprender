@@ -8,7 +8,7 @@ epic: 4001
 owner_epic: aprender-a7   # a7 says none of its branches touch E7; never take an a7/* branch; ping a7 before contracts/*binding*
 criteria:
   - {id: A1, pass: "one quant TRAITS table is the only quant dispatch (#3418)", falsifier: asked, command: asked, ruling: "epics.yaml done_when"}
-  - {id: A2, pass: "GgmlType reconciles with vendored ggml.h ids at a pinned sha; exhaustive matches, no `_ =>` (#3431)", falsifier: "#3431 lists 3 mutation falsifiers", command: asked, ruling: "epics.yaml done_when"}
+  - {id: A2, pass: "GgmlType reconciles with vendored ggml.h ids at a pinned sha; exhaustive matches, no `_ =>` (#3431)", falsifier: "#3431 lists 3 mutation falsifiers; 1 and 2 covered by FT-GGMLT-001 (contracts/ggml-type-v1.yaml); 3 (`_ =>` on GgmlType) NOT gated: wildcard lint denied only in aprender-cbtop; 4 live sites @ main fbb4e43a3c (receipt a2-wildcard/)", command: "cargo test -p aprender-quant --test ggml_traits_fixture; mutation 3 needs FT-GGMLT-006 (a gate change)", ruling: "epics.yaml done_when"}
   - {id: A3, pass: "typed TensorStorage", falsifier: asked, command: asked, ruling: "epics.yaml done_when"}
   - {id: A4, pass: "a new architecture lands as config plus a small delta; shared blocks adopted (#3422); new-arch line cost measured on a real addition", falsifier: asked, command: asked, ruling: "epics.yaml done_when"}
   - {id: A5, pass: "MoE is the first registry entry: contracts/model-families/qwen3_moe.yaml pv-valid, then derived code, then qwen3moe CPU parity vs llama.cpp over >=4 varied prompts with a positive control", falsifier: asked, command: "pv validate / pv lint on the family yaml; parity harness unbuilt", ruling: "RULE 1 + quorum-a3-moe-e7 (a)"}
