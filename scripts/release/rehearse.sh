@@ -88,10 +88,13 @@ RECORD_ARTIFACT=release-rehearsal
 STREAK_NEED=1
 # B1 Q1: C is the newest first-parent main commit that both the models crux bundle and an infra clean-room run
 # measured. The bundle and its INDEX sit on EVIDENCE_BRANCH under MODELS_DIR; the walk reads main's newest PICK_DEPTH
-# first-parent commits (about five days of main in early October 2026), and a commit further back is no night's C.
+# first-parent commits, and a commit further back is no night's C. The bound is in commits, sized from main's merge rate:
+# 60 was about five days of main in early October 2026, and on 2026-10-11 main merged 34 first-parent commits in 24 hours
+# (64 in 72), so 60 was under two days. A crux bundle written at night is first read by the next morning's rehearsal, and
+# its C was measured by the clean-room a day or more before, so the walk fell short (#5062). 200 is about six days at that rate.
 EVIDENCE_BRANCH=nightly-evidence
 MODELS_DIR=models-crux
-PICK_DEPTH=60
+PICK_DEPTH=200
 
 # shellcheck source=scripts/release/lib_write_guard.sh
 . "$SCRIPT_DIR/lib_write_guard.sh" || exit 2
@@ -365,6 +368,14 @@ night_env() {
     printf 'C=%s\nV=%s\nSOURCE=%s\nSTARTED=%s\n' "$2" "$3" "$4" "$(date -u -d "@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%FT%TZ)" > "$1/night.env" || return 2
     if ids=$(release_ids "$4" "$2" 2>&1); then printf 'IDS=%s\n' "$ids"
     else printf 'IDS=-\nIDS_WHY=%s\n' "${ids%%$'\n'*}"; fi >> "$1/night.env"
+    # AGE: how far C is down main's first parents when the night starts (#5062: pick may reach 200 merges back, so a
+    # green says which C it judged and how old that C is). Read from the checkout's origin/main; none there is AGE=-.
+    local mh k
+    if mh=$(git -C "$4" rev-parse -q --verify refs/remotes/origin/main^{commit} 2>/dev/null) \
+        && k=$(git -C "$4" rev-list --first-parent "$mh" 2>/dev/null | awk -v c="$2" '$0 == c && !f { print NR; f = 1 }') && [ -n "$k" ]; then
+        printf 'AGE=main~%s (main %s)\n' "$((k - 1))" "${mh:0:10}"
+    elif [ -n "${mh:-}" ]; then printf 'AGE=-\nAGE_WHY=%s is not on the first parents of main %s\n' "$2" "${mh:0:10}"
+    else printf 'AGE=-\nAGE_WHY=the checkout has no origin/main\n'; fi >> "$1/night.env"
 }
 
 # rate_ok RELPATH -> rc 0 while the core allowance is above the floor; rc 2 and the reason on stderr otherwise.
@@ -613,6 +624,8 @@ judge() {
     [ -f "$st/bump.commit" ] && bumpc=$(cat "$st/bump.commit")
     [ -f "$st/bump.parent" ] && bparent=$(cat "$st/bump.parent")
     printf 'REHEARSAL %s on %s\n' "$v" "$c"
+    if grep -q '^AGE=main~' "$st/night.env"; then printf 'AGE   C is %s at the night'\''s start\n' "$(sed -n 's/^AGE=//p' "$st/night.env")"
+    else printf 'AGE   not measured: %s\n' "$(sed -n 's/^AGE_WHY=//p' "$st/night.env" | grep . || echo 'night.env has no AGE line')"; fi
     ids=$(sed -n 's/^IDS=//p' "$st/night.env")
     if [[ $ids =~ ^tree=[0-9a-f]{40,64}\ stop=[0-9a-f]{40,64}\ policy=[0-9a-f]{40,64}$ ]]; then printf 'IDS   %s\n' "$ids"
     else
@@ -1284,6 +1297,18 @@ GH
     }
     ne a_night_records_its_commits_ids "$c1" "IDS=$(release_ids "$g" "$c1")"
     ne a_night_without_the_stop_list_records_why "$c0" "IDS_WHY=$c0 has no blob $IDS_STOP"
+    # AGE (#5062): C's distance down main's first parents, read from the checkout's origin/main
+    # main is a merge of c4 into c3: c4 is reachable from main but not on its first parents
+    local mm; mm=$(sg commit-tree "$c3^{tree}" -p "$c3" -p "$c4" -m merge) && sg update-ref refs/remotes/origin/main "$mm" || return 2
+    ne a_night_records_how_far_c_is_down_main "$c1" "AGE=main~3 (main ${mm:0:10})"
+    ne a_c_off_main_records_why "$c4" "AGE_WHY=$c4 is not on the first parents of main ${mm:0:10}"
+    local da="$tmp/ne-age"
+    fixture_night "$da" && night_env "$da" "$c1" 0.71.0 "$g" || return 2
+    o=$(judge "$da" 2>&1)
+    if [[ $o == *"AGE   C is main~3 (main ${mm:0:10}) at the night's start"* ]]; then pass=$((pass + 1))
+    else printf '  BROKE %-48s %s\n' the_verdict_prints_cs_age "$(printf '%s' "$o" | grep '^AGE' | head -1)"; fail=$((fail + 1)); fi
+    sg update-ref -d refs/remotes/origin/main || return 2
+    ne a_checkout_without_main_records_why "$c1" "AGE_WHY=the checkout has no origin/main"
     local d="$tmp/ne-judge"
     fixture_night "$d" && night_env "$d" "$c0" 0.71.0 "$g" || return 2
     rc=0; o=$(judge "$d" 2>&1) || rc=$?
@@ -1382,6 +1407,13 @@ selftest_pick() {
     rc=0; o=$( pick_c --repo "$p/clone" 2>&1 ) || rc=$?
     if [ "$rc" = 3 ] && [[ $o == *"--pick-c needs --cache DIR"* ]]; then pass=$((pass + 1))
     else printf '  BROKE %-48s rc=%s (want 3): %s\n' a_pick_without_a_cache_is_a_caller_error "$rc" "$o"; fail=$((fail + 1)); fi
+    # #5062: main merges ~34 first-parent commits a day, so the night's C is often 60+ commits back by the morning the
+    # rehearsal reads it. C 70 merges back is still in the walk (the old 60 refused it).
+    local h=$m5 n
+    for n in $(seq 1 70); do h=$(cm $((700 + n)) "n$n" "$h") || return 2; done
+    pg update-ref refs/heads/main "$h" || return 2
+    ev "$(printf '%s green\n' "$m5")" "$m5:green" || return 2
+    CPU=$(printf '%s\tgreen\t31' "$m5") pk a_c_seventy_merges_back_is_in_the_walk 0 "$m5" "pick: C $m5 (main~70): models-crux green, cleanroom-cpu green run 31"
     printf '  %s pick rows\n' "$((pass + fail - p0))"
 }
 
@@ -1605,6 +1637,10 @@ pick_not_measured_line_counts rehearse.sh         s/\[ "\$state" != not_measured
 pick_bundle_unchecked        rehearse.sh         s/\[ "\$v" = "\$state" \] || {/true || {/
 pick_not_first_parent        rehearse.sh         s/rev-list --first-parent -n "\$PICK_DEPTH"/rev-list -n "$PICK_DEPTH"/
 pick_unbounded               rehearse.sh         s/ -n "\$PICK_DEPTH" refs\/rehearsal\/main/ refs\/rehearsal\/main/
+pick_depth_two_days          rehearse.sh         s/^PICK_DEPTH=200$/PICK_DEPTH=60/
+age_off_by_one               rehearse.sh         s/"\$((k - 1))" "\${mh:0:10}"/"$k" "${mh:0:10}"/
+age_any_parent               rehearse.sh         s/rev-list --first-parent "\$mh"/rev-list "$mh"/
+age_not_judged               rehearse.sh         s/AGE   C is %s at the night/AGE   %s/
 pick_models_red_refused      rehearse.sh         s/ (green|red|not_measured)\$'/ (green|not_measured)$'/
 pick_cpu_red_refused         rehearse.sh         s/\\t(green|red)\\t/\\t(green)\\t/
 pick_models_side_unchecked   rehearse.sh         s/if \[ -n "\${models\[\$sha\]:-}" \] && /if /
