@@ -26,7 +26,15 @@ impl CudaExecutor {
         );
 
         // End capture regardless of result
-        let graph = self.stream.end_capture()?;
+        let graph = match self.stream.end_capture() {
+            Ok(g) => g,
+            Err(e) => {
+                // PMAT-374: end_capture failed, so the stream may still be in capture
+                // mode. Synchronize to force a clean state before returning the error.
+                let _ = self.stream.synchronize();
+                return Err(e);
+            }
+        };
 
         // Check capture result
         capture_result?;
@@ -254,7 +262,7 @@ impl CudaExecutor {
 
     /// PMAT-045: Batched GPU argmax — process M logit vectors with ONE sync.
     ///
-    /// Five-Whys root cause: c=4 decode regression (140→50 tok/s per request).
+    /// Five-Whys root cause: c=4 decode regression (per-request tok/s fell).
     /// Why? Sequential `gpu_argmax` calls: M syncs × ~0.3ms = 1.2ms/token at c=4.
     /// Why? Each `gpu_argmax` calls `stream.synchronize()` + `copy_to_host`.
     /// Why? API designed for single-sequence M=1 path.

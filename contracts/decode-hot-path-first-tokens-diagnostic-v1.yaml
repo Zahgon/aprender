@@ -192,9 +192,8 @@ implementation:
       change: "Remove lines 417-425 (realizr#198 eprintln block)"
       justification: "Diagnostic for resolved race condition — no longer needed"
 
-  files_to_audit:
-    - path: crates/aprender-serve/src/cuda/executor/layers/reduces.rs
-      note: "Contains duplicate forward_graphed_replay_to_token_id WITHOUT the diagnostic. Not included anywhere (dead code). No action required; flagged for future cleanup."
+  files_to_audit: []
+  # reduces.rs, the dead duplicate flagged here, was deleted under #4700.
 
   followup:
     - "Audit self.decode_token_count usages — if only used for the removed diagnostic, remove the counter entirely."

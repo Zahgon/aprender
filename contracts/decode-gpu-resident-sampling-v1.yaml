@@ -64,7 +64,7 @@ abstract: |
          ├── stream.synchronize()                     ← STALLS HOST
          └── copy_to_host(next_token_id, 4 bytes)    D2H 4B
 
-  The `stream.synchronize()` at `gpu_argmax` (reduces.rs:255) fully
+  The `stream.synchronize()` at `gpu_argmax` (par-062.rs:243) fully
   blocks the host until the entire decode graph + argmax kernels finish.
   The host then does the CPU embedding lookup for the NEXT token, then
   starts the H2D for that next iteration. GPU is idle during CPU-side
@@ -279,7 +279,7 @@ implementation:
     - "Confirm embedding weight storage: locate `embed_into` on CPU model (gguf/model.rs / embedding.rs)"
     - "Size estimate: Qwen2.5-Coder-1.5B token_embd is [151936, 1536] — 466MB F16 or ~117MB Q4_K"
     - "Decide Q4_K vs F16 GPU embedding: Q4_K requires fused dequant+gather kernel"
-    - "Verify there is no argmax node already inside decode_graph (reduces.rs path launches argmax OUTSIDE graph)"
+    - "Verify there is no argmax node already inside decode_graph (the par-062.rs path launches argmax OUTSIDE graph)"
 
   phase_2_gpu_embedding_kernel:
     files_to_create:

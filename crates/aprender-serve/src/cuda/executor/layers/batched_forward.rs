@@ -431,7 +431,7 @@ impl CudaExecutor {
         // PMAT-086: Removed redundant stream.synchronize() before argmax.
         // LM head GEMV and argmax both execute on self.stream — CUDA stream
         // ordering guarantees GEMV completes before argmax reads logits.
-        // batched_gpu_argmax does its own sync after all 2×M kernels (reduces.rs:370).
+        // batched_gpu_argmax does its own sync after all 2×M kernels (par-062.rs:384).
         let logits_ptr = logits_buf.as_ptr();
         std::mem::forget(logits_buf); // Non-owning wrapper — prevent double-free
         Ok((logits_ptr, m * vocab_size as usize))
