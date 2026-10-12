@@ -150,10 +150,12 @@ impl DatasetCardValidator {
             return errors;
         };
 
-        // Parse YAML
+        // Parse YAML. A card with `.inf`/`.nan` loaded under serde_yaml, so it
+        // must still parse here or validation is silently skipped; the
+        // non-finite option keeps `.inf` as text instead of an error (#5205).
         let Ok(yaml) = serde_saphyr::from_str_with_options::<serde_json::Value>(
             &yaml_content,
-            serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false },
+            serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false },
         ) else {
             return errors;
         };

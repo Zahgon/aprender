@@ -467,6 +467,23 @@ task_categories:
     // (may include similar categories like text-generation)
 }
 
+/// A `.inf` or a non-string key elsewhere in the front matter must not stop
+/// validation. serde_yaml read these; with serde-saphyr's default options the
+/// `.inf` fails the parse and the bad category goes unreported (#5205).
+#[test]
+fn test_validate_runs_with_non_string_key_and_inf() {
+    let readme = r"---
+1: numeric key
+ceiling: .inf
+task_categories:
+  - code-generation
+---
+";
+    let errors = DatasetCardValidator::validate_readme(readme);
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].value, "code-generation");
+}
+
 #[test]
 fn test_validate_multiple_invalid_categories() {
     let readme = r"---

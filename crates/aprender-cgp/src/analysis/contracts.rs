@@ -24,7 +24,7 @@ pub struct PerformanceContract {
     pub falsification: Vec<FalsificationCheck>,
     /// Absorb any extra fields from domain-specific contract schemas
     #[serde(flatten, default)]
-    pub extra: std::collections::HashMap<String, serde_json::Value>,
+    pub extra: std::collections::HashMap<String, ciborium::Value>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -48,7 +48,7 @@ pub struct PerformanceBound {
     pub min_bandwidth_gbps: Option<f64>,
     /// Absorb domain-specific bound fields (operation, competitor, etc.)
     #[serde(flatten, default)]
-    pub extra: std::collections::HashMap<String, serde_json::Value>,
+    pub extra: std::collections::HashMap<String, ciborium::Value>,
 }
 
 /// Accept both `size: 1024` (single int) and `size: [1024, 1024, 1024]` (sequence).
@@ -101,7 +101,7 @@ pub struct FalsificationCheck {
     #[serde(default)]
     pub check: String,
     #[serde(flatten, default)]
-    pub extra: std::collections::HashMap<String, serde_json::Value>,
+    pub extra: std::collections::HashMap<String, ciborium::Value>,
 }
 
 /// Result of verifying a single contract.
@@ -119,12 +119,22 @@ impl ContractVerification {
     }
 }
 
+/// YAML options for contracts. `.inf`/`.nan` in an untyped `extra` field loaded
+/// under serde_yaml; serde-saphyr rejects them there unless
+/// `reject_non_finite_typeless_float` is off, which keeps them as the text
+/// `.inf`/`-.inf`/`.nan`. Typed `f64` fields still read real non-finite floats
+/// (#5205).
+fn contract_yaml_options() -> serde_saphyr::Options {
+    serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false }
+}
+
 /// Load a performance contract from a YAML file.
 pub fn load_contract(path: &Path) -> Result<PerformanceContract> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read contract: {}", path.display()))?;
-    let contract: PerformanceContract = serde_saphyr::from_str_with_options(&content, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false })
-        .with_context(|| format!("Failed to parse contract: {}", path.display()))?;
+    let contract: PerformanceContract =
+        serde_saphyr::from_str_with_options(&content, contract_yaml_options())
+            .with_context(|| format!("Failed to parse contract: {}", path.display()))?;
     Ok(contract)
 }
 
@@ -636,6 +646,27 @@ mod tests {
         assert_eq!(parsed.kernel, contract.kernel);
         assert_eq!(parsed.bounds.len(), 1);
         assert_eq!(parsed.bounds[0].size, vec![512, 512, 512]);
+    }
+
+    /// A contract serde_yaml loaded still loads: `.inf` in `extra` is kept as
+    /// its text, a typed `f64` still reads infinity, and an integer map key
+    /// stays an integer (a `serde_json::Value` target turns it into the string
+    /// "1024") (#5205).
+    #[test]
+    fn test_extra_keeps_inf_and_non_string_keys() {
+        let yaml = "kind: PerformanceContract\nname: c\nversion: \"1\"\nkernel: k\nceiling: .inf\nfloor: -.inf\nby_size:\n  1024: fast\nbounds:\n  - size: 512\n    max_time_us: .inf\n    ceiling: .inf\n";
+        let parsed: PerformanceContract =
+            serde_saphyr::from_str_with_options(yaml, contract_yaml_options()).unwrap();
+        fn text(v: Option<&ciborium::Value>) -> Option<&str> {
+            v.and_then(ciborium::Value::as_text)
+        }
+        assert_eq!(text(parsed.extra.get("ceiling")), Some(".inf"));
+        assert_eq!(text(parsed.extra.get("floor")), Some("-.inf"));
+        assert_eq!(text(parsed.bounds[0].extra.get("ceiling")), Some(".inf"));
+        assert_eq!(parsed.bounds[0].max_time_us, Some(f64::INFINITY));
+        let by_size = parsed.extra["by_size"].as_map().unwrap();
+        assert_eq!(by_size[0].0.as_integer().map(i128::from), Some(1024));
+        assert_eq!(by_size[0].1.as_text(), Some("fast"));
     }
 
     #[test]
