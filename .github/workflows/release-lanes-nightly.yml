@@ -230,3 +230,46 @@ jobs:
         run: bash scripts/release/release_lanes.sh assert-head "$REF"
       - run: echo "publish-dryrun $VERDICT — $REASON"
       - run: test "$VERDICT" = green
+
+  # ------------------------------------------------------------------ receipt (#5185)
+  # One receipt per C for the release window (from 0.71.2): the CRUX models smoke (models_nightly.sh
+  # --relay --measure crux, the GPU hosts' bundle for C) and the publish dry run (measure: publish-dryrun
+  # above), sealed as artifact release-receipt-<C>. The window checks it with release_receipt.sh --check:
+  # GO only for exactly the cut sha with both steps green; anything else is STOP, never a re-run in the
+  # window. Not a lane: no train row reads this job, and it never fails on a NO-GO receipt.
+  receipt:
+    name: receipt
+    needs: [pick, measure-publish-dryrun]
+    if: always() && needs.pick.outputs.c != ''
+    runs-on: [self-hosted, Linux, X64, clean-room]
+    timeout-minutes: 10
+    env:
+      C: ${{ needs.pick.outputs.c }}
+      P_STATE: ${{ needs.measure-publish-dryrun.outputs.verdict || 'not_measured' }}
+      P_REASON: ${{ needs.measure-publish-dryrun.outputs.reason || 'measure publish-dryrun wrote no verdict' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.pick.outputs.c }}
+          fetch-depth: 1
+      - name: Assert HEAD is ${{ needs.pick.outputs.c }}
+        run: bash scripts/release/release_lanes.sh assert-head "$C"
+      - name: The receipt's case table, before it is trusted
+        run: bash scripts/release/release_receipt.sh --self-test
+      - name: Relay the CRUX models smoke of C
+        id: models
+        run: setsid --wait bash scripts/release/models_nightly.sh --relay --measure crux --commit "$C" --out "$RUNNER_TEMP/models-relay"
+      - name: Seal release-receipt-${{ needs.pick.outputs.c }}
+        env:
+          M_STATE: ${{ steps.models.outputs.state || 'not_measured' }}
+          M_REASON: ${{ steps.models.outputs.reason || 'the models relay wrote no state' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          bash scripts/release/release_receipt.sh --seal --commit "$C" --models "$M_STATE" "$M_REASON" \
+            --publish "$P_STATE" "$P_REASON" --out "$RUNNER_TEMP/receipt" --run-url "$RUN_URL"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: release-receipt-${{ needs.pick.outputs.c }}
+          path: ${{ runner.temp }}/receipt/release-receipt-${{ needs.pick.outputs.c }}.json
+          if-no-files-found: error
+          retention-days: 30
