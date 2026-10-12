@@ -84,7 +84,7 @@ fn dequant_superblock_tensor(
 /// for. A block-quantized id outside this list is refused at load rather than
 /// read as F32; `every_admitted_block_id_has_a_decoder_arm_3418` ties the two.
 fn apr_decodes(dtype: u8) -> bool {
-    matches!(dtype, 0 | 1 | 2 | 3 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 30 | 128 | 129)
+    matches!(dtype, 0 | 1 | 2 | 3 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 30 | 128 | 129)
         || crate::quantize::iq_dispatch::iq_block_elems(u32::from(dtype)).is_some()
 }
 
@@ -97,10 +97,29 @@ fn check_quant_tensor_sizes(
     tensors: &std::collections::BTreeMap<String, (usize, usize, Vec<usize>, u8)>,
 ) -> crate::error::Result<()> {
     for (name, (_, size, dims, dtype)) in tensors {
-        if matches!(dtype, 8 | 9) {
-            continue;
+        match dtype {
+            8 | 9 => continue,
+            // FT-GGMLT-015: APR I8/U8 (TensorDType::from_u8), not ggml Q5_0/Q5_1.
+            6 | 7 => {
+                return Err(crate::error::RealizarError::FormatError {
+                    reason: format!(
+                        "tensor {name}: APR dtype {dtype} is an I8/U8 integer tensor, which the APR loader does not read as weights"
+                    ),
+                });
+            },
+            3 => {
+                let expected = dims.iter().product::<usize>() * 8;
+                if *size != expected {
+                    return Err(crate::error::RealizarError::FormatError {
+                        reason: format!("tensor {name}: {size} bytes do not fit dims {dims:?} as F64 ({expected} expected)"),
+                    });
+                }
+                continue;
+            },
+            _ => {},
         }
-        let Some(t) = crate::gguf::ggml_type_table::traits(u32::from(*dtype))
+        let Some(t)
+ = crate::gguf::ggml_type_table::traits(u32::from(*dtype))
             .filter(|t| t.blck_size > 1)
         else {
             continue;
@@ -136,15 +155,18 @@ fn dequant_by_dtype(tensor_data: &[u8], dims: &[usize], dtype: u8) -> Vec<f32> {
         // GH-88: Q4_0 (GGML type 2) — 32-element blocks, 18 bytes each
         2 => crate::quantize::dequantize_q4_0(tensor_data)
             .unwrap_or_else(|_| vec![0.0; dims.iter().product()]),
-        // GH-88: Q4_1 (GGML type 3) — 32-element blocks, 20 bytes each
-        3 => crate::quantize::dequantize_q4_1(tensor_data)
-            .unwrap_or_else(|_| vec![0.0; dims.iter().product()]),
-        // GH-88: Q5_0 (GGML type 6) — 32-element blocks, 22 bytes each
-        6 => crate::quantize::dequantize_q5_0(tensor_data)
-            .unwrap_or_else(|_| vec![0.0; dims.iter().product()]),
-        // GH-88: Q5_1 (GGML type 7) — 32-element blocks, 24 bytes each
-        7 => crate::quantize::dequantize_q5_1(tensor_data)
-            .unwrap_or_else(|_| vec![0.0; dims.iter().product()]),
+        // FT-GGMLT-015 (#3418): APR dtype 3 is F64 (TensorDType::from_u8), not
+        // ggml Q4_1; 6 and 7 are I8 and U8 and are refused at load.
+        3 => {
+            let mut values: Vec<f32> = tensor_data
+                .as_chunks::<8>()
+                .0
+                .iter()
+                .map(|c| f64::from_le_bytes(*c) as f32)
+                .collect();
+            values.resize(dims.iter().product(), 0.0);
+            values
+        },
         12 => dequant_q4k_tensor(tensor_data, dims),
         13 => dequant_q5k_tensor(tensor_data, dims),
         14 => dequant_q6k_tensor(tensor_data, dims),
@@ -814,7 +836,7 @@ mod iq_and_undecoded_tests_3418 {
     #[test]
     fn every_admitted_block_id_has_a_decoder_arm_3418() {
         for id in 0u8..=255 {
-            if !super::apr_decodes(id) || matches!(id, 8 | 9) {
+            if !super::apr_decodes(id) || matches!(id, 3 | 8 | 9) {
                 continue;
             }
             let Some(t) = crate::gguf::ggml_type_table::traits(u32::from(id))
@@ -833,5 +855,16 @@ mod iq_and_undecoded_tests_3418 {
             assert_eq!(got.len(), 512, "{} ({id}) decoded to the wrong length", t.name);
             assert_ne!(got, f32_reading, "{} ({id}) is admitted but falls to the F32 arm", t.name);
         }
+    }
+
+    #[test]
+    fn apr_ids_3_6_7_follow_apr_format_3418() {
+        let want = [1.5f64, -2.0, 0.25];
+        let data: Vec<u8> = want.iter().flat_map(|v| v.to_le_bytes()).collect();
+        assert_eq!(
+            dequant_by_dtype(&data, &[3], 3),
+            vec![1.5f32, -2.0, 0.25],
+            "APR dtype 3 is F64 (TensorDType::from_u8), not ggml Q4_1"
+        );
     }
 }

@@ -1,5 +1,5 @@
 metadata:
-  version: 1.9.0
+  version: 1.10.0
   created: '2026-09-20'
   author: PAIML Engineering
   description: |
@@ -44,7 +44,7 @@ metadata:
   - 'GitHub #3418 (serve sizes from TRAITS, one table), #3430 (M1), #3431 (M2 reconciliation), #3421 (epic), #3563 (pin-derived artifacts, general case)'
 
 name: ggml-type
-version: 1.9.0
+version: 1.10.0
 scope: aprender-quant (trueno_quant) ggml tensor-type enum and TRAITS table
 
 description: |
@@ -349,6 +349,30 @@ falsification_tests:
     turns iq_tensors_reach_the_iq_decoders_3418 and
     every_admitted_block_id_has_a_decoder_arm_3418 RED; the refusal forced
     off turns apr_load_refuses_a_block_type_it_cannot_decode_3418 RED.
+- id: FT-GGMLT-015
+  rule: the APR loader reads dtype bytes 3, 6 and 7 as apr-format defines them (TensorDType::from_u8 F64, I8, U8), not as ggml Q4_1, Q5_0, Q5_1; F64 decodes to f32 and an I8 or U8 tensor is refused at load (#3418, quorum handoff/quorum-la074-a1-ids367.md 2/2 a)
+  prediction: |
+    apr_ids_3_6_7_follow_apr_format_3418 checks that dequant_by_dtype on the
+    little-endian F64 bytes of [1.5, -2.0, 0.25] with dtype 3 returns those
+    three values. apr_load_refuses_an_i8_or_u8_tensor_3418 builds a minimal
+    APR v2 file with an extra U8 tensor (model.layers.0.extra_ints) of 24 bytes, exactly
+    one Q5_1 block and so passed the step-10 size check, and expects
+    from_apr_bytes to be Err; the same for an I8 tensor of 22 bytes (one Q5_0
+    block), and that the refusal names I8/U8. GREEN once 3 decodes as F64
+    and 6/7 are refused as I8/U8; reading 3 as
+    Q4_1 again, or dropping the refusal, turns it RED.
+  test: cargo test -p aprender-serve --lib _3418
+  if_fails: 'an APR F64, I8 or U8 tensor is decoded as ggml Q4_1, Q5_0 or Q5_1 block data.'
+  evidence: |
+    Quorum 2026-10-12 (sonnet+haiku, planted fact caught by both): 2/2 a.
+    Before, on 22dba9bb2: RED, dtype 3 F64 bytes came back as Q4_1 values and
+    a 24-byte U8 tensor loaded. After: GREEN; apr_transformer:: 754 passed;
+    aprender-serve --lib (--skip qwen35) 16203 passed, 0 failed; clippy rc 0.
+    Mutants: 3 read as Q4_1 again turns apr_ids_3_6_7_follow_apr_format_3418
+    RED. The I8/U8 refusal removed first SURVIVED, because the step-11
+    no-decoder check still refused id 7 as Q5_1; the test now requires the
+    refusal to name I8/U8, and that mutant is RED (refused for the wrong
+    reason: no decoder for Q5_1).
 
 kani_harnesses:
 - id: KANI-GGMLT-001

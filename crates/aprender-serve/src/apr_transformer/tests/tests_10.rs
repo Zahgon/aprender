@@ -536,3 +536,29 @@ fn apr_load_refuses_a_block_type_it_cannot_decode_3418() {
         "a whole Q8_K tensor loaded and was read as F32 instead of refused"
     );
 }
+
+/// FT-GGMLT-015 (#3418): APR dtype 7 is U8 and 6 is I8 (TensorDType::from_u8).
+/// A 24-byte U8 tensor is exactly one Q5_1 block and a 22-byte I8 tensor one
+/// Q5_0 block, so the size check alone let them load as quant data.
+#[test]
+fn apr_load_refuses_an_i8_or_u8_tensor_3418() {
+    for (dtype, len) in [(7u8, 24usize), (6u8, 22usize)] {
+        let meta = minimal_metadata(256, 1, 4, 4, 4, 256);
+        let mut tensors =
+            make_hf_tensors(256, 256, 4, 4, 4, DTYPE_F32, DTYPE_F32, DTYPE_F32);
+        tensors.push(TensorDef {
+            name: "model.layers.0.extra_ints".to_string(),
+            dtype,
+            dims: vec![len as u64],
+            data: vec![1u8; len],
+        });
+        let Err(err) = AprTransformer::from_apr_bytes(&build_apr_v2(&meta, &tensors)) else {
+            panic!("an APR dtype {dtype} integer tensor of {len} bytes loaded as ggml block data");
+        };
+        // The refusal names the APR type, not the ggml block type the id collides with.
+        assert!(
+            err.to_string().contains("I8/U8"),
+            "dtype {dtype} refused for the wrong reason: {err}"
+        );
+    }
+}
