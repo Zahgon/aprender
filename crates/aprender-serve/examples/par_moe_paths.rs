@@ -30,7 +30,7 @@ impl Moe<'_> {
 
     fn cached(&self, ids: &[u32]) -> Res<Vec<f32>> {
         let (n, k, ffn) = self.shape;
-        let mut cache = OwnedQuantizedKVCache::from_config(&self.model.config, ids.len());
+        let mut cache = OwnedQuantizedKVCache::from_config(self.model.config(), ids.len());
         let mut logits = Vec::new();
         for (pos, &t) in ids.iter().enumerate() {
             logits = self.model.forward_single_qwen3_moe_with_cache(
