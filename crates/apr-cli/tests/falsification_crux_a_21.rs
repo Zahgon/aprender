@@ -3,6 +3,11 @@
 //! CRUX-SHIP-001 gate g3 evidence: every FALSIFY-CRUX-A-21-{001,002}
 //! gate the classifier discharges has a matching e2e JSON observation
 //! that the binary must classify exactly as the harness expects.
+// serde_json::json! expands a non-literal value to `to_value(..).unwrap()`, which
+// the GH-41 disallowed-methods ban flags at every call site. unwrap_used skips
+// external macros, so a hand-written unwrap() here is still refused (#5202).
+#![allow(clippy::disallowed_methods)]
+#![deny(clippy::unwrap_used)]
 
 use serde_json::json;
 use std::io::Write;
@@ -20,8 +25,12 @@ fn write_obs(json_body: &serde_json::Value) -> tempfile::NamedTempFile {
         .suffix(".json")
         .tempfile()
         .expect("tempfile");
-    f.write_all(serde_json::to_vec_pretty(json_body).unwrap().as_slice())
-        .expect("write obs");
+    f.write_all(
+        serde_json::to_vec_pretty(json_body)
+            .expect("CRUX-A-21: test setup")
+            .as_slice(),
+    )
+    .expect("write obs");
     f.flush().expect("flush");
     f
 }
@@ -78,12 +87,12 @@ fn falsify_crux_a_21_cli_empty_file_fails() {
         .prefix("crux-a-21-empty-")
         .suffix(".json")
         .tempfile()
-        .unwrap();
+        .expect("CRUX-A-21: test setup");
     let out = apr_binary()
         .args([
             "shared-cache-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-21: test setup"),
         ])
         .output()
         .expect("run");
@@ -96,14 +105,14 @@ fn falsify_crux_a_21_cli_invalid_json_fails() {
         .prefix("crux-a-21-bad-")
         .suffix(".json")
         .tempfile()
-        .unwrap();
-    tmp.write_all(b"{not json").unwrap();
-    tmp.flush().unwrap();
+        .expect("CRUX-A-21: test setup");
+    tmp.write_all(b"{not json").expect("CRUX-A-21: test setup");
+    tmp.flush().expect("CRUX-A-21: test setup");
     let out = apr_binary()
         .args([
             "shared-cache-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-21: test setup"),
         ])
         .output()
         .expect("run");
@@ -117,7 +126,7 @@ fn falsify_crux_a_21_cli_no_gates_fails() {
         .args([
             "shared-cache-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-21: test setup"),
         ])
         .output()
         .expect("run");
@@ -143,7 +152,7 @@ fn falsify_crux_a_21_001_dedup_env_wins_and_paths_collapse() {
         .args([
             "shared-cache-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-21: test setup"),
         ])
         .output()
         .expect("run");
@@ -172,7 +181,7 @@ fn falsify_crux_a_21_001_dedup_home_fallback_when_env_absent() {
         .args([
             "shared-cache-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-21: test setup"),
         ])
         .output()
         .expect("run");
@@ -193,7 +202,7 @@ fn falsify_crux_a_21_001_dedup_wrong_expected_root_fails() {
         .args([
             "shared-cache-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-21: test setup"),
         ])
         .output()
         .expect("run");
@@ -219,7 +228,7 @@ fn falsify_crux_a_21_001_dedup_invalid_hex_fails() {
         .args([
             "shared-cache-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-21: test setup"),
         ])
         .output()
         .expect("run");
@@ -239,7 +248,7 @@ fn falsify_crux_a_21_001_dedup_missing_home_errors() {
         .args([
             "shared-cache-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-21: test setup"),
         ])
         .output()
         .expect("run");
@@ -263,7 +272,7 @@ fn falsify_crux_a_21_002_permission_eacces_exit_13() {
         .args([
             "shared-cache-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-21: test setup"),
         ])
         .output()
         .expect("run");
@@ -290,7 +299,7 @@ fn falsify_crux_a_21_002_permission_not_found_exit_1() {
         .args([
             "shared-cache-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-21: test setup"),
         ])
         .output()
         .expect("run");
@@ -311,7 +320,7 @@ fn falsify_crux_a_21_002_permission_timed_out_is_other() {
         .args([
             "shared-cache-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-21: test setup"),
         ])
         .output()
         .expect("run");
@@ -332,7 +341,7 @@ fn falsify_crux_a_21_002_permission_wrong_exit_code_fails() {
         .args([
             "shared-cache-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-21: test setup"),
         ])
         .output()
         .expect("run");
@@ -356,7 +365,7 @@ fn falsify_crux_a_21_002_permission_wrong_hint_substring_fails() {
         .args([
             "shared-cache-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-21: test setup"),
         ])
         .output()
         .expect("run");
@@ -376,7 +385,7 @@ fn falsify_crux_a_21_002_permission_declaring_ok_on_eacces_fails() {
         .args([
             "shared-cache-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-21: test setup"),
         ])
         .output()
         .expect("run");
@@ -396,7 +405,7 @@ fn falsify_crux_a_21_002_permission_unknown_kind_fails() {
         .args([
             "shared-cache-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-21: test setup"),
         ])
         .output()
         .expect("run");
@@ -428,7 +437,7 @@ fn falsify_crux_a_21_multi_gate_all_pass() {
         .args([
             "shared-cache-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-21: test setup"),
         ])
         .output()
         .expect("run");
@@ -457,7 +466,7 @@ fn falsify_crux_a_21_json_output_shape() {
             "--json",
             "shared-cache-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-21: test setup"),
         ])
         .output()
         .expect("run");

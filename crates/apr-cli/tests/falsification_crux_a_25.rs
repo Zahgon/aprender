@@ -3,6 +3,11 @@
 //! CRUX-SHIP-001 gate g3 evidence: every FALSIFY-CRUX-A-25-{001,002,003}
 //! gate the classifier discharges has a matching e2e JSON observation
 //! that the binary must classify exactly as the harness expects.
+// serde_json::json! expands a non-literal value to `to_value(..).unwrap()`, which
+// the GH-41 disallowed-methods ban flags at every call site. unwrap_used skips
+// external macros, so a hand-written unwrap() here is still refused (#5202).
+#![allow(clippy::disallowed_methods)]
+#![deny(clippy::unwrap_used)]
 
 use serde_json::json;
 use std::io::Write;
@@ -20,8 +25,12 @@ fn write_obs(json_body: &serde_json::Value) -> tempfile::NamedTempFile {
         .suffix(".json")
         .tempfile()
         .expect("tempfile");
-    f.write_all(serde_json::to_vec_pretty(json_body).unwrap().as_slice())
-        .expect("write obs");
+    f.write_all(
+        serde_json::to_vec_pretty(json_body)
+            .expect("CRUX-A-25: test setup")
+            .as_slice(),
+    )
+    .expect("write obs");
     f.flush().expect("flush");
     f
 }
@@ -75,12 +84,12 @@ fn falsify_crux_a_25_cli_empty_file_fails() {
         .prefix("crux-a-25-empty-")
         .suffix(".json")
         .tempfile()
-        .unwrap();
+        .expect("CRUX-A-25: test setup");
     let out = apr_binary()
         .args([
             "rm-gc-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-25: test setup"),
         ])
         .output()
         .expect("run");
@@ -93,14 +102,14 @@ fn falsify_crux_a_25_cli_invalid_json_fails() {
         .prefix("crux-a-25-bad-")
         .suffix(".json")
         .tempfile()
-        .unwrap();
-    tmp.write_all(b"{not json").unwrap();
-    tmp.flush().unwrap();
+        .expect("CRUX-A-25: test setup");
+    tmp.write_all(b"{not json").expect("CRUX-A-25: test setup");
+    tmp.flush().expect("CRUX-A-25: test setup");
     let out = apr_binary()
         .args([
             "rm-gc-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-25: test setup"),
         ])
         .output()
         .expect("run");
@@ -114,7 +123,7 @@ fn falsify_crux_a_25_cli_no_gates_fails() {
         .args([
             "rm-gc-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-25: test setup"),
         ])
         .output()
         .expect("run");
@@ -141,7 +150,7 @@ fn falsify_crux_a_25_001_rm_frees_unique_owned_blobs() {
         .args([
             "rm-gc-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-25: test setup"),
         ])
         .output()
         .expect("run");
@@ -172,7 +181,7 @@ fn falsify_crux_a_25_001_rm_absent_tag_frees_nothing() {
         .args([
             "rm-gc-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-25: test setup"),
         ])
         .output()
         .expect("run");
@@ -198,7 +207,7 @@ fn falsify_crux_a_25_001_rm_count_mismatch_fails() {
         .args([
             "rm-gc-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-25: test setup"),
         ])
         .output()
         .expect("run");
@@ -228,7 +237,7 @@ fn falsify_crux_a_25_002_safety_duplicate_tag_frees_nothing() {
         .args([
             "rm-gc-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-25: test setup"),
         ])
         .output()
         .expect("run");
@@ -260,7 +269,7 @@ fn falsify_crux_a_25_002_safety_wrong_expected_fails() {
         .args([
             "rm-gc-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-25: test setup"),
         ])
         .output()
         .expect("run");
@@ -288,7 +297,7 @@ fn falsify_crux_a_25_002_safety_preserves_disjoint_manifests() {
         .args([
             "rm-gc-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-25: test setup"),
         ])
         .output()
         .expect("run");
@@ -312,7 +321,7 @@ fn falsify_crux_a_25_003_dryrun_idempotent_on_orphan() {
         .args([
             "rm-gc-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-25: test setup"),
         ])
         .output()
         .expect("run");
@@ -340,7 +349,7 @@ fn falsify_crux_a_25_003_dryrun_all_live_is_noop() {
         .args([
             "rm-gc-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-25: test setup"),
         ])
         .output()
         .expect("run");
@@ -362,7 +371,7 @@ fn falsify_crux_a_25_003_dryrun_wrong_expected_fails() {
         .args([
             "rm-gc-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-25: test setup"),
         ])
         .output()
         .expect("run");
@@ -386,7 +395,7 @@ fn falsify_crux_a_25_003_dryrun_empty_blobs_is_noop() {
         .args([
             "rm-gc-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-25: test setup"),
         ])
         .output()
         .expect("run");
@@ -424,7 +433,7 @@ fn falsify_crux_a_25_multi_gate_all_pass() {
         .args([
             "rm-gc-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-25: test setup"),
         ])
         .output()
         .expect("run");
@@ -455,7 +464,7 @@ fn falsify_crux_a_25_json_output_shape() {
             "--json",
             "rm-gc-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-25: test setup"),
         ])
         .output()
         .expect("run");

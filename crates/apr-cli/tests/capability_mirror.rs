@@ -62,10 +62,8 @@ fn the_mirror_is_byte_identical_to_the_source() {
             .position(|(a, b)| a != b)
             .unwrap_or_else(|| source.len().min(mirror.len()));
         let line = source[..at.min(source.len())]
-            .iter()
-            .filter(|&&b| b == b'\n')
-            .count()
-            + 1;
+            .split(|&b| b == b'\n')
+            .count();
         panic!(
             "the packaged mirror has drifted from its source.\n  \
              SOURCE (edit this one, it is linted): {SOURCE} — {} bytes\n  \

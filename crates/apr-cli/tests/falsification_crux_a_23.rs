@@ -3,6 +3,11 @@
 //! CRUX-SHIP-001 gate g3 evidence: every FALSIFY-CRUX-A-23-{001,002}
 //! gate the classifier discharges has a matching e2e JSON observation
 //! that the binary must classify exactly as the harness expects.
+// serde_json::json! expands a non-literal value to `to_value(..).unwrap()`, which
+// the GH-41 disallowed-methods ban flags at every call site. unwrap_used skips
+// external macros, so a hand-written unwrap() here is still refused (#5202).
+#![allow(clippy::disallowed_methods)]
+#![deny(clippy::unwrap_used)]
 
 use serde_json::json;
 use std::io::Write;
@@ -20,8 +25,12 @@ fn write_obs(json_body: &serde_json::Value) -> tempfile::NamedTempFile {
         .suffix(".json")
         .tempfile()
         .expect("tempfile");
-    f.write_all(serde_json::to_vec_pretty(json_body).unwrap().as_slice())
-        .expect("write obs");
+    f.write_all(
+        serde_json::to_vec_pretty(json_body)
+            .expect("CRUX-A-23: test setup")
+            .as_slice(),
+    )
+    .expect("write obs");
     f.flush().expect("flush");
     f
 }
@@ -78,12 +87,12 @@ fn falsify_crux_a_23_cli_empty_file_fails() {
         .prefix("crux-a-23-empty-")
         .suffix(".json")
         .tempfile()
-        .unwrap();
+        .expect("CRUX-A-23: test setup");
     let out = apr_binary()
         .args([
             "unified-search-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-23: test setup"),
         ])
         .output()
         .expect("run");
@@ -96,14 +105,14 @@ fn falsify_crux_a_23_cli_invalid_json_fails() {
         .prefix("crux-a-23-bad-")
         .suffix(".json")
         .tempfile()
-        .unwrap();
-    tmp.write_all(b"{bad json").unwrap();
-    tmp.flush().unwrap();
+        .expect("CRUX-A-23: test setup");
+    tmp.write_all(b"{bad json").expect("CRUX-A-23: test setup");
+    tmp.flush().expect("CRUX-A-23: test setup");
     let out = apr_binary()
         .args([
             "unified-search-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-23: test setup"),
         ])
         .output()
         .expect("run");
@@ -117,7 +126,7 @@ fn falsify_crux_a_23_cli_no_gates_fails() {
         .args([
             "unified-search-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-23: test setup"),
         ])
         .output()
         .expect("run");
@@ -144,7 +153,7 @@ fn falsify_crux_a_23_001_offline_local_only_surfaces() {
         .args([
             "unified-search-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-23: test setup"),
         ])
         .output()
         .expect("run");
@@ -172,7 +181,7 @@ fn falsify_crux_a_23_001_offline_empty_hub_and_local_is_empty() {
         .args([
             "unified-search-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-23: test setup"),
         ])
         .output()
         .expect("run");
@@ -192,7 +201,7 @@ fn falsify_crux_a_23_001_offline_count_mismatch_fails() {
         .args([
             "unified-search-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-23: test setup"),
         ])
         .output()
         .expect("run");
@@ -216,7 +225,7 @@ fn falsify_crux_a_23_001_offline_wrong_source_fails() {
         .args([
             "unified-search-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-23: test setup"),
         ])
         .output()
         .expect("run");
@@ -242,7 +251,7 @@ fn falsify_crux_a_23_002_dedup_repo_in_both_halves_is_both() {
         .args([
             "unified-search-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-23: test setup"),
         ])
         .output()
         .expect("run");
@@ -268,7 +277,7 @@ fn falsify_crux_a_23_002_dedup_disjoint_halves_both_appear() {
         .args([
             "unified-search-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-23: test setup"),
         ])
         .output()
         .expect("run");
@@ -289,7 +298,7 @@ fn falsify_crux_a_23_002_dedup_count_mismatch_fails() {
         .args([
             "unified-search-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-23: test setup"),
         ])
         .output()
         .expect("run");
@@ -314,7 +323,7 @@ fn falsify_crux_a_23_002_dedup_source_both_not_hub() {
         .args([
             "unified-search-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-23: test setup"),
         ])
         .output()
         .expect("run");
@@ -335,7 +344,7 @@ fn falsify_crux_a_23_002_dedup_missing_repo_fails() {
         .args([
             "unified-search-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-23: test setup"),
         ])
         .output()
         .expect("run");
@@ -364,7 +373,7 @@ fn falsify_crux_a_23_multi_gate_all_pass() {
         .args([
             "unified-search-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-23: test setup"),
         ])
         .output()
         .expect("run");
@@ -392,7 +401,7 @@ fn falsify_crux_a_23_json_output_shape() {
             "--json",
             "unified-search-lint",
             "--observation-file",
-            tmp.path().to_str().unwrap(),
+            tmp.path().to_str().expect("CRUX-A-23: test setup"),
         ])
         .output()
         .expect("run");

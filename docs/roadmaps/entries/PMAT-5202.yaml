@@ -1,0 +1,18 @@
+- id: PMAT-5202
+  github_issue: 5202
+  item_type: task
+  title: 'LAB: apr-cli test-target clippy red on main'
+  status: planned
+  priority: medium
+  assigned_to: null
+  created: 2026-10-12T19:11:39Z
+  updated: 2026-10-12T19:11:39Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 3863

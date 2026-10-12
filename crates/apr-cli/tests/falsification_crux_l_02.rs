@@ -3,6 +3,11 @@
 //! CRUX-SHIP-001 gate g3 evidence: every FALSIFY-CRUX-L-02-{002,003,004} gate
 //! the classifier discharges has a matching captured JSON body that the
 //! binary must classify exactly as the harness expects.
+// serde_json::json! expands a non-literal value to `to_value(..).unwrap()`, which
+// the GH-41 disallowed-methods ban flags at every call site. unwrap_used skips
+// external macros, so a hand-written unwrap() here is still refused (#5202).
+#![allow(clippy::disallowed_methods)]
+#![deny(clippy::unwrap_used)]
 
 use serde_json::json;
 use std::io::Write;

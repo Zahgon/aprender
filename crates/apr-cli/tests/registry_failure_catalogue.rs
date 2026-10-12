@@ -5,6 +5,11 @@
 //! host-dogfood rows recorded as receipts, not CI claims (design quorum
 //! 2026-09-06). Every hermetic row has its must-RED twin: a defective fixture
 //! under `tests/fixtures/registry/defective/` that the same check refuses.
+// serde_json::json! expands a non-literal value to `to_value(..).unwrap()`, which
+// the GH-41 disallowed-methods ban flags at every call site. unwrap_used skips
+// external macros, so a hand-written unwrap() here is still refused (#5202).
+#![allow(clippy::disallowed_methods)]
+#![deny(clippy::unwrap_used)]
 
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -271,10 +276,7 @@ fn json_output_validates_against_the_schema_on_fixtures_and_on_this_machine() {
             .collect();
         assert!(errors.is_empty(), "{name}: schema violations: {errors:?}");
         assert!(
-            v["entries"]
-                .as_array()
-                .map(|a| a.len() >= 5)
-                .unwrap_or(false),
+            v["entries"].as_array().is_some_and(|a| a.len() >= 5),
             "{name}: five kind lines"
         );
     }
