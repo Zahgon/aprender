@@ -232,7 +232,7 @@ mod tests {
     use super::*;
 
     /// Mirrors the Lean lemmas `f16_acc_k4096_vacuous`, `bf16_acc_k256_vacuous` and
-    /// `f32_needed_for_4096` in KernelTesting.lean (Theorem K1b).
+    /// `f32_needed_for_4096` in KTEST-001 Appendix A (Theorem K1b).
     #[test]
     fn k1b_vacuity_matches_the_lean_lemmas() {
         assert_eq!(Dtype::F16.gamma(4096), None);

@@ -6,7 +6,7 @@
 - 0.73 "Runs Everywhere": E1 and E5;
 - replaces the release gate #3715 v1 as **#3715 v2**.
 
-**Proofs:** `KernelTesting.lean` (11 theorems, Lean 4.22 core, 0 `sorry`, sha256 `3fa84410…40ff7`).
+**Proofs:** `KernelTesting.lean` (11 theorems, Lean 4.22 core, 0 `sorry`, sha256 `3fa84410…40ff7`). Not yet in the Lean tree: a theorem module joins it only with an L4 model, and these are hand-written statements. Until then the `kernel_oracle` tests check the same facts in Rust.
 
 **Marks:**
 - `[V]` verified;
@@ -368,6 +368,8 @@ The mechanism (`APR_FORCE_ISA`, every serve dispatch site gated, and trueno back
 ---
 
 ## Appendix A: Lean theorems (`KernelTesting.lean`, Lean 4.22.0 core, 0 `sorry`)
+
+The file is not yet in the Lean tree (see **Proofs** above).
 
 | Theorem | Backs | Axioms |
 |---|---|---|
