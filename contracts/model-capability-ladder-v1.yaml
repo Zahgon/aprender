@@ -250,6 +250,21 @@ ladder:
   # the families below plus ONE representative per other arch, named here by file (cop 2026-09-21).
   cells:
     verbs: [run, chat, serve, code]
+    # #5231 (quorum c314-5231, option C): the release cell universe -- apr's own commands that generate or take a
+    # model-role argument, read from `apr surface --json` -- is owed cells by KIND, keyed on the surface property,
+    # never by name. A command owes the cell of the first kind it matches: `generates` (the surface's generation
+    # marker), else `model_arg` (an argument whose role is model). `owes` names the proof obligation that defines
+    # the cell. Deleting a kind reopens every command it held; a command that matches no declared kind is the gap.
+    # MCL-INV-008 quantifies over the verbs list above, so a `generates` command is covered only when that list
+    # names it (a verb covers its own key and that key's subcommands); any other generating command stays in the gap
+    # until widening the list, a release-path change with its own sign-off round, lands. MCL-INV-009 is DECLARED
+    # here and judged by no release formal yet: no producer measures a load cell.
+    # LAB only (guards-nightly): no release script reads this block, and the verbs list above is unchanged.
+    kinds:
+      generates:
+        owes: MCL-INV-008
+      model_arg:
+        owes: MCL-INV-009
     # #3828: a removal from this block must be DECLARED here with a reason, or the
     # anti-shrink floor in check_model_ladder.sh refuses it as a silent shrink. The
     # declaration is printed on every run, so a withdrawal cannot decay into an absence
@@ -442,6 +457,11 @@ proof_obligations:
     property: "Every owed (model, verb, thinking, rung) cell is proved: pass where it fits, an honest refusal where it does not, and a pass on at least one required host"
     formal: "∀ host, m ∈ inventory(host), v ∈ cells.verbs, t ∈ modes(template(m)), r ∈ rungs(m): |rows(host, m, v, t, r)| = 1 ∧ (fits(m, r, total(host)) ⟹ pass(row) ∧ backend = cuda ∧ ¬fallback ∧ prompt_tokens ≥ tokens(r) ∧ answer_chars > 0 ∧ (t = on ⟹ think_closed)) ∧ (¬fits ⟹ refused(row) ∧ required_bytes(row) > total(host)) ∧ ∃ host': pass(host', m, v, t, r)"
     applies_to: gate_verdict
+  - id: MCL-INV-009
+    type: invariant
+    property: "Every command of the release cell universe that takes a model-role argument and does not generate owes a load cell: it accepts each held model on each required host. Declared for the LAB ladder-gap check (#5231); no producer measures it and no release formal judges it yet"
+    formal: "∀ host required, m ∈ inventory(host), c ∈ surface: owes_model_cells(c) ∧ ¬generates(c) ⟹ |load_rows(host, m, c)| = 1 ∧ accepted(row)"
+    applies_to: ladder_gap
   - id: MCL-INV-007
     type: invariant
     property: "The universe is the host's measured inventory — every Q4_K model it holds is in the run and green on CUDA"

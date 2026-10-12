@@ -1,0 +1,18 @@
+- id: PMAT-5231
+  github_issue: 5231
+  item_type: task
+  title: 'LAB ladder-gap: cells owed by kind, not by name (#5231)'
+  status: planned
+  priority: medium
+  assigned_to: null
+  created: 2026-10-12T19:24:01Z
+  updated: 2026-10-12T19:24:01Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 3863

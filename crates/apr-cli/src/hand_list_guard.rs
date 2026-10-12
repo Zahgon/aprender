@@ -498,89 +498,241 @@ pub(crate) fn scan_set(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(set.into_iter().filter(|p| kind_of(p).is_some()).collect())
 }
 
-/// #3745, quorum q-3745 (option A): the model ladder owes cells to every command in the release cell
-/// universe, read from the surface, not to a typed subset. Returns the command keys the ladder's
-/// `cells.verbs` does not name. LAB only: the release path still judges the ladder as it did, and
-/// widening that is a gate change of its own.
-pub(crate) fn ladder_gap(
-    ladder_verbs: &BTreeSet<String>,
-    s: &crate::surface::Surface,
-) -> BTreeSet<String> {
+/// The cell kinds the ladder may declare (#5231, quorum c314-5231 option C), in match order: a universe
+/// command owes the cell of the first kind its surface properties match, never a kind chosen by its name.
+pub(crate) const CELL_KINDS: [&str; 2] = ["generates", "model_arg"];
+
+/// What the ladder contract declares about the release cell universe: `cells.verbs` (the list MCL-INV-008
+/// quantifies over) and `cells.kinds` (kind -> the proof obligation that defines its cell).
+pub(crate) struct LadderCells {
+    pub(crate) verbs: BTreeSet<String>,
+    pub(crate) kinds: BTreeMap<String, String>,
+}
+
+/// The kind a universe command owes, from the surface: the generation marker first, else its model-role
+/// argument (`owes_model_cells` admits nothing else).
+pub(crate) fn cell_kind(c: &crate::surface::CommandEntry) -> &'static str {
+    if c.generates {
+        CELL_KINDS[0]
+    } else {
+        CELL_KINDS[1]
+    }
+}
+
+/// Whether `cells.verbs` names a command key: a verb covers its own key and that key's subcommands
+/// (`serve` covers `serve run`), never a longer word (`serve` does not cover `server`).
+pub(crate) fn verb_covers(verbs: &BTreeSet<String>, key: &str) -> bool {
+    verbs.iter().any(|v| {
+        key.strip_prefix(v.as_str())
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(' '))
+    })
+}
+
+/// #3745, quorum q-3745 (option A) as shaped by c314-5231 (option C): the model ladder owes cells to every
+/// command in the release cell universe, read from the surface, by KIND rather than by name. Returns the
+/// command keys left owed nothing: those whose kind the ladder does not declare, and the generating ones
+/// `cells.verbs` does not name (MCL-INV-008 owes rows over that list only). LAB only: the release path still
+/// judges the ladder as it did, and widening that is a gate change of its own.
+pub(crate) fn ladder_gap(l: &LadderCells, s: &crate::surface::Surface) -> BTreeSet<String> {
     s.commands
         .iter()
         .filter(|c| owes_model_cells(c))
+        .filter(|c| {
+            let k = cell_kind(c);
+            !l.kinds.contains_key(k) || (k == CELL_KINDS[0] && !verb_covers(&l.verbs, &c.key))
+        })
         .map(|c| c.key.clone())
-        .filter(|k| !ladder_verbs.contains(k))
         .collect()
 }
 
-/// The ladder contract's `ladder.cells.verbs`.
-pub(crate) fn ladder_verbs(text: &str) -> Result<BTreeSet<String>, String> {
+/// The ladder contract's `ladder.cells.verbs` and `ladder.cells.kinds`. A kind outside `CELL_KINDS`, or one
+/// whose `owes` names no `proof_obligations` id, is refused: a typo must not read as a declared cell.
+pub(crate) fn ladder_cells(text: &str) -> Result<LadderCells, String> {
     let doc: serde_yaml::Value =
         serde_yaml::from_str(text).map_err(|e| format!("the ladder contract is not YAML: {e}"))?;
-    let seq = doc
+    let cells = doc
         .get("ladder")
         .and_then(|l| l.get("cells"))
-        .and_then(|c| c.get("verbs"))
+        .ok_or("the ladder contract has no `ladder.cells` block")?;
+    let verbs = cells
+        .get("verbs")
         .and_then(serde_yaml::Value::as_sequence)
-        .ok_or("the ladder contract has no `ladder.cells.verbs` sequence")?;
-    Ok(seq
+        .ok_or("the ladder contract has no `ladder.cells.verbs` sequence")?
         .iter()
         .filter_map(|x| x.as_str().map(str::to_string))
-        .collect())
+        .collect();
+    let obligations: BTreeSet<&str> = doc
+        .get("proof_obligations")
+        .and_then(serde_yaml::Value::as_sequence)
+        .into_iter()
+        .flatten()
+        .filter_map(|o| o.get("id").and_then(serde_yaml::Value::as_str))
+        .collect();
+    let mut kinds = BTreeMap::new();
+    for (k, v) in cells
+        .get("kinds")
+        .and_then(serde_yaml::Value::as_mapping)
+        .ok_or("the ladder contract has no `ladder.cells.kinds` mapping")?
+    {
+        let (kind, owes) = kind_owes(k, v, &obligations)?;
+        kinds.insert(kind, owes);
+    }
+    Ok(LadderCells { verbs, kinds })
+}
+
+/// One `cells.kinds` entry: a known kind whose `owes` names a proof obligation the contract defines.
+fn kind_owes(
+    k: &serde_yaml::Value,
+    v: &serde_yaml::Value,
+    obligations: &BTreeSet<&str>,
+) -> Result<(String, String), String> {
+    let kind = k.as_str().ok_or("a `cells.kinds` key is not a string")?;
+    if !CELL_KINDS.contains(&kind) {
+        return Err(format!(
+            "`cells.kinds.{kind}` is not a cell kind (known: {})",
+            CELL_KINDS.join(", ")
+        ));
+    }
+    let owes = v
+        .get("owes")
+        .and_then(serde_yaml::Value::as_str)
+        .ok_or_else(|| format!("`cells.kinds.{kind}` names no `owes` obligation"))?;
+    if !obligations.contains(owes) {
+        return Err(format!(
+            "`cells.kinds.{kind}.owes` names {owes}, which is not a proof obligation of the contract"
+        ));
+    }
+    Ok((kind.to_string(), owes.to_string()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The ladder-gap requirement can turn RED and can go GREEN: a typed subset leaves a gap, and the
-    /// surface's own keys close it.
+    /// A ladder fixture: `verbs`, and the kinds named by `kinds` (each owing an obligation the fixture defines).
+    fn ladder_fixture(verbs: &[String], kinds: &[&str]) -> String {
+        let mut t = format!(
+            "ladder:\n  cells:\n    verbs: [{}]\n    kinds:\n",
+            verbs.join(", ")
+        );
+        for k in kinds {
+            t.push_str(&format!("      {k}:\n        owes: X-{k}\n"));
+        }
+        t.push_str("proof_obligations:\n");
+        for k in CELL_KINDS {
+            t.push_str(&format!("  - id: X-{k}\n"));
+        }
+        t
+    }
+
+    /// The ladder-gap requirement can turn RED and can go GREEN (#5231, c314-5231 option C): the kinds plus a
+    /// verbs list naming every generating command close it; deleting a kind reopens exactly the commands it
+    /// held; a generating command the verbs list does not name stays owed; a typo'd kind or an `owes` that
+    /// names no obligation is refused.
     #[test]
     fn ladder_gap_case_table() {
         let s = crate::surface::emit();
-        let owed: BTreeSet<String> = s
-            .commands
-            .iter()
-            .filter(|c| owes_model_cells(c))
-            .map(|c| c.key.clone())
-            .collect();
+        let owed: Vec<_> = s.commands.iter().filter(|c| owes_model_cells(c)).collect();
+        let of = |kind: &str| -> BTreeSet<String> {
+            owed.iter()
+                .filter(|c| cell_kind(c) == kind)
+                .map(|c| c.key.clone())
+                .collect()
+        };
+        let (gens, arg) = (of("generates"), of("model_arg"));
         assert!(
-            owed.len() >= 10,
-            "the surface owes only {} model-cell commands -- a vacuous universe proves nothing",
-            owed.len()
+            gens.len() >= 2 && arg.len() >= 10,
+            "the surface owes {} generating and {} model-arg commands -- a vacuous universe proves nothing",
+            gens.len(),
+            arg.len()
         );
+        let all_gen: Vec<String> = gens.iter().cloned().collect();
+        let gap = |verbs: &[String], kinds: &[&str]| {
+            ladder_gap(
+                &ladder_cells(&ladder_fixture(verbs, kinds)).expect("the fixture parses"),
+                &s,
+            )
+        };
         assert!(
-            ladder_gap(&owed, &s).is_empty(),
-            "the full universe left a gap"
-        );
-        let typed: BTreeSet<String> = ["run", "chat"].iter().map(|x| (*x).to_string()).collect();
-        assert!(
-            !ladder_gap(&typed, &s).is_empty(),
-            "a typed two-verb ladder left no gap"
+            gap(&all_gen, &CELL_KINDS).is_empty(),
+            "every kind and every generating verb left a gap"
         );
         assert_eq!(
-            ladder_verbs("ladder:\n  cells:\n    verbs: [a, b]\n").expect("parses"),
-            ["a", "b"].iter().map(|x| (*x).to_string()).collect()
+            gap(&all_gen, &["generates"]),
+            arg,
+            "deleting model_arg must reopen exactly its commands"
         );
-        assert!(ladder_verbs("ladder:\n  cells: {}\n").is_err());
+        assert_eq!(
+            gap(&all_gen, &["model_arg"]),
+            gens,
+            "deleting generates must reopen exactly its commands"
+        );
+        let one = &all_gen[..1];
+        let short = gap(one, &CELL_KINDS);
+        assert!(
+            !short.is_empty() && short.is_subset(&gens) && !short.contains(&one[0]),
+            "a verbs list naming one generating command must leave the others owed, and only them: {short:?}"
+        );
+        let v: BTreeSet<String> = ["serve".to_string()].into();
+        assert!(verb_covers(&v, "serve") && verb_covers(&v, "serve run"));
+        assert!(!verb_covers(&v, "server") && !verb_covers(&v, "run"));
+        for (why, text) in [
+            ("unknown kind", "ladder:\n  cells:\n    verbs: []\n    kinds:\n      generate:\n        owes: X\nproof_obligations:\n  - id: X\n"),
+            ("owes no obligation", "ladder:\n  cells:\n    verbs: []\n    kinds:\n      model_arg:\n        owes: Y\nproof_obligations:\n  - id: X\n"),
+            ("no owes", "ladder:\n  cells:\n    verbs: []\n    kinds:\n      model_arg: {}\n"),
+            ("no kinds", "ladder:\n  cells:\n    verbs: []\n"),
+            ("no verbs", "ladder:\n  cells:\n    kinds: {}\n"),
+        ] {
+            assert!(ladder_cells(text).is_err(), "{why}: refused nothing");
+        }
+    }
+
+    /// The kinds block names no verb, so the tree scan has nothing in it to refuse; the same file with a verb
+    /// list beside it is still refused (c314-5231 must-fix 3).
+    #[test]
+    fn ladder_kinds_block_is_not_a_hand_list() {
+        let v = vocab();
+        let kinds = "ladder:\n  cells:\n    kinds:\n      generates:\n        owes: MCL-INV-008\n      model_arg:\n        owes: MCL-INV-009\n";
+        assert!(
+            found(Kind::Yaml, kinds, &v).is_empty(),
+            "the kinds block read as a hand list"
+        );
+        let listed = format!("{kinds}    verbs: [run, chat, serve, code]\n");
+        assert!(
+            !found(Kind::Yaml, &listed, &v).is_empty(),
+            "a verb list beside the kinds went unseen"
+        );
     }
 
     /// The model ladder owes a cell to every command in the release cell universe (#3745, quorum
-    /// q-3745 option A). A LAB check, run beside the tree scan in guards-nightly.yml (ticket #5231); the release path
-    /// still judges the ladder's own verb set and the anti-shrink floor as before.
+    /// q-3745 option A; by kind, c314-5231 option C). A LAB check, run beside the tree scan in guards-nightly.yml
+    /// (ticket #5231); the release path still judges the ladder's own verb set and the anti-shrink floor as before.
     #[test]
     #[ignore = "LAB (#5231): the ladder-gap requirement runs in guards-nightly.yml, never on a PR path"]
     fn the_ladder_owes_every_model_cell_command() {
         let p = repo_root().join("contracts/model-capability-ladder-v1.yaml");
         let text = std::fs::read_to_string(&p).expect("the ladder contract is readable");
-        let have = ladder_verbs(&text).expect("the ladder names its verbs");
-        let gap = ladder_gap(&have, &crate::surface::emit());
+        let l = ladder_cells(&text).expect("the ladder declares its verbs and cell kinds");
+        let s = crate::surface::emit();
+        let gap = ladder_gap(&l, &s);
+        let why = |k: &String| {
+            let kind = s
+                .commands
+                .iter()
+                .find(|c| &c.key == k)
+                .map_or("?", cell_kind);
+            match l.kinds.get(kind) {
+                None => format!("{k} ({kind}: the ladder declares no such kind)"),
+                Some(o) => {
+                    format!("{k} ({kind}: {o} owes rows over cells.verbs, which does not name it)")
+                }
+            }
+        };
         assert!(
             gap.is_empty(),
             "the model ladder owes no cell to {} command(s) of the release cell universe (#3745). Read from `apr surface --json`:\n  {}",
             gap.len(),
-            gap.iter().cloned().collect::<Vec<_>>().join("\n  ")
+            gap.iter().map(why).collect::<Vec<_>>().join("\n  ")
         );
     }
 
