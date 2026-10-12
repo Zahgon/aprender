@@ -387,8 +387,8 @@ fn build_tokenizer_gguf_metadata(
             GgufValue::ArrayString(deduped),
         ));
         eprintln!(
-            "[BUG-EXPORT-004] Added tokenizer metadata: model={}, tokens_len={}, bos={:?}, eos={:?}",
-            model_type, padded_len, tokenizer.bos_token_id, tokenizer.eos_token_id
+            "[BUG-EXPORT-004] Added tokenizer metadata: model={:?}, tokens_len={}, bos={:?}, eos={:?}",
+            recorded, padded_len, tokenizer.bos_token_id, tokenizer.eos_token_id
         );
     }
     if !tokenizer.merges.is_empty() {
