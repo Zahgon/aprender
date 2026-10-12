@@ -31,10 +31,12 @@ mod tests {
         let mut found = Vec::new();
         for line in src.lines() {
             let code = line.split("//").next().unwrap_or("");
-            let mut rest = code;
+            let mut pos = 0;
             let mut hit = code.contains("extern crate");
-            while let Some(i) = rest.find("::") {
-                let head = &rest[..i];
+            while let Some(off) = code[pos..].find("::") {
+                // The whole line up to this `::`, so a later segment sees the `::` before it.
+                let i = pos + off;
+                let head = &code[..i];
                 let root: String = head
                     .chars()
                     .rev()
@@ -43,15 +45,16 @@ mod tests {
                     .into_iter()
                     .rev()
                     .collect();
-                let after = &rest[i + 2..];
+                let after = &code[i + 2..];
                 let bad = match root.as_str() {
                     "crate" => !after.starts_with("kernel_oracle::"),
                     "super" => after.starts_with("super"),
-                    "" | "std" | "core" | "alloc" | "self" | "Self" => false,
+                    // Tool attributes (`#[allow(clippy::…)]`) name no crate.
+                    "" | "std" | "core" | "alloc" | "self" | "Self" | "clippy" | "rustfmt" => false,
                     r => r.starts_with(|c: char| c.is_ascii_lowercase()) && is_crate_root(r, head),
                 };
                 hit |= bad;
-                rest = after;
+                pos = i + 2;
             }
             if hit {
                 found.push(code.trim().to_string());
@@ -124,6 +127,10 @@ mod tests {
             "let v: Vec<f64> = x.iter().map(|v| f64::from(*v)).collect();",
             "let e = ErrorModel::Dot { k, acc: Dtype::F32, out: Dtype::F32, ftz: false };",
             "let r = oracle::dot(&a, &b); // crate::gguf in a comment",
+            "#[allow(clippy::cast_precision_loss)]",
+            "impl std::fmt::Display for Refusal {",
+            "fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {",
+            "impl std::error::Error for Refusal {}",
         ] {
             assert!(escapes(clean).is_empty(), "{clean}: {:?}", escapes(clean));
         }
