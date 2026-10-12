@@ -11,15 +11,19 @@ self-test. `main` = `e39f91a65e` (committed 2026-10-10T08:04:52Z). PR heads were
 |---|---|---|---|
 | G1 | `6e7ea0133` | `e39f91a65e`, 2026-10-10T08:04:52Z. `main` moved; the spec's facts below still hold | `git rev-parse origin/main`; `git log -1 --format=%cI` |
 | G2 | #4941 is a draft from a fork, one commit `e7730a3` | still OPEN, draft, head `e7730a3a4c`, not merged | `gh pr view 4941 --json state,isDraft,headRefOid,mergedAt` |
-| G8 | gate contract 5.0.0, 13 equations, 6 binding rows, the seven unbound | holds on `e7730a3`: 5.0.0, 13 equations; `contracts/aprender/binding.yaml` has 6 rows (gate_pass, ece_top_label, split_disjointness, seed_selection_median, shift_probe_reported, synthetic_not_deployable), none of the seven. 55 lines of the gate contract and 6 of the parity contract name the `just laya-train-selftest` recipe or a `.py` file (`grep -cE 'laya-train-selftest\|\.py\b'`) | `git show refs/laya/pr4941:<path>` |
+| G8 | gate contract 5.0.0, 13 equations, 6 binding rows, the seven unbound | holds on `e7730a3`: 5.0.0, 13 equations; `contracts/aprender/binding.yaml` has 6 rows (gate_pass, ece_top_label, split_disjointness, seed_selection_median, shift_probe_reported, synthetic_not_deployable), none of the seven. 55 lines of the gate contract and 6 of the parity contract name the `just laya-train-selftest` recipe or a `.py` file (command in the G8 note below the table) | `git show refs/laya/pr4941:<path>` |
 | G10 | 18 `deny_unknown_fields` in `pack.rs`; `torch_version` required; `device_is_cpu` check | holds: 18; `torch_version` is a required `String` with no value check (`pack.rs:340`); `verify.rs:1805` | same |
 | G11 | doors public, take a policy | holds: `verify.rs:3397`, `:3429`; `VerifyPolicy` all 18 fields `pub`, no `Default`, one constructor `from_contract_views(&GateContractView, &ParityContractView)` (`:378`); `pack::load_checkpoint_for_scoring` `pack.rs:802`, and `scorer_from_parts` `:819` | same |
 | G16, G17 | core and train engines; absent ops | holds, with detail in (c) | file reads on `main` |
 | G18 | three encoders on `main`, modernbert absent | holds: `models/bert/` (7 files), `setfit/encoder.rs`, `aprender-train/src/transformer/encoder.rs`; `models/modernbert` absent | `git ls-tree` |
 | G19 | `aprender-train` depends on `aprender-core` | holds: `crates/aprender-train/Cargo.toml:85`, a path dependency | file |
 | G20 | `safetensors_is_read_only_by_pack` | holds: `lib.rs:341-398` scans every `.rs` under `src/` for `safetensors::` and `SafeTensors`; only `src/pack.rs` and `src/test_support.rs` allowed; `tests/` and `examples/` are not scanned | file |
-| G22 | 170 `.py` | 170 | `git ls-tree -r --name-only origin/main \| grep -c '\.py$'` |
+| G22 | 170 `.py` | 170 | command in the G22 note below the table |
 | G27 | no `benchmarks/tweeteval-stance/`, no CLI command | holds: 0 paths, 0 matches | `git ls-tree`; `grep -c tweet-eval-stance contracts/apr-cli-commands-v1.yaml` |
+
+G8 note: the 55 and 6 are `git show e7730a3a4c:contracts/laya-finetune-gate-v1.yaml | grep -cE 'laya-train-selftest|\.py\b'` and the same for `contracts/laya-parity-v1.yaml`.
+
+G22 note: the 170 is `git ls-tree -r --name-only origin/main | grep -c '\.py$'`.
 
 ## (b) The carry of #4941
 
