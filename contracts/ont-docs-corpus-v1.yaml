@@ -112,7 +112,7 @@ falsification_tests:
     if_fails: a stale example passes as current, or a pin without a reason exempts it
   - id: FALSIFY-DOCS-007
     rule: the stale count is pinned shrink-only (R4's drift gate)
-    prediction: the repo's stale examples equal STALE_EXAMPLES_PINNED (430 on 2026-09-24; 434 on 2026-09-26 once `[[example]]` targets were read)
+    prediction: the repo's stale examples equal STALE_EXAMPLES_PINNED (430 on 2026-09-24; 434 on 2026-10-12 once `[[example]]` targets were read)
     test: cargo test -p aprender-contracts --lib ontology::extract::example::tests::the_repo_stale_examples_are_pinned_shrink_only
     if_fails: a new example on an older model landed (the message lists the stale files), or examples migrated and the pin was not lowered
   - id: FALSIFY-DOCS-012
