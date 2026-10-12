@@ -137,3 +137,22 @@ fn falsify_lora_target_selection_v1_003_wrong_rank_refuses() {
         assert_eq!(snapshot(&layers), before, "len {len}: no LoRA layer may change");
     }
 }
+
+/// #4698: an adapter file that is there but cannot be read refuses the load, and no
+/// LoRA layer changes; no adapter file at all means fresh adapters.
+#[test]
+fn unreadable_trained_adapter_refuses_the_load_4698() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (_, mut layers) = tiny_layers();
+    let before = snapshot(&layers);
+    InstructPipeline::load_trained_adapter(dir.path(), &mut layers)
+        .expect("no adapter file: fresh adapters");
+    assert_eq!(snapshot(&layers), before);
+
+    std::fs::write(dir.path().join("adapter_model.safetensors"), b"not a safetensors file")
+        .expect("write");
+    let err = InstructPipeline::load_trained_adapter(dir.path(), &mut layers)
+        .expect_err("an unreadable adapter must refuse the load");
+    assert!(err.to_string().contains("adapter_model.safetensors"), "names the file: {err}");
+    assert_eq!(snapshot(&layers), before, "no LoRA layer may change");
+}
