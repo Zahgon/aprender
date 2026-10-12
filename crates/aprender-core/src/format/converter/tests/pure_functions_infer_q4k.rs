@@ -288,7 +288,10 @@ fn test_save_model_tensors_with_gguf_config_empty_tokenizer_vocab() {
     let mut tensors = BTreeMap::new();
     tensors.insert("t1".to_string(), (vec![1.0f32; 4], vec![4]));
 
-    let config = GgufModelConfig::default();
+    let config = GgufModelConfig {
+        architecture: Some("qwen2".to_string()),
+        ..Default::default()
+    };
 
     // Tokenizer with empty vocabulary
     let tokenizer = GgufTokenizer {
@@ -319,7 +322,7 @@ fn test_save_model_tensors_with_gguf_config_empty_tokenizer_vocab() {
 }
 
 #[test]
-fn test_save_model_tensors_with_gguf_config_default_architecture() {
+fn test_save_model_tensors_with_gguf_config_missing_architecture_is_refused() {
     use crate::format::gguf::api::GgufModelConfig;
     use crate::format::v2::AprV2Reader;
     use tempfile::TempDir;
@@ -330,19 +333,28 @@ fn test_save_model_tensors_with_gguf_config_default_architecture() {
     let mut tensors = BTreeMap::new();
     tensors.insert("t1".to_string(), (vec![1.0f32; 4], vec![4]));
 
-    // No architecture specified -> defaults to "qwen2"
+    // #4419: no architecture is refused; it used to be written down as "qwen2".
     let config = GgufModelConfig::default();
 
     let result = save_model_tensors_with_gguf_config_and_tokenizer(
         &tensors, &output, None, &config, None, None,
     );
-    assert!(result.is_ok());
+    let err = result.expect_err("a GGUF config with no architecture must be refused");
+    assert!(err.to_string().contains("no general.architecture"), "{err}");
+    assert!(!output.exists(), "nothing is written on a refusal");
 
+    // A recorded architecture is written as recorded.
+    let config = GgufModelConfig {
+        architecture: Some("llama".to_string()),
+        ..Default::default()
+    };
+    save_model_tensors_with_gguf_config_and_tokenizer(
+        &tensors, &output, None, &config, None, None,
+    )
+    .expect("recorded architecture");
     let data = std::fs::read(&output).expect("read output");
     let reader = AprV2Reader::from_bytes(&data).expect("parse APR");
-    let meta = reader.metadata();
-
-    assert_eq!(meta.model_type, "qwen2");
+    assert_eq!(reader.metadata().model_type, "llama");
 }
 
 #[test]
