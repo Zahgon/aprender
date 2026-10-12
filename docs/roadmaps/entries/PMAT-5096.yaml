@@ -1,0 +1,18 @@
+- id: PMAT-5096
+  github_issue: 5096
+  item_type: task
+  title: guard_tree.sh classifies guards by code, not comment text
+  status: planned
+  priority: medium
+  assigned_to: null
+  created: 2026-10-12T12:44:17Z
+  updated: 2026-10-12T12:44:17Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 3998

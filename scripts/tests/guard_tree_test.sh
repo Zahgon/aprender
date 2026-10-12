@@ -193,17 +193,24 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 4. --list --no-cargo count matches the grep -LE count, over the real repo.
+# 4. --list --no-cargo count matches an independent count over the real repo:
+#    comment lines and trailing comments dropped, then the invocation shapes
+#    (#5096). Restated here, not read from guard_tree.sh, so a classifier edit
+#    must be made in both places to stay green.
 # ---------------------------------------------------------------------------
-expected_no_cargo="$(cd "$REPO_ROOT" && git ls-files 'scripts/check_*.sh' \
-    | xargs -r grep -LE '(^|[^a-z_-])cargo ' | wc -l | tr -d ' ')"
+oracle_re="(^|[^a-z_-])cargo |['\"]cargo['\"]|\\\$\\{?CARGO\\}?\"?[[:space:]]"
+expected_no_cargo=0
+while IFS= read -r g; do
+    n="$(sed -E -e '/^[[:space:]]*#/d' -e 's/(^|[[:space:]])#.*$//' "$REPO_ROOT/$g" | grep -cE "$oracle_re")"
+    [ "${n:-0}" -eq 0 ] && expected_no_cargo=$((expected_no_cargo + 1))
+done < <(cd "$REPO_ROOT" && git ls-files 'scripts/check_*.sh')
 actual_no_cargo="$(cd "$REPO_ROOT" && bash scripts/guard_tree.sh --list --no-cargo \
     | wc -l | tr -d ' ')"
 
 if [ "$expected_no_cargo" = "$actual_no_cargo" ]; then
-    pass_row "--no-cargo count matches grep -LE '(^|[^a-z_-])cargo ' ($actual_no_cargo)"
+    pass_row "--no-cargo count matches the comment-stripped oracle ($actual_no_cargo)"
 else
-    fail_row "--no-cargo count matches grep -LE count" \
+    fail_row "--no-cargo count matches the comment-stripped oracle" \
         "expected=$expected_no_cargo actual=$actual_no_cargo"
 fi
 
@@ -941,17 +948,18 @@ mkdir -p "$pfix/.empty-git-template" "$pfix/scripts"
 git -C "$pfix" init -q --template="$pfix/.empty-git-template"
 git -C "$pfix" config user.email test@example.invalid
 git -C "$pfix" config user.name guard_tree_test
-printf '#!/usr/bin/env bash\n# runs cargo test in CI\nexit 0\n' >"$pfix/scripts/check_p_a.sh"
-printf '#!/usr/bin/env bash\n# runs cargo test in CI\nexit 0\n' >"$pfix/scripts/check_p_b.sh"
+# #5096: the cargo marker is code after `exit 0` (classified, never executed), not a
+# comment -- a comment no longer makes a guard cargo-using.
+printf '#!/usr/bin/env bash\nexit 0\ncargo test\n' >"$pfix/scripts/check_p_a.sh"
+printf '#!/usr/bin/env bash\nexit 0\ncargo test\n' >"$pfix/scripts/check_p_b.sh"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$pfix/scripts/check_p_free.sh"
-python3 - "$GUARD_TREE" "$pfix/scripts/guard_tree.sh" <<'PY6'
-import sys
-s = open(sys.argv[1]).read()
-a = 'guard_universe | xargs -r grep -lE "$CARGO_RE"\n'
-assert s.count(a) == 1, "anchor"
-s = s.replace(a, 'guard_universe | xargs -r grep -lE "$CARGO_RE" | head -n -1\n')
-open(sys.argv[2], "w").write(s)
-PY6
+# The cut: cargo_only_universe keeps its body under a new name and is replaced by
+# that body minus its last line.
+sed 's/^cargo_only_universe() {$/cargo_only_universe() { cargo_only_universe_full | head -n -1; }\ncargo_only_universe_full() {/' \
+    "$GUARD_TREE" >"$pfix/scripts/guard_tree.sh"
+if [ "$(grep -c '^cargo_only_universe_full() {$' "$pfix/scripts/guard_tree.sh")" -ne 1 ]; then
+    fail_row "39: a subset listing one guard short" "the sed anchor did not apply -- the fixture is not cut"
+fi
 git -C "$pfix" add -A
 git -C "$pfix" -c commit.gpgsign=false commit -q -m pfixture
 p_out="$(cd "$pfix" && bash scripts/guard_tree.sh --cargo-only 2>&1)"
@@ -1080,6 +1088,70 @@ else
     fi
 fi
 cp "$GUARD_TREE" "$lfix/scripts/guard_tree.sh"
+
+
+# ---------------------------------------------------------------------------
+# 56-58 (#5096). The cargo classifier judges what a guard EXECUTES. A comment
+# naming `cargo` once moved a cargo-free guard out of --no-cargo, and nothing
+# reported the move. Every fixture guard starts with `exit 0`, so the shapes
+# after it are classified and never run.
+#   must match:     cargo test | "$CARGO" build | ${CARGO} build |
+#                   $(cargo metadata ...) | sh('cargo','metadata')
+#   must not match: a comment line | a trailing comment | $CARGO_HOME |
+#                   sccache | cargo-ci
+# ---------------------------------------------------------------------------
+cfix="$(mktemp -d)" || exit 1
+cleanup_dirs="$cleanup_dirs $cfix"
+mkdir -p "$cfix/.empty-git-template" "$cfix/scripts"
+git -C "$cfix" init -q --template="$cfix/.empty-git-template"
+git -C "$cfix" config user.email test@example.invalid
+git -C "$cfix" config user.name guard_tree_test
+cguard() { printf '#!/usr/bin/env bash\nexit 0\n%s\n' "$2" >"$cfix/scripts/check_c_$1.sh"; }
+cguard m_test         'cargo test --lib'
+cguard m_var          '"$CARGO" build'
+cguard m_brace        '${CARGO} build'
+cguard m_metadata     'meta="$(cargo metadata --no-deps --format-version 1)"'
+cguard m_argv         "metas = [sh('cargo','metadata')]"
+cguard n_comment      '# runs cargo test in CI'
+cguard n_indented     '    # cargo build happens in the other job'
+cguard n_trailing     'true # then cargo test'
+cguard n_home         'ls "$CARGO_HOME/bin"'
+cguard n_sccache      'sccache --show-stats; ls target/cargo-ci'
+cp "$GUARD_TREE" "$cfix/scripts/guard_tree.sh"
+git -C "$cfix" add -A
+git -C "$cfix" -c commit.gpgsign=false commit -q -m cfixture
+c_want_only="$(printf 'scripts/check_c_%s.sh\n' m_argv m_brace m_metadata m_test m_var)"
+c_want_free="$(printf 'scripts/check_c_%s.sh\n' n_comment n_home n_indented n_sccache n_trailing)"
+c_only="$(cd "$cfix" && bash scripts/guard_tree.sh --list --cargo-only 2>&1 | sort)"
+c_free="$(cd "$cfix" && bash scripts/guard_tree.sh --list --no-cargo 2>&1 | sort)"
+if [ "$c_only" = "$c_want_only" ]; then
+    pass_row "56: every must-match invocation shape is cargo-only (5 of 5)"
+else
+    fail_row "56: must-match shapes are cargo-only" "got: $(tr '\n' '|' <<<"$c_only")"
+fi
+if [ "$c_free" = "$c_want_free" ]; then
+    pass_row "57: comments, \$CARGO_HOME, sccache and cargo-ci stay in --no-cargo (5 of 5)"
+else
+    fail_row "57: must-not-match shapes stay in --no-cargo" "got: $(tr '\n' '|' <<<"$c_free")"
+fi
+# 58: the mutant puts the old classifier back -- the raw file, comments
+# included, against the old bare-token regex. Rows 56-57 must then fail.
+sed -e 's/^    sed -E -e .*"\$1"$/    cat "$1"/' \
+    -e "s/^CARGO_RE=.*/CARGO_RE='(^|[^a-z_-])cargo '/" \
+    "$GUARD_TREE" >"$cfix/scripts/guard_tree.sh"
+if cmp -s "$GUARD_TREE" "$cfix/scripts/guard_tree.sh" \
+    || [ "$(grep -c '^    cat "\$1"$' "$cfix/scripts/guard_tree.sh")" -ne 1 ]; then
+    fail_row "58: mutant with the old raw-file classifier" "the sed did not apply -- the mutant is the original"
+else
+    cm_only="$(cd "$cfix" && bash scripts/guard_tree.sh --list --cargo-only 2>&1 | sort)"
+    cm_free="$(cd "$cfix" && bash scripts/guard_tree.sh --list --no-cargo 2>&1 | sort)"
+    if [ "$cm_only" != "$c_want_only" ] && [ "$cm_free" != "$c_want_free" ]; then
+        pass_row "58: mutant with the old raw-file classifier misfiles fixture guards (rows 56-57 can fail)"
+    else
+        fail_row "58: mutant with the old raw-file classifier" "the mutant passed rows 56-57: only=$(tr '\n' '|' <<<"$cm_only")"
+    fi
+fi
+cp "$GUARD_TREE" "$cfix/scripts/guard_tree.sh"
 
 printf '%d checks, %d failed\n' "$total" "$failed"
 if [ "$failed" -gt 0 ]; then

@@ -23,8 +23,8 @@
 # THE CARGO-FREE SUBSET
 # ----------------------
 # `--no-cargo` (and `--list --no-cargo`) restrict the universe to guards
-# whose OWN source never contains a bare `cargo ` token:
-# `grep -LE '(^|[^a-z_-])cargo '`. This is a purely textual test over the
+# whose OWN code never invokes cargo: comments are dropped first, then
+# CARGO_RE (below) is asked (#5096). This is a purely textual test over the
 # guard's source -- it does not execute anything to classify it -- so ci.yml
 # can run this subset on a bare runner with no cargo/docker toolchain and
 # guard_tree.sh's classification can never independently drift from a
@@ -168,21 +168,54 @@ case "$GUARD_TREE_HEARTBEAT" in ''|*[!0-9]*|0) GUARD_TREE_HEARTBEAT=300 ;; esac
 
 # A bare `cargo ` token: not preceded by a lowercase letter, underscore or
 # hyphen (so `sccache`, `rustc-sccache`, `cargo-ci` in a path do not count),
-# and followed by a space (so `cargo` alone, e.g. a comment fragment, does
-# not count either -- it must look like an invocation).
-CARGO_RE='(^|[^a-z_-])cargo '
+# and followed by a space (so `cargo` alone does not count either -- it must
+# look like an invocation). OR a quoted `'cargo'` / `"cargo"` argv element:
+# check_cascade_converges.sh runs `sh('cargo','metadata',...)` in an embedded
+# program, which has no `cargo ` token, and only a comment had kept it in the
+# cargo set until comments stopped counting (#5096). OR `$CARGO` / `${CARGO}`
+# as a command word (`"$CARGO" build`); `$CARGO_HOME` and other `CARGO_*`
+# names do not count.
+CARGO_RE="(^|[^a-z_-])cargo |['\"]cargo['\"]|\\\$\\{?CARGO\\}?\"?[[:space:]]"
+
+# guard_code FILE -- the text FILE executes: comment lines and trailing
+# ` # ...` comments are dropped before CARGO_RE is asked (#5096). Matching the
+# raw file let a comment's wording decide which job runs a guard: one header
+# line naming `cargo` moved a cargo-free guard out of --no-cargo, and no row
+# reported the move.
+guard_code() {
+    sed -E -e '/^[[:space:]]*#/d' -e 's/(^|[[:space:]])#.*$//' "$1"
+}
+
+# guard_uses_cargo FILE -- exit 0 when FILE's code holds a bare `cargo ` token.
+# grep -c, never grep -q: -q exits at the first match and sed then dies of
+# SIGPIPE, which pipefail reports as the pipeline's status.
+guard_uses_cargo() {
+    local n
+    n="$(guard_code "$1" | grep -cE "$CARGO_RE")"
+    [ "${n:-0}" -gt 0 ]
+}
 
 guard_universe() {
     git ls-files 'scripts/check_*.sh'
 }
 
+# Both subsets skip a guard they cannot read, exactly as `grep -L` / `grep -l`
+# did before #5096: it lands in NEITHER subset, so the universe check and the
+# partition count below stay the checks that refuse it (rows 34-36, 39).
 cargo_free_universe() {
-    # xargs -r: never invoke grep with zero files (empty universe).
-    guard_universe | xargs -r grep -LE "$CARGO_RE"
+    local g
+    while IFS= read -r g; do
+        [ -r "$g" ] && ! guard_uses_cargo "$g" && printf '%s\n' "$g"
+    done < <(guard_universe)
+    return 0
 }
 
 cargo_only_universe() {
-    guard_universe | xargs -r grep -lE "$CARGO_RE"
+    local g
+    while IFS= read -r g; do
+        [ -r "$g" ] && guard_uses_cargo "$g" && printf '%s\n' "$g"
+    done < <(guard_universe)
+    return 0
 }
 
 usage() {
