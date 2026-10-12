@@ -57,3 +57,44 @@ fn st_serve_generate_runs_through_session_and_leaves_a_safetensors_witness() {
         "serve ST CPU generate must go through Session, got {entries:?}"
     );
 }
+
+/// #2853: `ignore_eos` reaches the SafeTensors decode loop. The tiny model's
+/// uniform logits make greedy decoding pick token 0, a default stop token, so
+/// without `ignore_eos` the turn ends after one token; with it the turn runs to
+/// `max_tokens` exactly.
+#[test]
+fn st_serve_ignore_eos_runs_to_max_tokens() {
+    let model = tiny_transformer();
+    let prompt = [3_u32, 1, 4, 1, 2853 % 12];
+    let max_tokens = 6;
+    let generated = |ignore_eos: Option<bool>| {
+        let req = crate::commands::serve::types::ChatCompletionRequest {
+            model: String::new(),
+            messages: Vec::new(),
+            tools: None,
+            tool_choice: None,
+            max_tokens: None,
+            stream: false,
+            temperature: None,
+            top_p: None,
+            ignore_eos,
+            seed: None,
+        };
+        let mut config = apr_cpu_generate_config(max_tokens, 0.0, None, vec![]);
+        super::apply_ignore_eos_and_seed(&req, &mut config);
+        st_cpu_generate(&model, &prompt, &config)
+            .expect("tiny model generates")
+            .len()
+            - prompt.len()
+    };
+    let stopped = generated(None);
+    assert!(
+        stopped < max_tokens,
+        "control: the default stop set ends the turn early ({stopped})"
+    );
+    assert_eq!(
+        generated(Some(true)),
+        max_tokens,
+        "ignore_eos runs to max_tokens"
+    );
+}

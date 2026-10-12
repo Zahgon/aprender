@@ -158,7 +158,26 @@ fn parse_chat_completion_request(
             .get("top_p")
             .and_then(|t| t.as_f64())
             .map(|v| v as f32),
+        ignore_eos: request.get("ignore_eos").and_then(|v| v.as_bool()),
+        seed: request.get("seed").and_then(|v| v.as_u64()),
     })
+}
+
+/// #2853: apply the request's `ignore_eos` and `seed` to the generate config.
+/// `ignore_eos` empties the stop set, token 0 included, so generation runs to
+/// `max_tokens` — what PERF-039's `stop_tokens_unless_ignore_eos` does on the
+/// GGUF route. Both were silently dropped here before.
+#[cfg(feature = "inference")]
+fn apply_ignore_eos_and_seed(
+    request: &ChatCompletionRequest,
+    config: &mut realizar::gguf::QuantizedGenerateConfig,
+) {
+    if request.ignore_eos.unwrap_or(false) {
+        config.stop_tokens.clear();
+    }
+    if let Some(seed) = request.seed {
+        config.seed = seed;
+    }
 }
 
 /// Build a ChatML-formatted prompt from a parsed chat completion request (GH-160)
@@ -277,8 +296,9 @@ pub(crate) async fn safetensors_chat_completions_handler(
         .as_ref()
         .map(super::handlers::tokenizer_info_stop_tokens)
         .unwrap_or_default();
-    let gen_config =
+    let mut gen_config =
         super::handlers::apr_cpu_generate_config(max_tokens, temperature, top_p, stop_tokens);
+    apply_ignore_eos_and_seed(&parsed_request, &mut gen_config);
     let output_ids = {
         // PMAT-189: Handle transformer lock poisoning gracefully
         let t = match transformer.lock() {
@@ -599,6 +619,63 @@ mod chat_helper_tests {
         assert_eq!(parsed.temperature, Some(0.3));
     }
 
+    // ---- #2853: ignore_eos / seed reach the generate config -------------
+
+    /// The config the handler builds for a tokenizer whose chat-turn end is 151645.
+    fn qwen_config() -> realizar::gguf::QuantizedGenerateConfig {
+        super::super::handlers::apr_cpu_generate_config(8, 0.7, None, vec![151_645])
+    }
+
+    #[test]
+    fn parse_keeps_ignore_eos_and_seed_on_both_paths() {
+        let structured = serde_json::json!({
+            "messages": [{"role": "user", "content": "hi"}],
+            "ignore_eos": true,
+            "seed": 42
+        });
+        let p = parse_chat_completion_request(&structured).expect("structured parse");
+        assert_eq!((p.ignore_eos, p.seed), (Some(true), Some(42)));
+
+        // A message without `role` fails the typed parse and takes the raw-JSON fallback.
+        let fallback = serde_json::json!({
+            "messages": [{"content": "no role"}],
+            "ignore_eos": true,
+            "seed": 7
+        });
+        let p = parse_chat_completion_request(&fallback).expect("fallback parse");
+        assert!(p.messages.is_empty(), "fallback path taken");
+        assert_eq!((p.ignore_eos, p.seed), (Some(true), Some(7)));
+    }
+
+    #[test]
+    fn ignore_eos_empties_the_stop_set_and_seed_overrides_the_default() {
+        let mut req = user_request("hi");
+        req.ignore_eos = Some(true);
+        req.seed = Some(1234);
+        let mut c = qwen_config();
+        assert!(!c.stop_tokens.is_empty());
+        apply_ignore_eos_and_seed(&req, &mut c);
+        assert!(
+            c.stop_tokens.is_empty(),
+            "token 0 and EOS both dropped: {:?}",
+            c.stop_tokens
+        );
+        assert_eq!(c.seed, 1234);
+    }
+
+    #[test]
+    fn absent_or_false_ignore_eos_and_absent_seed_change_nothing() {
+        let base = qwen_config();
+        for ignore_eos in [None, Some(false)] {
+            let mut req = user_request("hi");
+            req.ignore_eos = ignore_eos;
+            let mut c = qwen_config();
+            apply_ignore_eos_and_seed(&req, &mut c);
+            assert_eq!(c.stop_tokens, base.stop_tokens);
+            assert_eq!(c.seed, realizar::apr_transformer::DEFAULT_SEED);
+        }
+    }
+
     #[test]
     fn parse_chat_completion_missing_messages_is_err() {
         let req = serde_json::json!({"model": "apr"});
@@ -647,6 +724,8 @@ mod chat_helper_tests {
             stream: false,
             temperature: None,
             top_p: None,
+            ignore_eos: None,
+            seed: None,
         }
     }
 

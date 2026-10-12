@@ -486,6 +486,13 @@ pub struct ChatCompletionRequest {
     /// Top-p sampling
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f32>,
+    /// #2853: generate exactly `max_tokens`, never stopping on EOS (llama.cpp's
+    /// `ignore_eos`). Without the field serde dropped it and the reply stopped at EOS.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ignore_eos: Option<bool>,
+    /// #2853: sampler seed; absent means the engine's `DEFAULT_SEED`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
 }
 
 /// Chat completion response
