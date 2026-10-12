@@ -32,6 +32,7 @@ mod tests {
         for line in src.lines() {
             let code = line.split("//").next().unwrap_or("");
             let mut rest = code;
+            let mut hit = code.contains("extern crate");
             while let Some(i) = rest.find("::") {
                 let head = &rest[..i];
                 let root: String = head
@@ -49,12 +50,10 @@ mod tests {
                     "" | "std" | "core" | "alloc" | "self" | "Self" => false,
                     r => r.starts_with(|c: char| c.is_ascii_lowercase()) && is_crate_root(r, head),
                 };
-                if bad {
-                    found.push(code.trim().to_string());
-                }
+                hit |= bad;
                 rest = after;
             }
-            if code.contains("extern crate") {
+            if hit {
                 found.push(code.trim().to_string());
             }
         }
@@ -64,9 +63,10 @@ mod tests {
     /// A lowercase path segment is a crate root iff nothing path-like precedes it.
     fn is_crate_root(root: &str, head: &str) -> bool {
         let before = head[..head.len() - root.len()].trim_end();
-        !(before.ends_with("::") || before.ends_with('.'))
-            && !LOCAL_MODULES.contains(&root)
-            && !PRIMITIVES.contains(&root)
+        !(before.ends_with("::")
+            || before.ends_with('.')
+            || LOCAL_MODULES.contains(&root)
+            || PRIMITIVES.contains(&root))
     }
 
     /// The oracle's own modules, which its files may name by a bare path.
@@ -83,7 +83,14 @@ mod tests {
     #[test]
     fn oracle_reaches_nothing_outside_itself() {
         for (name, src) in [
-            ("mod.rs", include_str!("mod.rs")),
+            // mod.rs up to this test module, whose planted strings are escapes by design.
+            (
+                "mod.rs",
+                include_str!("mod.rs")
+                    .split("#[cfg(test)]")
+                    .next()
+                    .unwrap_or(""),
+            ),
             ("error_model.rs", include_str!("error_model.rs")),
             ("margin.rs", include_str!("margin.rs")),
             ("oracle.rs", include_str!("oracle.rs")),
