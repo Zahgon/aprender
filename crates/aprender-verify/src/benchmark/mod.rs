@@ -2,10 +2,6 @@
 //!
 //! This module provides data structures and utilities for reproducible
 //! performance measurement following the scientific reporting specification.
-//!
-//! # Examples
-//!
-//! See the `metadata` module for metadata collection functions.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

@@ -13,6 +13,7 @@
 //! - Truncation: `truncate(s, 10, TruncateStrategy::Path)` → "/home/…/file"
 //! - Columns: `format_column(s, 10, ColumnAlign::Left, ...)` → NEVER bleeds
 
+mod battery_panel;
 mod border;
 mod box_plot;
 mod cluster_plot;
@@ -65,6 +66,7 @@ mod treemap;
 mod ux;
 mod violin_plot;
 
+pub use battery_panel::{BatteryInfo, BatteryPanel};
 pub use border::{Border, BorderStyle};
 pub use box_plot::{BoxPlot, BoxStats, Orientation};
 pub use cluster_plot::{ClusterAlgorithm, ClusterPlot};
