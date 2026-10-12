@@ -10,7 +10,7 @@
 //!   2. `.cargo_vcs_info.json` `git.sha1` — written by `cargo package` into every published
 //!      tarball, so a crates.io install knows its commit (#4110). Ahead of `git rev-parse`
 //!      because an unpacked crate may sit inside SOME OTHER repository whose HEAD is not ours
-//!   3. `git rev-parse --short HEAD` (dev builds from worktree or primary checkout; retried with
+//!   3. `git rev-parse --short=9 HEAD` (dev builds from worktree or primary checkout; retried with
 //!      the enclosing checkout marked safe.directory when git refuses a checkout owned by another
 //!      user — binary-release.yml builds as root in a container over the runner's checkout)
 //!      then, with no git binary that answers, HEAD read straight from `.git` (#4254: the
@@ -110,6 +110,11 @@ fn run_git(args: &[&str]) -> Option<String> {
     }
 }
 
+/// Nine hex digits, pinned (#5196). A bare `--short` lets git pick the length, and a large
+/// clone printed ten (`cc71bde029`): the release check computes `--short=9` and compares the
+/// two exactly, so it refused the right binary as "not the release".
+const HEAD_SHORT: [&str; 3] = ["rev-parse", "--short=9", "HEAD"];
+
 fn resolve_git_sha() -> String {
     // Sources are consulted lazily and in order, as the original apr-cli
     // build.rs did: git is not run when an earlier source answers, and
@@ -123,7 +128,7 @@ fn resolve_git_sha() -> String {
     }
     // `trusted_git_retry`: the release binaries are built as root in a container over the
     // runner-owned checkout, where git refuses the repo as "dubious ownership" (#4110)
-    let head = ["rev-parse", "--short", "HEAD"];
+    let head = HEAD_SHORT;
     // #4254: and when no git binary answers at all (the sibling build container over a
     // bind-mounted checkout), read HEAD straight from the checkout's own `.git`.
     let git_head = run_git(&head)
@@ -322,5 +327,39 @@ mod tests {
             "v0.69.0+no-git"
         );
         assert_eq!(resolve(None, None, None, None, None), "v0.0.0+no-git");
+    }
+
+    /// #5196: in a repo whose default abbreviation is longer than 9, the stamp is still 9 —
+    /// the length `scripts/release/models_t1.sh` computes and compares exactly.
+    #[test]
+    fn head_short_is_nine_where_git_abbreviates_longer() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args([
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "core.abbrev=12",
+                ])
+                .args(args)
+                .current_dir(dir.path())
+                .output()
+                .expect("git runs");
+            assert!(out.status.success(), "git {args:?}: {out:?}");
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        git(&["init", "-q"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "c"]);
+        assert_eq!(
+            git(&["rev-parse", "--short", "HEAD"]).len(),
+            12,
+            "the fixture abbreviates longer than 9"
+        );
+        let sha = git(&super::HEAD_SHORT);
+        assert_eq!(sha.len(), 9, "{sha}");
+        assert!(git(&["rev-parse", "HEAD"]).starts_with(&sha));
     }
 }
