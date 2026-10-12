@@ -588,13 +588,19 @@ pub fn chat_row(mut row: Py, rc: i64, out: &str, err: &str) -> Result<Py, String
 
 /// The row of one `apr code --output-format json` call. `apr code` reports its serve child's
 /// device in `backend` (#3719); a document without it leaves backend and fallback null,
-/// which the judge refuses as not_measured (#4986).
+/// which the judge refuses as not_measured (#4986), and the row says why, as the .py does.
 pub fn code_row(mut row: Py, rc: i64, out: &str, err: &str) -> Result<Py, String> {
     let (doc, rc) = match envelope(rc, out)? {
         Some(doc) => (doc, rc),
         None => (Py::dict(), 3),
     };
     set_backend(&mut row, &doc)?;
+    if *row.at("backend") == Py::None {
+        row.set(
+            "reason_backend",
+            Py::str("apr code's envelope carries no backend; not established"),
+        );
+    }
     let text = text_of(doc.get("result"))?;
     finish(row, rc, &text, err)
 }
@@ -1563,10 +1569,15 @@ mod tests {
         let r = code_row(row(), 0, cpu, "").expect("row");
         assert_eq!(*r.at("backend"), Py::str("cpu"));
         assert_eq!(*r.at("fallback"), Py::Bool(true));
-        // No backend in the document: both stay null, never a guess.
+        assert!(r.get("reason_backend").is_none());
+        // No backend in the document: both stay null, never a guess, and the row says why.
         let r = code_row(row(), 0, r#"{"result": "TANGERINE-4417"}"#, "").expect("row");
         assert_eq!(*r.at("backend"), Py::None);
         assert_eq!(*r.at("fallback"), Py::None);
+        assert_eq!(
+            *r.at("reason_backend"),
+            Py::str("apr code's envelope carries no backend; not established")
+        );
         // Not JSON: rc 3, nothing claimed.
         let r = code_row(row(), 0, "not json", "").expect("row");
         assert_eq!(*r.at("rc"), Py::Int(3));
