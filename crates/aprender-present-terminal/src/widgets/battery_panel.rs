@@ -128,14 +128,17 @@ impl Widget for BatteryPanel {
                     "Not charging" => "— Idle",
                     _ => "? Unknown",
                 };
-                
-                let time_str = bat.time_remaining_mins.map(|m| {
-                    if m >= 60 {
-                        format!(" ({}h{}m)", m / 60, m % 60)
-                    } else {
-                        format!(" ({m}m)")
-                    }
-                }).unwrap_or_default();
+
+                let time_str = bat
+                    .time_remaining_mins
+                    .map(|m| {
+                        if m >= 60 {
+                            format!(" ({}h{}m)", m / 60, m % 60)
+                        } else {
+                            format!(" ({m}m)")
+                        }
+                    })
+                    .unwrap_or_default();
 
                 let text = format!("{status_icon}{time_str}");
 

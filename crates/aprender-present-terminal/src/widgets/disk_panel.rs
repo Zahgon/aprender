@@ -3,10 +3,6 @@
 //! Displays a list of mounted disks with usage bars and I/O rates.
 //! Reference: ttop disk panel.
 
-use crate::theme::Gradient;
-use crate::widgets::display_rules::{format_bytes_si, format_column, format_percent, ColumnAlign, TruncateStrategy};
-use crate::widgets::selection::{RowHighlight, DIMMED_BG};
-use crate::widgets::{percent_color, swap_color}; // Re-using existing helpers or define local
 use presentar_core::{
     Brick, BrickAssertion, BrickBudget, BrickVerification, Canvas, Color, Constraints, Event,
     LayoutResult, Point, Rect, Size, TextStyle, TypeId, Widget,
@@ -36,7 +32,12 @@ pub struct DiskEntry {
 }
 
 impl DiskEntry {
-    pub fn new(name: impl Into<String>, mount: impl Into<String>, total: u64, available: u64) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        mount: impl Into<String>,
+        total: u64,
+        available: u64,
+    ) -> Self {
         Self {
             name: name.into(),
             mount_point: mount.into(),
@@ -120,6 +121,90 @@ impl DiskPanel {
             format!("{:.0}B/s", bytes_per_sec)
         }
     }
+
+    /// Deterministic mode: ttop style placeholders.
+    fn paint_deterministic(&self, canvas: &mut dyn Canvas) {
+        let style = TextStyle {
+            color: Color::new(0.3, 0.3, 0.3, 1.0),
+            ..Default::default()
+        };
+
+        // Row 1: I/O Pressure
+        canvas.draw_text(
+            "I/O Pressure ○  0.0% some    0.0% full",
+            Point::new(self.bounds.x, self.bounds.y),
+            &style,
+        );
+
+        // Row 2: Header
+        if self.bounds.height >= 2.0 {
+            canvas.draw_text(
+                "── Top Active Processes ──────────────",
+                Point::new(self.bounds.x, self.bounds.y + 1.0),
+                &style,
+            );
+        }
+    }
+
+    /// Short mount label: "/" or the last path component, at most 8 chars.
+    fn mount_short(mount_point: &str) -> String {
+        if mount_point == "/" {
+            return "/".to_string();
+        }
+        mount_point
+            .split('/')
+            .next_back()
+            .unwrap_or(mount_point)
+            .chars()
+            .take(8)
+            .collect()
+    }
+
+    /// One row: "mnt      100G  ████░░  50.0%  R:10M W:5M".
+    fn row_text(disk: &DiskEntry, width: usize) -> String {
+        // Layout: mount(8) | size(5)G | bar(...) | pct(5)% | IO(...)
+        // Fixed parts: 8 + 1 + 6 + 1 + 1 + 6 + 1 = 24 chars
+        let fixed_width = 24;
+
+        let io_str = if disk.read_rate > 0.0 || disk.write_rate > 0.0 {
+            format!(
+                " R:{} W:{}",
+                Self::format_rate(disk.read_rate),
+                Self::format_rate(disk.write_rate)
+            )
+        } else {
+            String::new()
+        };
+
+        let available_width = width.saturating_sub(fixed_width + io_str.len());
+        let bar_width = available_width.max(2);
+
+        let pct = disk.usage_percent();
+        let filled = ((pct / 100.0) * bar_width as f64) as usize;
+        let bar = "█".repeat(filled.min(bar_width)) + &"░".repeat(bar_width.saturating_sub(filled));
+
+        let mount_short = Self::mount_short(&disk.mount_point);
+        let total_gb = disk.total_space as f64 / 1024.0 / 1024.0 / 1024.0;
+
+        format!("{mount_short:<8} {total_gb:>5.0}G {bar} {pct:>5.1}%{io_str}")
+    }
+
+    /// Row color: white when selected or active, else a usage gradient
+    /// (green -> yellow -> red). A simple local version of percent_color,
+    /// which exists only behind the ptop feature.
+    fn row_color(is_selected: bool, disk: &DiskEntry) -> Color {
+        if is_selected || disk.is_active {
+            return Color::WHITE;
+        }
+        let pct = disk.usage_percent();
+        if pct > 90.0 {
+            Color::new(1.0, 0.3, 0.3, 1.0)
+        } else if pct > 70.0 {
+            Color::new(1.0, 0.8, 0.2, 1.0)
+        } else {
+            Color::new(0.3, 0.9, 0.3, 1.0)
+        }
+    }
 }
 
 impl Widget for DiskPanel {
@@ -147,30 +232,7 @@ impl Widget for DiskPanel {
         }
 
         if self.deterministic {
-            // Deterministic mode: show ttop style placeholders
-            let dim_color = Color::new(0.3, 0.3, 0.3, 1.0);
-            
-            // Row 1: I/O Pressure
-            canvas.draw_text(
-                "I/O Pressure ○  0.0% some    0.0% full",
-                Point::new(self.bounds.x, self.bounds.y),
-                &TextStyle {
-                    color: dim_color,
-                    ..Default::default()
-                },
-            );
-
-            // Row 2: Header
-            if self.bounds.height >= 2.0 {
-                canvas.draw_text(
-                    "── Top Active Processes ──────────────",
-                    Point::new(self.bounds.x, self.bounds.y + 1.0),
-                    &TextStyle {
-                        color: dim_color,
-                        ..Default::default()
-                    },
-                );
-            }
+            self.paint_deterministic(canvas);
             return;
         }
 
@@ -187,81 +249,24 @@ impl Widget for DiskPanel {
         }
 
         let max_rows = self.bounds.height as usize;
-        
+
         for (i, disk) in self.disks.iter().take(max_rows).enumerate() {
             let y = self.bounds.y + i as f32;
             let is_selected = self.selected_row == Some(i);
 
             // Row background/highlight
             if is_selected {
-                // Using selection widget would be better, but simple rect for now
                 canvas.fill_rect(
                     Rect::new(self.bounds.x, y, self.bounds.width, 1.0),
                     crate::widgets::selection::SELECTION_BG,
                 );
             }
 
-            // Layout: mount(8) | size(5)G | bar(...) | pct(5)% | IO(...)
-            // Fixed parts: 8 + 1 + 6 + 1 + 1 + 6 + 1 = 24 chars
-            let fixed_width = 24;
-            
-            // I/O String
-            let io_str = if disk.read_rate > 0.0 || disk.write_rate > 0.0 {
-                format!(
-                    " R:{} W:{}",
-                    Self::format_rate(disk.read_rate),
-                    Self::format_rate(disk.write_rate)
-                )
-            } else {
-                String::new()
-            };
-            
-            let io_width = io_str.len();
-            let available_width = (self.bounds.width as usize).saturating_sub(fixed_width + io_width);
-            let bar_width = available_width.max(2);
-
-            let pct = disk.usage_percent();
-            let filled = ((pct / 100.0) * bar_width as f64) as usize;
-            let bar = "█".repeat(filled.min(bar_width)) + &"░".repeat(bar_width.saturating_sub(filled));
-
-            let mount_short: String = if disk.mount_point == "/" {
-                "/".to_string()
-            } else {
-                disk.mount_point
-                    .split('/')
-                    .next_back()
-                    .unwrap_or(&disk.mount_point)
-                    .chars()
-                    .take(8)
-                    .collect()
-            };
-
-            let total_gb = disk.total_space as f64 / 1024.0 / 1024.0 / 1024.0;
-            
-            // Format: "mnt      100G  ████░░  50.0%  R:10M W:5M"
-            let text = format!("{mount_short:<8} {total_gb:>5.0}G {bar} {pct:>5.1}%{io_str}");
-
-            // Color
-            let color = if is_selected {
-                Color::WHITE
-            } else if disk.is_active {
-                Color::WHITE // Active I/O highlight
-            } else {
-                // Gradient based on usage (green -> yellow -> red)
-                // Re-implementing simplified percent_color here to avoid dep cycles if needed, 
-                // but ideally we import it.
-                // Assuming we can't easily import private `percent_color` from ui.rs, 
-                // we'll implement a simple version.
-                if pct > 90.0 { Color::new(1.0, 0.3, 0.3, 1.0) }
-                else if pct > 70.0 { Color::new(1.0, 0.8, 0.2, 1.0) }
-                else { Color::new(0.3, 0.9, 0.3, 1.0) }
-            };
-
             canvas.draw_text(
-                &text,
+                &Self::row_text(disk, self.bounds.width as usize),
                 Point::new(self.bounds.x, y),
                 &TextStyle {
-                    color,
+                    color: Self::row_color(is_selected, disk),
                     ..Default::default()
                 },
             );
@@ -334,8 +339,7 @@ mod tests {
 
     #[test]
     fn test_disk_entry_with_io() {
-        let disk = DiskEntry::new("sda1", "/", 100, 25)
-            .with_io(2048.0, 512.0);
+        let disk = DiskEntry::new("sda1", "/", 100, 25).with_io(2048.0, 512.0);
         assert!(disk.is_active);
         assert_eq!(disk.read_rate, 2048.0);
     }

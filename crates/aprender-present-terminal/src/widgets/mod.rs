@@ -13,6 +13,7 @@
 //! - Truncation: `truncate(s, 10, TruncateStrategy::Path)` → "/home/…/file"
 //! - Columns: `format_column(s, 10, ColumnAlign::Left, ...)` → NEVER bleeds
 
+mod battery_panel;
 mod border;
 mod box_plot;
 mod cluster_plot;
@@ -24,6 +25,7 @@ mod core_stats_dataframe;
 mod cpu_exploded;
 mod cpu_grid;
 mod dataframe;
+mod disk_panel;
 pub mod display_rules;
 mod feature_importance;
 mod files_panel;
@@ -65,6 +67,7 @@ mod treemap;
 mod ux;
 mod violin_plot;
 
+pub use battery_panel::{BatteryInfo, BatteryPanel};
 pub use border::{Border, BorderStyle};
 pub use box_plot::{BoxPlot, BoxStats, Orientation};
 pub use cluster_plot::{ClusterAlgorithm, ClusterPlot};
@@ -79,6 +82,7 @@ pub use cpu_exploded::{
 };
 pub use cpu_grid::CpuGrid;
 pub use dataframe::{CellValue, Column, ColumnAlign, DataFrame, StatusLevel};
+pub use disk_panel::{DiskEntry, DiskPanel};
 pub use feature_importance::FeatureImportance;
 pub use files_panel::{FileEntry, FilesPanel};
 pub use force_graph::{ForceGraph, ForceParams, GraphEdge, GraphNode};
