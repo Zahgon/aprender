@@ -63,3 +63,8 @@ mod cli_inference_tests_part_04;
 #[cfg(test)]
 #[path = "tests_10.rs"]
 mod cli_tests_part_10;
+
+// #4700: Part 12 (serve_model, run_gguf/safetensors/apr inference)
+#[cfg(test)]
+#[path = "tests_12.rs"]
+mod cli_tests_part_12;

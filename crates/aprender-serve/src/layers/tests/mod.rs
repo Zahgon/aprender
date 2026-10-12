@@ -7,6 +7,6 @@ mod imp_072;
 mod fused_qkv_quantized;
 mod attention_forward;
 mod softmax_empty;
-// mod tests_10; // Disabled: compilation errors (see GH issue tracker)
+mod tests_10;
 mod attention_getters;
 mod lp_contract;

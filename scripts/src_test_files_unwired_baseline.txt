@@ -19,7 +19,6 @@ crates/aprender-serve/src/apr/tests_matmul_scaling.rs
 crates/aprender-serve/src/bench/tests_04.rs
 crates/aprender-serve/src/bench_viz_tests_benchmark_runner.rs
 crates/aprender-serve/src/cli/inference_tests_sample_next.rs
-crates/aprender-serve/src/cli/tests_12.rs
 crates/aprender-serve/src/cli/tests_format_model.rs
 crates/aprender-serve/src/convert/tests_conversion_stats_orphan.rs
 crates/aprender-serve/src/convert/tests_gguf_converter.rs
@@ -35,8 +34,6 @@ crates/aprender-serve/src/gpu/scheduler/config.rs
 crates/aprender-serve/src/gpu/scheduler/kv_tests.rs
 crates/aprender-serve/src/gpu/scheduler/model_tests.rs
 crates/aprender-serve/src/gpu/tests/tests_09.rs
-crates/aprender-serve/src/infer/tests_12.rs
-crates/aprender-serve/src/layers/tests/tests_10.rs
 crates/aprender-serve/src/quantize/tests/tests_22.rs
 crates/aprender-serve/src/safetensors/transform.rs
 crates/aprender-test-cli/src/commands_tests.rs

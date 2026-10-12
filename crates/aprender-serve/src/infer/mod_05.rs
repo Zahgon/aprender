@@ -48,3 +48,8 @@ mod infer_tests_part_10;
 #[cfg(test)]
 #[path = "tests_11.rs"]
 mod infer_tests_part_11;
+
+// #4700: Part 12 (run_inference, InferenceResult/Config, clean_model_output)
+#[cfg(test)]
+#[path = "tests_12.rs"]
+mod infer_tests_part_12;

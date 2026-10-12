@@ -7,6 +7,7 @@
             input_token_count: 1,
             generated_token_count: 2,
             inference_ms: 999.9,
+            generation_ms: None,
             tok_per_sec: 2.0,
             load_ms: 111.1,
             format: "APR".to_string(),

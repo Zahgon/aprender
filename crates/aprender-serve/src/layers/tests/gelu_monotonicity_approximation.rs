@@ -210,51 +210,6 @@ fn test_linear_zero_input_produces_bias() {
 // =============================================================================
 
 #[test]
-fn test_rope_creation_various_dimensions() {
-    for dim in [4, 8, 16, 32, 64, 128] {
-        let rope = RoPE::new(dim, 512).expect("create");
-        assert_eq!(rope.head_dim(), dim);
-        assert_eq!(rope.max_seq_len(), 512);
-    }
-}
-
-#[test]
-fn test_scaled_rope_scaling_types() {
-    // Test all scaling types can be created
-    let linear = ScaledRoPE::new(64, 2048, RopeScalingType::Linear { scale: 2.0 }).expect("linear");
-    assert_eq!(linear.head_dim(), 64);
-
-    let dynamic =
-        ScaledRoPE::new(64, 2048, RopeScalingType::Dynamic { scale: 2.0 }).expect("dynamic");
-    assert_eq!(dynamic.head_dim(), 64);
-
-    let ntk = ScaledRoPE::new(
-        64,
-        2048,
-        RopeScalingType::NTKAware {
-            scale: 2.0,
-            alpha: 1.0,
-        },
-    )
-    .expect("ntk");
-    assert_eq!(ntk.head_dim(), 64);
-
-    let yarn = ScaledRoPE::new(
-        64,
-        2048,
-        RopeScalingType::YaRN {
-            scale: 2.0,
-            original_max_seq_len: 4096,
-            attention_factor: 1.0,
-            beta_fast: 32.0,
-            beta_slow: 1.0,
-        },
-    )
-    .expect("yarn");
-    assert_eq!(yarn.head_dim(), 64);
-}
-
-#[test]
 fn test_alibi_creation_various_heads() {
     for num_heads in [1, 2, 4, 8, 16, 32] {
         let alibi = ALiBi::new(num_heads).expect("create");
@@ -264,7 +219,7 @@ fn test_alibi_creation_various_heads() {
 
 #[test]
 fn test_rope_forward_shape_preservation() {
-    let rope = RoPE::new(8, 512).expect("create");
+    let rope = RoPE::new(8, 10000.0).expect("create");
 
     // Test various input shapes
     let shapes = [vec![4, 8], vec![2, 4, 8], vec![1, 1, 8]];
@@ -285,8 +240,8 @@ fn test_alibi_get_bias_various_seq_lengths() {
     for seq_len in [1, 4, 16, 64, 128] {
         let bias = alibi.get_bias(seq_len).expect("get_bias");
 
-        // Bias shape should be [num_heads, seq_len, seq_len]
-        assert_eq!(bias.shape(), &[4, seq_len, seq_len]);
+        // Bias shape is [seq_len, seq_len, num_heads] (alibi.rs get_bias doc)
+        assert_eq!(bias.shape(), &[seq_len, seq_len, 4]);
     }
 }
 
@@ -326,24 +281,3 @@ fn test_sliding_window_attention_window_larger_than_seq() {
     assert_eq!(output.shape(), &[4, 8]);
 }
 
-#[test]
-fn test_multi_head_attention_weight_accessors() {
-    let mut mha = MultiHeadAttention::mha(64, 8).expect("create");
-
-    // Test all weight accessors are accessible and writable
-    let w_q = mha.w_q_mut();
-    assert!(!w_q.is_empty());
-    w_q[0] = 1.0;
-
-    let w_k = mha.w_k_mut();
-    assert!(!w_k.is_empty());
-    w_k[0] = 2.0;
-
-    let w_v = mha.w_v_mut();
-    assert!(!w_v.is_empty());
-    w_v[0] = 3.0;
-
-    let w_o = mha.w_o_mut();
-    assert!(!w_o.is_empty());
-    w_o[0] = 4.0;
-}

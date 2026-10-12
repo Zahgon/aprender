@@ -145,7 +145,7 @@
                 "text",
                 false,
                 false,
-                Some(TraceConfig::enabled()), // trace_config
+                Some(crate::inference_trace::TraceConfig::enabled()), // trace_config
             );
             assert!(result.is_err()); // Expected - no valid model
         }
@@ -179,7 +179,7 @@
                 "json",
                 true,                         // force_gpu
                 true,                         // verbose
-                Some(TraceConfig::enabled()), // trace_config
+                Some(crate::inference_trace::TraceConfig::enabled()), // trace_config
             );
             assert!(result.is_err()); // Expected - no valid model
         }
@@ -405,7 +405,7 @@
                 "json",
                 true,                         // force_gpu
                 true,                         // verbose
-                Some(TraceConfig::enabled()), // trace_config
+                Some(crate::inference_trace::TraceConfig::enabled()), // trace_config
             );
             assert!(result.is_err());
         }
