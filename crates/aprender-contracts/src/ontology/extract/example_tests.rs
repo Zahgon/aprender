@@ -11,7 +11,7 @@ fn write(root: &Path, rel: &str, text: &str) {
 
 /// A workspace with one member (two example forms plus a helper module), one excluded crate and a target dir.
 fn planted() -> tempfile::TempDir {
-    let d = tempfile::tempdir().unwrap();
+    let d = tempfile::tempdir().expect("tempdir");
     let r = d.path();
     write(
         r,
@@ -79,7 +79,7 @@ fn a_planted_workspace_yields_exactly_its_member_targets() {
 #[test]
 fn a_workspace_root_that_read_nothing_is_an_error_and_one_with_no_examples_is_not() {
     // A member with no examples/: zero is the measurement, not an error (the ONT-3b code-bound fixture's shape).
-    let d = tempfile::tempdir().unwrap();
+    let d = tempfile::tempdir().expect("tempdir");
     write(d.path(), "Cargo.toml", "[workspace]\nmembers = [\"x\"]\n");
     write(d.path(), "x/Cargo.toml", "[package]\nname = \"x\"\n");
     let (_, stats) = walk(d.path());
@@ -92,7 +92,7 @@ fn a_workspace_root_that_read_nothing_is_an_error_and_one_with_no_examples_is_no
     assert_eq!((stats.examples, stats.non_member_examples), (0, 1));
     assert_eq!(stats.errors.len(), 1, "{:?}", stats.errors);
     // A workspace that admits no member read nothing.
-    let none = tempfile::tempdir().unwrap();
+    let none = tempfile::tempdir().expect("tempdir");
     write(
         none.path(),
         "Cargo.toml",
@@ -100,7 +100,7 @@ fn a_workspace_root_that_read_nothing_is_an_error_and_one_with_no_examples_is_no
     );
     assert_eq!(walk(none.path()).1.errors.len(), 1);
     // Without a workspace manifest the corpus is not measured, and that is not an error.
-    let bare = tempfile::tempdir().unwrap();
+    let bare = tempfile::tempdir().expect("tempdir");
     assert!(walk(bare.path()).1.errors.is_empty());
 }
 
@@ -108,7 +108,7 @@ fn a_workspace_root_that_read_nothing_is_an_error_and_one_with_no_examples_is_no
 /// A contract dir's parent can be a shared temp dir; the walk must not admit the packages other jobs leave there.
 #[test]
 fn a_root_without_a_workspace_admits_only_its_own_package() {
-    let scratch = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().expect("tempdir");
     let r = scratch.path();
     write(r, "other-job/Cargo.toml", "[package]\nname = \"foreign\"\n");
     write(r, "other-job/examples/leak.rs", "fn main() {}\n");
@@ -281,4 +281,64 @@ fn extract_returns_the_walk_stats_and_emits_the_examples() {
     assert_eq!(stats.by_family.len(), 3);
     let n = iri_path("example", &["crates", "a", "examples", "qwen.rs"]);
     assert_eq!(g.objects(&n, &ex("crate")).len(), 1);
+}
+
+/// aprender#3560 R3 — the cookbook shape: one package, no `[workspace]`, every target declared by `[[example]]` under
+/// `examples/<topic>/`. The R1 walk knew only the auto forms and read ZERO of the cookbook's 1825 targets, green.
+#[test]
+fn declared_example_targets_are_read_and_a_package_that_yields_none_is_an_error() {
+    let d = tempfile::tempdir().expect("tempdir");
+    let r = d.path();
+    write(
+        r,
+        "Cargo.toml",
+        "[package]\nname = \"cookbook\"\nautoexamples = false\n\n[[example]]\nname = \"serve_qwen\"\npath = \
+         \"examples/serving/serve_qwen.rs\"\n\n[[example]]\nname = \"flat\"\n\n[[example]]\nname = \"gone\"\npath = \
+         \"examples/serving/gone.rs\"\n\n[dependencies]\nname = \"not-an-example\"\n",
+    );
+    write(
+        r,
+        "examples/serving/serve_qwen.rs",
+        "// Qwen3.5-2B\nfn main() {}\n",
+    );
+    write(r, "examples/flat.rs", "fn main() {}\n");
+    write(r, "examples/auto_only.rs", "fn main() {}\n");
+    let (got, stats) = walk(r);
+    let names: Vec<(&str, &str)> = got
+        .iter()
+        .map(|e| (e.file.as_str(), e.name.as_str()))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            ("examples/flat.rs", "flat"),
+            ("examples/serving/serve_qwen.rs", "serve_qwen"),
+        ],
+        "declared targets with their declared names; autoexamples = false keeps auto_only.rs out"
+    );
+    assert_eq!(stats.errors.len(), 1, "{:?}", stats.errors);
+    assert_eq!(stats.errors[0].file, "examples/serving/gone.rs");
+
+    // The same tree with the tables gone: cargo builds none of the nested files, and the walk must say it read
+    // nothing rather than pass over 3 .rs files.
+    let e = tempfile::tempdir().expect("tempdir");
+    write(e.path(), "Cargo.toml", "[package]\nname = \"cookbook\"\n");
+    write(e.path(), "examples/serving/serve_qwen.rs", "fn main() {}\n");
+    let (got, stats) = walk(e.path());
+    assert!(got.is_empty());
+    assert_eq!(stats.errors.len(), 1, "{:?}", stats.errors);
+    assert!(stats.errors[0].what.contains("zero example targets"));
+
+    // Declared AND auto-discoverable is one target under the declared name, not two.
+    let f = tempfile::tempdir().expect("tempdir");
+    write(
+        f.path(),
+        "Cargo.toml",
+        "[package]\nname = \"p\"\n[[example]]\nname = \"renamed\"\npath = \"examples/a.rs\"\n",
+    );
+    write(f.path(), "examples/a.rs", "fn main() {}\n");
+    let (got, stats) = walk(f.path());
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].name, "renamed");
+    assert!(stats.errors.is_empty());
 }
