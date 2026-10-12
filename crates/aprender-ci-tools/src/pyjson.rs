@@ -782,7 +782,15 @@ mod tests {
         assert!(matches!(loads("\"a\u{1}\""), Err(LoadErr::Decode(_))));
         assert_eq!(load(" -0 "), Py::Int(0));
         assert_eq!(load("1E2"), Py::Float(100.0));
-        assert!(matches!(loads(&"[".repeat(2000)), Err(LoadErr::Fatal(_))));
+        // MAX_DEPTH frames need more than a 2 MiB debug test thread; the CLI runs on the
+        // 8 MiB main thread, so the depth case runs on one that size.
+        let deep = std::thread::Builder::new()
+            .stack_size(8 << 20)
+            .spawn(|| matches!(loads(&"[".repeat(2000)), Err(LoadErr::Fatal(_))))
+            .expect("spawn")
+            .join()
+            .expect("join");
+        assert!(deep);
     }
 
     #[test]
