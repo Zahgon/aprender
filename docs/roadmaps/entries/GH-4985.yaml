@@ -1,0 +1,17 @@
+- id: GH-4985
+  github_issue: 4985
+  item_type: task
+  title: test fixture build_minimal_llama_gguf_with sizes Q4_K tensors from the first dim, so non-square FFN tensors get half their bytes
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-10-12T14:14:12.454865406+00:00
+  updated: 2026-10-12T14:14:12.454865406+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - P2
+  notes: null

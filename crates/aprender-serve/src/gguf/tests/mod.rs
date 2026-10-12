@@ -51,6 +51,7 @@ mod phase_matmul_coverage;
 mod phase_thread_safe_cache;
 mod phase_transformer_structure;
 mod pmat785_gpu_quant_gate; // PMAT-785: centralized GPU quant-eligibility gate
+mod q4k_fixture_shape; // #4985: the fixture sizes each Q4_K tensor from its real GGUF shape
 mod tests_02;
 mod tests_03;
 mod tests_04;
