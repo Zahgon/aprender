@@ -168,3 +168,19 @@ pub(crate) fn gguf_model_type(architecture: Option<&str>) -> Result<String> {
                 .to_string(),
         })
 }
+
+#[cfg(test)]
+mod gguf_model_type_tests_4419 {
+    use super::gguf_model_type;
+
+    /// #4419: a GGUF with no architecture is refused, never written as qwen2.
+    #[test]
+    fn a_missing_gguf_architecture_is_refused_not_written_as_qwen2() {
+        for missing in [None, Some("")] {
+            let err = gguf_model_type(missing).expect_err("no architecture must be refused");
+            assert!(err.to_string().contains("no general.architecture"), "{err}");
+        }
+        assert_eq!(gguf_model_type(Some("llama")).expect("recorded"), "llama");
+        assert_eq!(gguf_model_type(Some("qwen3")).expect("recorded"), "qwen3");
+    }
+}
