@@ -358,6 +358,11 @@ fn constrained_turn(
     }
 }
 
+/// 499, "client closed request": the status a turn cancelled by a disconnect is logged with.
+fn client_closed_status() -> StatusCode {
+    StatusCode::from_u16(499).expect("499 is a valid status code")
+}
+
 /// The verdict on a finished constrained reply: `Ok` when it ships. A reply the budget cut is
 /// `Truncated` (no partial document is returned); an empty one, or one the second reader
 /// refuses, is `SchemaViolation`.
@@ -460,6 +465,7 @@ async fn constrained_chat(
     let prompt = constrained_prompt(state, &route, &mapped, request)?;
     let (prompt, config) = constrained_config(state, &route, &mapped, request, prompt, cancel)?;
     let prompt_tokens = prompt.len();
+    let budget = config.max_tokens;
     let job_mapped = Arc::clone(&mapped);
     let job_constraint = constraint.clone();
     let joined = tokio::task::spawn_blocking(move || {
@@ -492,9 +498,18 @@ async fn constrained_chat(
             ))
         },
     };
+    if cancel.is_cancelled() {
+        // The client went away mid-turn: no budget cut it, so it is not `Truncated`, and no
+        // one reads this reply
+        return Err(fail_response(
+            state,
+            client_closed_status(),
+            "the client closed the request before the constrained turn ended",
+        ));
+    }
     let reply = &turn.tokens[prompt_tokens..];
     let text = mapped.model.decode(reply);
-    constrained_verdict(&constraint, stop, &text, reply.len())
+    constrained_verdict(&constraint, stop, &text, budget)
         .map_err(|e| constraint_refusal(state, &e))?;
     state.metrics.record_success(reply.len(), start.elapsed());
     let response = constrained_response(

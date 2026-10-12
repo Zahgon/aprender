@@ -481,7 +481,20 @@ async fn a_budget_too_small_for_the_document_is_422_with_no_partial_text() {
     let (status, body) = post(state, constrained_body(schema, 1)).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     assert_eq!(body["type"], "constraint_truncated");
+    assert!(
+        body["error"]
+            .as_str()
+            .is_some_and(|e| e.contains("budget of 1 tokens")),
+        "the refusal names the request's budget: {body}"
+    );
     assert!(body.get("choices").is_none(), "{body}");
+}
+
+/// A turn the client's disconnect cancelled is logged as closed by the client, never as a
+/// constraint refusal: no budget cut it.
+#[test]
+fn a_cancelled_constrained_turn_is_logged_as_closed_by_the_client() {
+    assert_eq!(client_closed_status().as_u16(), 499);
 }
 
 /// A server that retains no GGUF has no vocabulary to compile against: refused by name, never
