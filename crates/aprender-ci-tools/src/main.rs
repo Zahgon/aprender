@@ -101,7 +101,7 @@ enum Cmd {
     /// Exit 2 on a usage error or an `--only` that names no model.
     LadderCellsProduce {
         #[command(subcommand)]
-        cmd: ladder_cells_produce::Sub,
+        cmd: Box<ladder_cells_produce::Sub>,
     },
 }
 
