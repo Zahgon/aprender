@@ -263,13 +263,16 @@ jobs:
         env:
           M_STATE: ${{ steps.models.outputs.state || 'not_measured' }}
           M_REASON: ${{ steps.models.outputs.reason || 'the models relay wrote no state' }}
+          M_BUNDLE: ${{ steps.models.outputs.bundle }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           bash scripts/release/release_receipt.sh --seal --commit "$C" --models "$M_STATE" "$M_REASON" \
             --publish "$P_STATE" "$P_REASON" --out "$RUNNER_TEMP/receipt" --run-url "$RUN_URL"
+          # the window reads the verified CRUX bundle of C from this same artifact (lib_window.sh)
+          if [ -n "$M_BUNDLE" ]; then cp -r -- "$M_BUNDLE" "$RUNNER_TEMP/receipt/models-t1"; fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: release-receipt-${{ needs.pick.outputs.c }}
-          path: ${{ runner.temp }}/receipt/release-receipt-${{ needs.pick.outputs.c }}.json
+          path: ${{ runner.temp }}/receipt
           if-no-files-found: error
           retention-days: 30

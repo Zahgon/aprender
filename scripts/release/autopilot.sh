@@ -47,6 +47,9 @@ if rehearsal; then
   # shellcheck source=scripts/release/lib_rehearsal.sh
   . "$REPO_ROOT/scripts/release/lib_rehearsal.sh" || exit 2
 fi
+# the 45-min window (#5185): functions only, used under AP_WINDOW=1
+# shellcheck source=scripts/release/lib_window.sh
+. "$REPO_ROOT/scripts/release/lib_window.sh" || exit 2
 STATUS="$AP/STATUS"; LOG="$AP/autopilot.log"
 # #4950 G2: GitHub polls share one fleet-wide hourly budget, so one object is polled at most every 300 s.
 # AP_SETTLE is the one short wait, between a dispatch and the first look for the run it created.
@@ -59,7 +62,7 @@ run_step() { # run_step <name>: true when <name> is at or after FROM and at or b
     local s seen=0 past=0
     for s in "${STEPS[@]}"; do
         [ "$s" = "$FROM" ] && seen=1
-        [ "$s" = "$1" ] && { [ $seen = 1 ] && [ $past = 0 ]; return; }
+        [ "$s" = "$1" ] && { [ $seen = 1 ] && [ $past = 0 ] && { [ "${AP_WIN:-0}" != 1 ] || ap_win_mark "$1"; }; return; }
         [ "$s" = "$TO" ] && past=1
     done
     return 1
@@ -124,7 +127,20 @@ rw_end() { # the end-of-pass print: merges to main since the pass start, runner 
   m=$(git -C "$REPO_ROOT" rev-list --count --first-parent --since="@$s" origin/main 2>> "$LOG") || m=unknown
   say "$(bash "$PRW" report "$AP" "$m")"
 }
-trap rw_end EXIT
+# #5185, the 45-minute window's clock (scripts/release/lib_window.sh). AP_WIN turns 1 only when the
+# window opens (AP_WINDOW=1, below); until then both are no-ops.
+AP_WIN=0
+ap_win_mark() { # ap_win_mark <step>: close the step in progress, print its time and the total
+  local l
+  [ "${AP_WIN:-0}" = 1 ] || return 0
+  win_mark "$1"; for l in "${WIN_OUT[@]}"; do say "$l"; done
+}
+ap_win_end() {
+  local l
+  [ "${AP_WIN:-0}" = 1 ] || return 0
+  win_close; for l in "${WIN_OUT[@]}"; do say "$l"; done
+}
+trap 'ap_win_end; rw_end' EXIT
 
 # 1. wait: the bump PR merges; its merge commit is the release commit
 if run_step wait && rehearsal; then
@@ -170,6 +186,26 @@ AP_POLICY=$(ap_policy_applies "$V" 2>> "$LOG") || die "the standing release poli
 # (check_release_t1_lanes_joined.sh refuses any line that prints one without this swap).
 AP_DF_RECEIPT="dogfood GO"; AP_DF_CLOSE="pre-publish dogfood GO at \`$MC\`"; [ "$AP_POLICY" != 1 ] || { AP_DF_RECEIPT="dogfood not run (policy)"; AP_DF_CLOSE="pre-publish dogfood not run (standing release policy)"; }
 [ "$AP_POLICY" != 1 ] || say "POLICY: the standing release policy covers $V -- CRUX smoke on lambda and gx10 is the release gate, the pre-publish dogfood (R5) and readiness (R8) are not run, the larger ladder rows are nightly"
+# #5185 THE 45-MINUTE WINDOW (operator 2026-10-12: "A release, i.e. frozen main, needs to release in 45
+# minutes; the end."; from 0.71.2). The cop driver runs the train with AP_WINDOW=1; unset, not one line
+# below changes. The window checks receipts and computes nothing long: the CRUX models smoke and the
+# publish dry run come from the nightly receipt for exactly MC (release-lanes-nightly.yml, job
+# `receipt`). INPUTS are proved BEFORE the window opens: each is made here or the window is not opened,
+# and none stops it midway. Inside, every step prints its time and the total; past 45 min, one ANDON line.
+if [ "${AP_WINDOW:-}" = 1 ]; then
+  rehearsal && die "AP_WINDOW=1 under a rehearsal: the rehearsal reads the night's producers itself"
+  [ "$AP_POLICY" = 1 ] || die "AP_WINDOW=1 but the standing release policy does not cover $V: the receipt measures CRUX smoke only -- the window is not opened"
+  why=$(win_notes "$WT/CHANGELOG.md" "$V" "$AP/release_notes.md") || die "INPUTS release_notes.md: $why -- the window is not opened"
+  say "INPUTS release_notes.md $why"
+  rrun=$(win_fetch "$REPO" "$MC" "$AP/receipt") || die "INPUTS receipt: $rrun -- the window is not opened (the nightly makes it, never the window)"
+  line=$(bash scripts/release/release_receipt.sh --check --commit "$MC" "$AP/receipt/release-receipt-$MC.json") \
+    || die "INPUTS $line (nightly run $rrun) -- the window is not opened"
+  say "INPUTS $line (nightly run $rrun)"
+  win_models_line "$AP/receipt/models-t1/models-t1.log" "$MC" > /dev/null \
+    || die "INPUTS the receipt of nightly run $rrun holds no MODELS GO (CRUX smoke) bundle at ${MC:0:9} -- the window is not opened"
+  AP_WIN=1; win_open
+  say "WINDOW OPEN at ${MC:0:9}: budget ${WIN_BUDGET_S}s; models and the publish dry run are nightly run $rrun's receipt"
+fi
 
 # #4950: the cascade publishes to crates.io, which cannot be undone, so it re-proves its own premise
 # instead of trusting the cleanroom step's files: the tag on origin is MC, the clean-room (aprender) job
@@ -253,10 +289,22 @@ t1_dogfood() {
 t1_models() {
   local measure=ladder; [ "$AP_POLICY" != 1 ] || measure=crux
   if rehearsal; then t1_models_rehearsal "$measure"; return; fi
+  if [ "${AP_WIN:-0}" = 1 ]; then t1_models_receipt; return; fi
   MODELS_T1_MEASURE=$measure bash scripts/release/models_t1.sh "$V" "$MC" "$AP/models-t1" > "$AP/models-t1.log" 2>&1; rc=$?
   grep -E '^MODELS ' "$AP/models-t1.log" >> "$STATUS"
   [ $rc -eq 0 ] || die "T-1 model matrix NO-GO rc=$rc: nothing is tagged ($AP/models-t1.log)"
   say "MODELS GO at $MC on lambda and gx10 (measured: $measure)"
+}
+# #5185 window: the receipt's verified CRUX bundle for MC (checked at INPUTS) is put where this step
+# writes, $AP/models-t1 and its log, so cut_tag, preflight (R7) and the cascade read it unchanged.
+t1_models_receipt() {
+  local line
+  rm -rf -- "${AP:?}/models-t1"
+  cp -r -- "$AP/receipt/models-t1" "$AP/models-t1" && cp -- "$AP/models-t1/models-t1.log" "$AP/models-t1.log" \
+    || die "the receipt's models bundle cannot be copied into $AP/models-t1"
+  line=$(win_models_line "$AP/models-t1.log" "$MC") || die "the receipt's models bundle has no MODELS GO (CRUX smoke) at ${MC:0:9}"
+  printf '%s\n' "$line" >> "$STATUS"
+  say "MODELS GO at $MC on lambda and gx10 (measured: crux; the nightly receipt, 0 s in the window)"
 }
 # Rehearsal: no SSH leg (a remote host is outside the state dir, H10). The night's models-nightly run
 # on C is the measurement; its verified bundle (artifact models-t1: the receipts and models_t1.sh's own
@@ -414,9 +462,17 @@ if run_step tag; then
   # release commit the tag will name, so this is the tarball the cascade uploads. A red here stops the
   # train before anything irreversible: no carry, no tag, no draft (#4287 follow-up, #4690).
   rm -f -- "${AP:?}/publish-dryrun-commit"
-  bash scripts/release/rc_publish_gate.sh --verify "$WT" > "$AP/publish-dryrun.log" 2>&1; rc=$?
-  tail -2 "$AP/publish-dryrun.log" >> "$STATUS"
-  [ $rc -eq 0 ] || die "publish dry-run refused rc=$rc (1 = a tarball defect, 2 = could not measure; $AP/publish-dryrun.log) -- no tag"
+  if [ "${AP_WIN:-0}" = 1 ]; then
+    # #5185 window: the dry run ran the night before on MC; its receipt is re-read here, never re-run
+    line=$(bash scripts/release/release_receipt.sh --check --commit "$MC" "$AP/receipt/release-receipt-$MC.json") \
+      || die "publish dry-run: $line -- no tag (the window never re-runs it)"
+    jq -r '"publish-dryrun \(.steps.publish_dryrun.state): \(.steps.publish_dryrun.reason) (\(.run_url))"' \
+      "$AP/receipt/release-receipt-$MC.json" > "$AP/publish-dryrun.log" 2>&1 || die "cannot read the receipt's publish dry run -- no tag"
+  else
+    bash scripts/release/rc_publish_gate.sh --verify "$WT" > "$AP/publish-dryrun.log" 2>&1; rc=$?
+    tail -2 "$AP/publish-dryrun.log" >> "$STATUS"
+    [ $rc -eq 0 ] || die "publish dry-run refused rc=$rc (1 = a tarball defect, 2 = could not measure; $AP/publish-dryrun.log) -- no tag"
+  fi
   printf '%s\n' "$MC" > "$AP/publish-dryrun-commit"
   say "PUBLISH-DRYRUN green on $MC, ahead of the tag ($AP/publish-dryrun.log)"
   if rehearsal; then
