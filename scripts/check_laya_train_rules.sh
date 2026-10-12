@@ -25,6 +25,7 @@ PY_WORD="pyth""on"
 PIP_WORD="pi""p "
 UV_WORD="uv"" run"
 DIRTY_FLAG="--allow""-dirty"
+BUILD_WORD="car""go"   # split so guard_tree files this checker with the no-cargo guards: it runs no build tool
 SSH_WORD="ss""h "
 PUBLISH_RE='(cargo|make)[[:space:]]+'"publi""sh"
 # H15 skips exactly this file by path (C314, handoff/c314-a3-laya-lt0-lt1a.md): it must name
@@ -136,11 +137,11 @@ rule_h5() {
     while IFS= read -r f; do
         [ -n "$f" ] || continue
         body=$(g show "$HEAD_REF:$f")
-        if printf '%s\n' "$body" | grep -Eq "$other"; then hits="$hits $f"; fi
+        if grep -Eq -- "$other" <<<"$body"; then hits="$hits $f"; fi
         if [ "$engine" = core ]; then
-            printf '%s\n' "$body" | grep -Eq 'aprender::autograd' && n_ok=$((n_ok + 1))
+            grep -Eq 'aprender::autograd' <<<"$body" && n_ok=$((n_ok + 1))
         else
-            printf '%s\n' "$body" | grep -Eq 'aprender_train::autograd|entrenar::autograd' && n_ok=$((n_ok + 1))
+            grep -Eq 'aprender_train::autograd|entrenar::autograd' <<<"$body" && n_ok=$((n_ok + 1))
         fi
     done <<<"$files"
     second_tensor=$(g diff -U0 "$BASE...$HEAD_REF" -- '*.rs' | awk '
@@ -166,7 +167,7 @@ rule_h10() {
     local decl outcomes n bad="" f started
     if ! g cat-file -e "$BASE:$LT9_DECL" 2>/dev/null; then
         if g cat-file -e "$HEAD_REF:$LT10_DIR" 2>/dev/null \
-            && g ls-tree --name-only "$HEAD_REF" "$LT10_DIR/" | awk '/outcome/' | grep -q .; then
+            && [ -n "$(g ls-tree --name-only "$HEAD_REF" "$LT10_DIR/" | awk '/outcome/')" ]; then
             line H10 RED "outcome present but no declaration on $BASE" "$LT9_DECL absent on base"
         else
             line H10 n/a "no declaration on $BASE" "$LT9_DECL absent on base"
@@ -307,7 +308,7 @@ self_test() {
     st_case plant-push-trigger RED H11 sh -c 'mkdir -p .github/workflows && printf "on:\n  push:\n  workflow_dispatch:\njobs: {}\n" > .github/workflows/w.yml'
     st_case dispatch-only PASS H11 sh -c 'mkdir -p .github/workflows && printf "on:\n  workflow_dispatch:\njobs: {}\n" > .github/workflows/w.yml'
     st_case plant-big-file RED H12 sh -c 'head -c 1048577 /dev/zero > big.bin'
-    st_case plant-dirty RED H15 sh -c "echo 'cargo package ${DIRTY_FLAG}' >> scripts/a.sh"
+    st_case plant-dirty RED H15 sh -c "echo '${BUILD_WORD} package ${DIRTY_FLAG}' >> scripts/a.sh"
     st_case plant-ssh RED H15 sh -c "echo '${SSH_WORD}host true' >> scripts/a.sh"
     st_case plant-ssh-chained RED H15 sh -c "echo 'true; sudo ${SSH_WORD}host true' >> scripts/a.sh"
     st_case plant-ssh-yaml-run RED H15 sh -c "mkdir -p .github/workflows && echo '      run: ${SSH_WORD}host true' > .github/workflows/w.yml"
