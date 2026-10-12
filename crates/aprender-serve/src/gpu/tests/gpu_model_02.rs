@@ -448,3 +448,68 @@ fn test_block_weights_structure() {
     assert_eq!(block.attn_norm_weight.len(), hidden_dim);
     assert!(block.ffn_gate_weight.is_none());
 }
+
+/// #5219: lending block weights to `do_matmul` instead of cloning them must not
+/// change what the optimized path generates, and must hand every weight back.
+#[test]
+fn test_generate_optimized_matches_cached_and_returns_weights() {
+    fn seeded(config: &GpuModelConfig) -> GpuModel {
+        let mut model = GpuModel::new(config.clone()).expect("model");
+        let fill = |v: &mut Vec<f32>, salt: usize| {
+            for (i, x) in v.iter_mut().enumerate() {
+                *x = (((i * 31 + salt * 17) % 23) as f32 - 11.0) * 0.01;
+            }
+        };
+        fill(&mut model.embedding_weights, 1);
+        for (l, b) in model.block_weights.iter_mut().enumerate() {
+            fill(&mut b.qkv_weight, 2 + l);
+            fill(&mut b.out_weight, 3 + l);
+            fill(&mut b.ffn_fc1_weight, 4 + l);
+            fill(&mut b.ffn_fc2_weight, 5 + l);
+            let mut gate = vec![0.0f32; b.ffn_fc1_weight.len()];
+            fill(&mut gate, 6 + l);
+            b.ffn_gate_weight = Some(gate);
+        }
+        fill(&mut model.lm_head_weight, 7);
+        let (h, v) = (config.hidden_dim, config.vocab_size);
+        model.lm_head_weight_t = (0..v * h)
+            .map(|i| model.lm_head_weight[(i % h) * v + i / h])
+            .collect();
+        model
+    }
+
+    let config = create_minimal_config();
+    let gen_config = GpuGenerateConfig::deterministic(6);
+    let prompt = vec![3, 7, 11];
+
+    let mut cached = seeded(&config);
+    let want = cached.generate_with_cache(&prompt, &gen_config).expect("cached");
+
+    let mut optimized = seeded(&config);
+    let before: Vec<_> = optimized
+        .block_weights
+        .iter()
+        .map(|b| {
+            (
+                b.qkv_weight.clone(),
+                b.out_weight.clone(),
+                b.ffn_fc1_weight.clone(),
+                b.ffn_fc2_weight.clone(),
+                b.ffn_gate_weight.clone(),
+            )
+        })
+        .collect();
+    let lm_before = optimized.lm_head_weight.clone();
+    let got = optimized.generate_optimized(&prompt, &gen_config).expect("optimized");
+
+    assert_eq!(got, want, "optimized tokens diverged from the KV-cached path");
+    assert!(got.len() > prompt.len());
+    assert_eq!(optimized.lm_head_weight, lm_before, "LM head not handed back");
+    for (b, a) in optimized.block_weights.iter().zip(&before) {
+        assert_eq!(b.qkv_weight, a.0);
+        assert_eq!(b.out_weight, a.1);
+        assert_eq!(b.ffn_fc1_weight, a.2);
+        assert_eq!(b.ffn_fc2_weight, a.3);
+        assert_eq!(b.ffn_gate_weight, a.4);
+    }
+}

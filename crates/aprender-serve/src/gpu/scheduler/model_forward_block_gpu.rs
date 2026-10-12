@@ -33,8 +33,13 @@ impl GpuModel {
         // QKV projection for single token [1, hidden_dim] @ [hidden_dim, qkv_dim]
         // For GQA: qkv_dim = hidden_dim + 2*kv_dim (K/V have fewer heads)
         // IMP-1006: Use do_matmul to route to CudaScheduler when available
-        let qkv_weight = self.block_weights[block_idx].qkv_weight.clone();
-        let mut qkv = self.do_matmul(&normed, &qkv_weight, 1, hidden_dim, qkv_dim)?;
+        // #5219: the weight is lent to do_matmul, never cloned per token
+        let mut qkv = self.matmul_block_weight(
+            &normed,
+            block_idx,
+            |b| &mut b.qkv_weight,
+            (hidden_dim, qkv_dim),
+        )?;
 
         // Get current position BEFORE caching (Phase 21)
         let (cached_k_ref, _) = kv_cache.get_valid(block_idx);
@@ -59,31 +64,21 @@ impl GpuModel {
         );
 
         // Split QKV (GQA: K/V have kv_dim, not hidden_dim) - after RoPE
-        let q = qkv[0..hidden_dim].to_vec();
-        let k_new = qkv[hidden_dim..hidden_dim + kv_dim].to_vec();
-        let v_new = qkv[hidden_dim + kv_dim..].to_vec();
+        let q = &qkv[0..hidden_dim];
+        let k_new = &qkv[hidden_dim..hidden_dim + kv_dim];
+        let v_new = &qkv[hidden_dim + kv_dim..];
 
-        // Get cached K/V and clone to avoid borrow issues with kv_cache
-        let (cached_k, cached_v) = kv_cache.get_valid(block_idx);
-        let keys_cached = cached_k.to_vec();
-        let vals_cached = cached_v.to_vec();
-
-        // Append new K/V (with RoPE applied) to cache
-        kv_cache.append(block_idx, &k_new, &v_new);
-
-        // Build full K/V (cached + new)
-        // GQA: K/V have kv_dim per position, not hidden_dim
-        let kv_len = keys_cached.len() / kv_dim + 1;
-        let mut full_k = keys_cached;
-        full_k.extend_from_slice(&k_new);
-        let mut full_v = vals_cached;
-        full_v.extend_from_slice(&v_new);
+        // Append new K/V (with RoPE applied), then attend over the cache in place (#5219: no
+        // per-token copy of the whole cache; same order as forward_block_incremental)
+        kv_cache.append(block_idx, k_new, v_new);
+        let (full_k, full_v) = kv_cache.get_valid(block_idx);
+        let kv_len = full_k.len() / kv_dim;
 
         // GQA attention (IMP-089): static method to avoid borrow conflicts
         let attn_output = Self::gqa_multihead_attention(
-            &q,
-            &full_k,
-            &full_v,
+            q,
+            full_k,
+            full_v,
             kv_len,
             num_heads,
             num_kv_heads,
@@ -92,8 +87,12 @@ impl GpuModel {
 
         // Output projection
         // IMP-1006: Use do_matmul to route to CudaScheduler when available
-        let out_weight = self.block_weights[block_idx].out_weight.clone();
-        let attn_proj = self.do_matmul(&attn_output, &out_weight, 1, hidden_dim, hidden_dim)?;
+        let attn_proj = self.matmul_block_weight(
+            &attn_output,
+            block_idx,
+            |b| &mut b.out_weight,
+            (hidden_dim, hidden_dim),
+        )?;
 
         // Add residual and bias
         let out_bias = &self.block_weights[block_idx].out_bias;
@@ -123,15 +122,22 @@ impl GpuModel {
         } else {
             // Dense FFN: SwiGLU when gate weight exists, otherwise GELU
             // IMP-1006: Use do_matmul to route to CudaScheduler when available
-            let fc1_activated: Vec<f32> = if let Some(ref gate_weight) =
-                self.block_weights[block_idx].ffn_gate_weight
+            let fc1_activated: Vec<f32> = if self.block_weights[block_idx]
+                .ffn_gate_weight
+                .is_some()
             {
-                let fc1_weight = self.block_weights[block_idx].ffn_fc1_weight.clone();
-                let gate_weight = gate_weight.clone();
-                let up_out =
-                    self.do_matmul(&ffn_normed, &fc1_weight, 1, hidden_dim, intermediate_dim)?;
-                let gate_out =
-                    self.do_matmul(&ffn_normed, &gate_weight, 1, hidden_dim, intermediate_dim)?;
+                let up_out = self.matmul_block_weight(
+                    &ffn_normed,
+                    block_idx,
+                    |b| &mut b.ffn_fc1_weight,
+                    (hidden_dim, intermediate_dim),
+                )?;
+                let gate_out = self.matmul_block_weight(
+                    &ffn_normed,
+                    block_idx,
+                    |b| b.ffn_gate_weight.get_or_insert_with(Vec::new),
+                    (hidden_dim, intermediate_dim),
+                )?;
                 up_out
                     .iter()
                     .zip(gate_out.iter())
@@ -141,9 +147,12 @@ impl GpuModel {
                     })
                     .collect()
             } else {
-                let fc1_weight = self.block_weights[block_idx].ffn_fc1_weight.clone();
-                let fc1_out =
-                    self.do_matmul(&ffn_normed, &fc1_weight, 1, hidden_dim, intermediate_dim)?;
+                let fc1_out = self.matmul_block_weight(
+                    &ffn_normed,
+                    block_idx,
+                    |b| &mut b.ffn_fc1_weight,
+                    (hidden_dim, intermediate_dim),
+                )?;
                 let ffn_fc1_bias = &self.block_weights[block_idx].ffn_fc1_bias;
                 fc1_out
                     .iter()
@@ -155,9 +164,12 @@ impl GpuModel {
                     .collect()
             };
 
-            let fc2_weight = self.block_weights[block_idx].ffn_fc2_weight.clone();
-            let fc2_out =
-                self.do_matmul(&fc1_activated, &fc2_weight, 1, intermediate_dim, hidden_dim)?;
+            let fc2_out = self.matmul_block_weight(
+                &fc1_activated,
+                block_idx,
+                |b| &mut b.ffn_fc2_weight,
+                (intermediate_dim, hidden_dim),
+            )?;
             let ffn_fc2_bias = &self.block_weights[block_idx].ffn_fc2_bias;
             for i in 0..hidden_dim {
                 post_attn[i] += fc2_out[i] + ffn_fc2_bias[i];
@@ -165,6 +177,25 @@ impl GpuModel {
         }
 
         Ok(post_attn)
+    }
+
+    /// `do_matmul` for one row against a block weight, lent rather than cloned (#5219).
+    ///
+    /// `do_matmul` takes `&mut self`, so the weight cannot stay borrowed from `self` across the
+    /// call. Cloning it (IMP-1006) copied every matrix of every layer on every token, which made the
+    /// "optimized" path slower than `generate_with_cache`. The weight is moved out, used, and moved
+    /// back whether the matmul succeeds or fails.
+    fn matmul_block_weight(
+        &mut self,
+        input: &[f32],
+        block_idx: usize,
+        field: fn(&mut BlockWeights) -> &mut Vec<f32>,
+        (k, n): (usize, usize),
+    ) -> Result<Vec<f32>> {
+        let weight = std::mem::take(field(&mut self.block_weights[block_idx]));
+        let out = self.do_matmul(input, &weight, 1, k, n);
+        *field(&mut self.block_weights[block_idx]) = weight;
+        out
     }
 
     /// Apply Rotary Position Embedding (RoPE) inline (delegates to ops module)

@@ -186,6 +186,45 @@ impl GpuModel {
         })
     }
 
+    /// PMAT-216: runtime transpose check, legacy `from_apr_weights` path only — new code
+    /// should use `from_validated_weights` with the LmHeadWeight/LmHeadWeightTransposed newtypes.
+    fn check_lm_head_transpose(
+        config: &GpuModelConfig,
+        lm_head_weight: &[f32],
+        lm_head_weight_t: &[f32],
+    ) -> Result<()> {
+        if lm_head_weight.len() >= config.hidden_dim
+            && lm_head_weight_t.len() >= config.vocab_size * config.hidden_dim
+        {
+            let orig_00 = lm_head_weight[0];
+            let trans_00 = lm_head_weight_t[0];
+            if (orig_00 - trans_00).abs() > 1e-6 {
+                return Err(RealizarError::InvalidShape {
+                    reason: format!(
+                        "PMAT-216: lm_head_weight[0,0]={} != lm_head_weight_t[0,0]={}. \
+                         Arguments may be swapped.",
+                        orig_00, trans_00
+                    ),
+                });
+            }
+
+            if config.hidden_dim > 1 && config.vocab_size > 1 {
+                let orig_01 = lm_head_weight[1];
+                let trans_01 = lm_head_weight_t[1];
+                let trans_10 = lm_head_weight_t[config.vocab_size];
+
+                let is_transposed = (orig_01 - trans_10).abs() < 1e-5;
+                let is_same = (orig_01 - trans_01).abs() < 1e-5;
+
+                if is_same && !is_transposed && (orig_01 - trans_01).abs() < 1e-6 {
+                    let msg = "PMAT-216: lm_head_weight_t appears to NOT be transposed. Check argument order in from_apr_weights call.";
+                    return Err(RealizarError::InvalidShape { reason: msg.to_string() });
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Legacy constructor — accepts raw Vec<f32> for backwards compatibility.
     ///
     /// Prefer `from_validated_weights()` for new code. This function retains
@@ -231,37 +270,7 @@ impl GpuModel {
             },
         };
 
-        // PMAT-216: Runtime transpose check (legacy path only — new code should use
-        // from_validated_weights with LmHeadWeight/LmHeadWeightTransposed newtypes)
-        if lm_head_weight.len() >= config.hidden_dim
-            && lm_head_weight_t.len() >= config.vocab_size * config.hidden_dim
-        {
-            let orig_00 = lm_head_weight[0];
-            let trans_00 = lm_head_weight_t[0];
-            if (orig_00 - trans_00).abs() > 1e-6 {
-                return Err(RealizarError::InvalidShape {
-                    reason: format!(
-                        "PMAT-216: lm_head_weight[0,0]={} != lm_head_weight_t[0,0]={}. \
-                         Arguments may be swapped.",
-                        orig_00, trans_00
-                    ),
-                });
-            }
-
-            if config.hidden_dim > 1 && config.vocab_size > 1 {
-                let orig_01 = lm_head_weight[1];
-                let trans_01 = lm_head_weight_t[1];
-                let trans_10 = lm_head_weight_t[config.vocab_size];
-
-                let is_transposed = (orig_01 - trans_10).abs() < 1e-5;
-                let is_same = (orig_01 - trans_01).abs() < 1e-5;
-
-                if is_same && !is_transposed && (orig_01 - trans_01).abs() < 1e-6 {
-                    let msg = "PMAT-216: lm_head_weight_t appears to NOT be transposed. Check argument order in from_apr_weights call.";
-                    return Err(RealizarError::InvalidShape { reason: msg.to_string() });
-                }
-            }
-        }
+        Self::check_lm_head_transpose(&config, &lm_head_weight, &lm_head_weight_t)?;
 
         Ok(Self {
             embedding_weights,
@@ -456,9 +465,12 @@ impl GpuModel {
             )
         } else {
             // IMP-1006: Use do_matmul to route to CudaScheduler when available
-            let lm_weight = self.lm_head_weight.clone();
+            // #5219: lend the LM head to do_matmul instead of cloning it per token
+            let lm_weight = std::mem::take(&mut self.lm_head_weight);
             let vocab_size = self.config.vocab_size;
-            let logits = self.do_matmul(&hidden, &lm_weight, 1, hidden_dim, vocab_size)?;
+            let logits = self.do_matmul(&hidden, &lm_weight, 1, hidden_dim, vocab_size);
+            self.lm_head_weight = lm_weight;
+            let logits = logits?;
             // Add bias
             logits
                 .into_iter()
