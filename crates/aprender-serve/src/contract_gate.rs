@@ -486,8 +486,11 @@ fn dequant_verdict(
 ///
 /// F-CHAOS-008 (#3418): read from `trueno_quant::TRAITS`, the upstream-extracted
 /// table, so every sized id counts `type_size` bytes as `blck_size` elements.
-/// APR bytes 8/9 (GH-239: GGML Q8_0/Q8_1 or APR-native Q4/Q8) take the GGML
-/// reading, which counts MORE elements than the APR one: the guard fails closed.
+/// The APR index byte has two writers: serve writes the GGML id, apr-format v2
+/// writes 3..=7 as F64/I32/I64/I8/U8 and 128/129 (legacy 8/9) as APR Q4/Q8.
+/// For 3..=7 the GGML reading counts at least as many elements as the APR one,
+/// so the guard fails closed. APR Q4 (18 bytes per 32) and Q8 still undercount:
+/// legacy 8/9 less than before, 128/129 (not in TRAITS, counted as F32) as before.
 fn estimate_elements(byte_size: usize, dtype: u8) -> usize {
     match trueno_quant::TRAITS.get(usize::from(dtype)) {
         Some(t) if t.blck_size > 0 => byte_size / t.type_size as usize * t.blck_size as usize,
