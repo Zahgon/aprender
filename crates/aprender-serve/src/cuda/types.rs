@@ -206,77 +206,75 @@ pub enum WeightQuantType {
 }
 
 impl WeightQuantType {
-    /// Bytes per 256 elements for super-block quantization types
-    pub const fn bytes_per_superblock(&self) -> usize {
+    /// Every variant, in `from_ggml_type`'s search order.
+    pub const ALL: [Self; 18] = [
+        Self::F32,
+        Self::F16,
+        Self::IQ4XS,
+        Self::IQ4NL,
+        Self::IQ3S,
+        Self::IQ2XXS,
+        Self::IQ2S,
+        Self::IQ3XXS,
+        Self::Q2K,
+        Self::Q5_1,
+        Self::BF16,
+        Self::Q4_0,
+        Self::Q4_1,
+        Self::Q5_0,
+        Self::Q8_0,
+        Self::Q4K,
+        Self::Q5K,
+        Self::Q6K,
+    ];
+
+    /// The upstream ggml type id. #3418: the only place a variant names a
+    /// number; what it weighs comes from `trueno_quant::TRAITS` at this id.
+    pub const fn ggml_id(&self) -> u32 {
         match self {
-            Self::Q4K => 144,
-            Self::Q5K => 176,
-            Self::Q6K => 210,
-            Self::Q8_0 => 34 * 8, // Q8_0 uses 32-element blocks, so 8 blocks for 256 elements
-            Self::Q5_0 => 22 * 8, // Q5_0 uses 32-element blocks, so 8 blocks for 256 elements
-            Self::Q4_0 => 18 * 8, // Q4_0 uses 32-element blocks, so 8 blocks for 256 elements
-            Self::Q4_1 => 20 * 8, // Q4_1 uses 32-element blocks, so 8 blocks for 256 elements
-            Self::F32 => 256 * 4, // F32: 4 bytes per element, 256 elements
-            Self::F16 => 256 * 2, // F16: 2 bytes per element, 256 elements
-            Self::BF16 => 256 * 2, // BF16: 2 bytes per element, 256 elements
-            Self::IQ4XS => 136,   // IQ4_XS: 136 bytes per 256-element super-block
-            Self::IQ4NL => 18 * 8, // IQ4_NL uses 32-element blocks, so 8 blocks for 256 elements
-            Self::IQ3S => 110,    // IQ3_S: 110 bytes per 256-element super-block
-            Self::IQ2XXS => 66,   // IQ2_XXS: 66 bytes per 256-element super-block
-            Self::IQ2S => 82,     // IQ2_S: 82 bytes per 256-element super-block
-            Self::IQ3XXS => 98,   // IQ3_XXS: 98 bytes per 256-element super-block
-            Self::Q2K => 84,      // Q2_K: 84 bytes per 256-element super-block
-            Self::Q5_1 => 24 * 8, // Q5_1 uses 32-element blocks, so 8 blocks for 256 elements
+            Self::F32 => 0,     // GH-374: F32 LM head in APR checkpoints
+            Self::F16 => 1,     // #3477: F16 ssm_alpha/ssm_beta in UD dynamic quants
+            Self::IQ4XS => 23,  // #3477: IQ4_XS ffn_gate/ffn_up in UD dynamic quants
+            Self::IQ4NL => 20,  // #3869: declared-type-only, see the variant docs
+            Self::IQ3S => 21,   // #3884: IQ3_S, the remaining IQ3_M blocker
+            Self::IQ2XXS => 16, // #3950: IQ2_XXS, 95/320 of Qwen3.5-0.8B-UD-IQ2_XXS
+            Self::IQ2S => 22,   // #3953: IQ2_S, 5/320 of Qwen3.5-0.8B-UD-IQ2_XXS
+            Self::IQ3XXS => 18, // #3963: IQ3_XXS, 24/320 of Qwen3.5-0.8B-UD-IQ2_XXS
+            Self::Q2K => 10,    // #3960: Q2_K, 3/320 of Qwen3.5-0.8B-UD-IQ2_XXS
+            Self::Q5_1 => 7,    // #3885: Q5_1, the remaining IQ4_XS blocker
+            Self::BF16 => 30,   // #3908: BF16, measured BIT-EXACT (0 ULP)
+            Self::Q4_0 => 2,
+            Self::Q4_1 => 3, // PAR-058: Q4_1 support
+            Self::Q5_0 => 6,
+            Self::Q8_0 => 8,
+            Self::Q4K => 12,
+            Self::Q5K => 13,
+            Self::Q6K => 14,
         }
     }
 
-    /// Bytes per 32 elements (for block-based quantization types)
+    /// `type_size` bytes per `blck_size` elements, from TRAITS (FT-GGMLT-008).
+    const fn traits(&self) -> (usize, usize) {
+        let t = &trueno_quant::TRAITS[self.ggml_id() as usize];
+        (t.blck_size as usize, t.type_size as usize)
+    }
+
+    /// Bytes per 256 elements: one super-block, or 8 blocks of 32.
+    pub const fn bytes_per_superblock(&self) -> usize {
+        let (blck, size) = self.traits();
+        size * 256 / blck
+    }
+
+    /// Bytes per 32 elements. Exact for 32-element blocks; for a 256-element
+    /// super-block it is `type_size / 8`, truncated (Q6_K 210/8 -> 26).
     pub const fn bytes_per_block(&self) -> usize {
-        match self {
-            Self::Q4K => 18, // Q4K is super-block, treat as 18 per 32 for calculation
-            Self::Q5K => 22, // Q5K is super-block
-            Self::Q6K => 26, // Q6K is super-block (210/8 = 26.25, round to 26)
-            Self::Q8_0 => 34,
-            Self::Q5_0 => 22,
-            Self::Q4_0 => 18,
-            Self::Q4_1 => 20,
-            Self::F32 => 128,   // F32: 4 bytes per element, 32 elements
-            Self::F16 => 64,    // F16: 2 bytes per element, 32 elements
-            Self::BF16 => 64,   // BF16: 2 bytes per element, 32 elements
-            Self::IQ4XS => 17,  // IQ4_XS super-block: 136/8 = 17 per 32
-            Self::IQ4NL => 18,  // IQ4_NL is NATIVELY a 32-element block: exact, not a division
-            Self::IQ3S => 13,   // IQ3_S super-block: 110/8 = 13.75, truncated as Q6K's 210/8 is
-            Self::IQ2XXS => 8,  // IQ2_XXS super-block: 66/8 = 8.25, truncated as IQ3S's is
-            Self::IQ2S => 10,   // IQ2_S super-block: 82/8 = 10.25, truncated likewise
-            Self::IQ3XXS => 12, // IQ3_XXS super-block: 98/8 = 12.25, truncated likewise
-            Self::Q2K => 10,    // Q2_K super-block: 84/8 = 10.5, truncated likewise
-            Self::Q5_1 => 24,   // Q5_1 is NATIVELY a 32-element block: exact
-        }
+        let (blck, size) = self.traits();
+        size * 32 / blck
     }
 
     /// Create from GGML type ID
     pub fn from_ggml_type(type_id: u32) -> Option<Self> {
-        match type_id {
-            0 => Some(Self::F32),     // GH-374: F32 LM head in APR checkpoints
-            1 => Some(Self::F16),     // #3477: F16 ssm_alpha/ssm_beta in UD dynamic quants
-            23 => Some(Self::IQ4XS),  // #3477: IQ4_XS ffn_gate/ffn_up in UD dynamic quants
-            20 => Some(Self::IQ4NL),  // #3869: declared-type-only, see the variant docs
-            21 => Some(Self::IQ3S),   // #3884: IQ3_S, the remaining IQ3_M blocker
-            16 => Some(Self::IQ2XXS), // #3950: IQ2_XXS, 95/320 of Qwen3.5-0.8B-UD-IQ2_XXS
-            22 => Some(Self::IQ2S),   // #3953: IQ2_S, 5/320 of Qwen3.5-0.8B-UD-IQ2_XXS
-            18 => Some(Self::IQ3XXS), // #3963: IQ3_XXS, 24/320 of Qwen3.5-0.8B-UD-IQ2_XXS
-            10 => Some(Self::Q2K),    // #3960: Q2_K, 3/320 of Qwen3.5-0.8B-UD-IQ2_XXS
-            7 => Some(Self::Q5_1),    // #3885: Q5_1, the remaining IQ4_XS blocker
-            30 => Some(Self::BF16),   // #3908: BF16, measured BIT-EXACT (0 ULP)
-            2 => Some(Self::Q4_0),
-            3 => Some(Self::Q4_1), // PAR-058: Q4_1 support
-            6 => Some(Self::Q5_0),
-            8 => Some(Self::Q8_0),
-            12 => Some(Self::Q4K),
-            13 => Some(Self::Q5K),
-            14 => Some(Self::Q6K),
-            _ => None,
-        }
+        Self::ALL.into_iter().find(|q| q.ggml_id() == type_id)
     }
 
     /// PAR-105-FIX: Check if a qtype matches the expected size for given dimensions
@@ -366,15 +364,15 @@ impl WeightQuantType {
         // Super-block formats (256 elements per super-block)
         let n_superblocks = n_rows * ((n_cols + 255) / 256);
         let superblock_formats = [
-            (Self::Q6K, 210),
-            (Self::Q5K, 176),
-            (Self::Q4K, 144),
-            (Self::IQ4XS, 136),
-            (Self::IQ3S, 110),
-            (Self::IQ2XXS, 66),
-            (Self::IQ2S, 82),
-            (Self::IQ3XXS, 98),
-            (Self::Q2K, 84),
+            (Self::Q6K, Self::Q6K.bytes_per_superblock()),
+            (Self::Q5K, Self::Q5K.bytes_per_superblock()),
+            (Self::Q4K, Self::Q4K.bytes_per_superblock()),
+            (Self::IQ4XS, Self::IQ4XS.bytes_per_superblock()),
+            (Self::IQ3S, Self::IQ3S.bytes_per_superblock()),
+            (Self::IQ2XXS, Self::IQ2XXS.bytes_per_superblock()),
+            (Self::IQ2S, Self::IQ2S.bytes_per_superblock()),
+            (Self::IQ3XXS, Self::IQ3XXS.bytes_per_superblock()),
+            (Self::Q2K, Self::Q2K.bytes_per_superblock()),
         ];
 
         for (fmt, bytes_per_sb) in superblock_formats {
@@ -386,11 +384,11 @@ impl WeightQuantType {
         // Then check block formats (32 elements per block)
         let n_blocks = n_rows * ((n_cols + 31) / 32);
         let formats = [
-            (Self::Q4_0, 18),
-            (Self::Q4_1, 20),
-            (Self::Q5_0, 22),
-            (Self::Q5_1, 24),
-            (Self::Q8_0, 34),
+            (Self::Q4_0, Self::Q4_0.bytes_per_block()),
+            (Self::Q4_1, Self::Q4_1.bytes_per_block()),
+            (Self::Q5_0, Self::Q5_0.bytes_per_block()),
+            (Self::Q5_1, Self::Q5_1.bytes_per_block()),
+            (Self::Q8_0, Self::Q8_0.bytes_per_block()),
         ];
 
         for (fmt, bytes_per_block) in formats {
@@ -849,3 +847,56 @@ impl ValidatedLayerWeights {
 }
 
 include!("transformer_workspace.rs");
+
+#[cfg(test)]
+mod one_table_tests_3418 {
+    use super::WeightQuantType;
+    use trueno_quant::TRAITS;
+
+    /// FT-GGMLT-008 (#3418): every type the CUDA path admits by ggml id weighs
+    /// what TRAITS says, in both of its size views and in `from_size`.
+    #[test]
+    fn cuda_weight_types_size_from_the_one_ggml_table_3418() {
+        let mut wrong = Vec::new();
+        for id in 0..64u32 {
+            let Some(q) = WeightQuantType::from_ggml_type(id) else {
+                continue;
+            };
+            let Some(t) = TRAITS.get(id as usize).filter(|t| t.blck_size > 0) else {
+                wrong.push(format!("{id} {q:?}: admitted but TRAITS has no size"));
+                continue;
+            };
+            let (blck, size) = (t.blck_size as usize, t.type_size as usize);
+            let per_256 = size * 256 / blck;
+            if q.bytes_per_superblock() != per_256 {
+                wrong.push(format!(
+                    "{id} {q:?} per 256: {} != {per_256}",
+                    q.bytes_per_superblock()
+                ));
+            }
+            let per_32 = size * 32 / blck;
+            if q.bytes_per_block() != per_32 {
+                wrong.push(format!(
+                    "{id} {q:?} per 32: {} != {per_32}",
+                    q.bytes_per_block()
+                ));
+            }
+            let (rows, cols) = (3usize, 512usize);
+            let bytes = rows * cols.div_ceil(blck) * size;
+            if !q.matches_size(bytes, rows, cols) {
+                wrong.push(format!("{id} {q:?}: matches_size({bytes}) false"));
+            }
+            let sized = WeightQuantType::from_size(bytes, rows, cols);
+            let back = sized
+                .and_then(|s| (0..64u32).find(|&i| WeightQuantType::from_ggml_type(i) == Some(s)))
+                .and_then(|i| TRAITS.get(i as usize))
+                .map(|b| rows * cols.div_ceil(b.blck_size as usize) * b.type_size as usize);
+            if back != Some(bytes) {
+                wrong.push(format!(
+                    "{id} {q:?}: from_size({bytes}) = {sized:?}, {back:?} bytes"
+                ));
+            }
+        }
+        assert!(wrong.is_empty(), "{} rows differ: {wrong:?}", wrong.len());
+    }
+}
