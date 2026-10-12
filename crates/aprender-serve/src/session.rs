@@ -36,6 +36,7 @@
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
+use std::time::Instant;
 
 use crate::error::{RealizarError, Result};
 use crate::gguf::{OwnedQuantizedModel, QuantizedGenerateConfig};
@@ -177,6 +178,14 @@ pub struct Turn {
     /// `max_tokens` and before a stop token. It is the one reason a reply is
     /// shorter than asked for that the caller did not choose.
     pub context_capped: bool,
+    /// When the prompt's first forward was about to run: after admission and
+    /// the reserve, before any prefill (#4954). What came before it — the
+    /// handler, the template, the lock — is not prefill.
+    pub prefill_started: Instant,
+    /// When the prompt's prefill had chosen the first token: the end of
+    /// prefill and the start of decode (#4954). Earlier than the first
+    /// `on_token` call, so time a caller spends there is never prefill.
+    pub prefill_ended: Instant,
 }
 
 /// A loaded model plus its decode state: the one engine (#4263).
@@ -332,11 +341,7 @@ impl<F: ArchForward> Session<F> {
             }
         }
         let reused = start;
-        if let Some(k) = self
-            .forward
-            .checkpoint_at(prompt)
-            .filter(|&k| k > start && k < prompt.len())
-        {
+        if let Some(k) = self.checkpoint_split(prompt, start) {
             self.step(&prompt[..k], start)?;
             self.checkpoint = match self.forward.save_checkpoint() {
                 Ok(()) => Some(prompt[..k].to_vec()),
@@ -495,19 +500,14 @@ impl<F: ArchForward> Session<F> {
             digest: prompt_digest(prompt),
             on_gpu: self.on_gpu(),
         });
-        let context_length = self.context_length();
-        self.admit_prompt(prompt, context_length)?;
-        // Every position the turn can reach, reserved up front so the state
-        // never grows (and never re-prefills) mid-generation.
-        let (budget, context_limited) =
-            turn_budget(prompt.len(), config.max_tokens, context_length);
-        self.reserve(prompt.len() + budget)?;
+        let (budget, context_limited) = self.admit_and_reserve(prompt, config.max_tokens)?;
 
-        let clock = std::time::Instant::now();
+        let prefill_started = Instant::now();
         let reused = self.prepare_prompt(prompt)?;
         let mut rng = rand::rngs::StdRng::seed_from_u64(config.seed);
         let (mut next, _) = self.advance_and_choose(prompt, config, &mut rng)?;
-        record(tracer, TraceStep::TransformerBlock, 0, clock);
+        let prefill_ended = Instant::now();
+        record(tracer, TraceStep::TransformerBlock, 0, prefill_started);
         let mut tokens = prompt.to_vec();
         let mut context_capped = false;
         for generated in 1..=budget {
@@ -539,7 +539,60 @@ impl<F: ArchForward> Session<F> {
             reused,
             used_gpu: self.on_gpu(),
             context_capped,
+            prefill_started,
+            prefill_ended,
         })
+    }
+
+    /// A turn's setup, done ahead of [`Session::generate`] so a caller can time
+    /// generation alone (#4342): admit `prompt`, reserve every position its turn
+    /// can reach, and judge the backend (the F2 guard), falling back loudly if
+    /// it is rejected. `generate` then finds the reserve already held and the
+    /// guard already run (it runs once per session).
+    ///
+    /// # Errors
+    /// The prompts `generate` refuses; the fallback itself failed.
+    pub fn prepare_turn(&mut self, prompt: &[u32], max_tokens: usize) -> Result<()> {
+        self.admit_and_reserve(prompt, max_tokens)?;
+        let probe = self.first_forward(prompt);
+        self.forward.validate(probe)
+    }
+
+    /// The tokens the turn's first forward covers: the prefix `prepare_prompt`
+    /// checkpoints when it takes one, else the whole prompt. The guard judged
+    /// that forward when it ran inside `generate`, so it still probes the same
+    /// positions.
+    ///
+    /// A turn that restores a held checkpoint is not mirrored. A checkpoint is
+    /// only saved after a forward, which already ran the once-per-session
+    /// guard, so `validate` is a no-op on such a turn.
+    fn first_forward<'p>(&self, prompt: &'p [u32]) -> &'p [u32] {
+        let start = if self.extends(prompt) {
+            self.processed.len()
+        } else {
+            0
+        };
+        self.checkpoint_split(prompt, start)
+            .map_or(prompt, |k| &prompt[..k])
+    }
+
+    /// Where `prepare_prompt` cuts `prompt` to checkpoint it, with the state
+    /// holding `prompt[..start]`: past `start` and short of the end.
+    fn checkpoint_split(&self, prompt: &[u32], start: usize) -> Option<usize> {
+        self.forward
+            .checkpoint_at(prompt)
+            .filter(|&k| k > start && k < prompt.len())
+    }
+
+    /// Admit `prompt` and reserve every position its turn can reach, up front,
+    /// so the state never grows (and never re-prefills) mid-generation. Returns
+    /// the turn's budget and whether the context, not `max_tokens`, set it.
+    fn admit_and_reserve(&mut self, prompt: &[u32], max_tokens: usize) -> Result<(usize, bool)> {
+        let context_length = self.context_length();
+        self.admit_prompt(prompt, context_length)?;
+        let (budget, context_limited) = turn_budget(prompt.len(), max_tokens, context_length);
+        self.reserve(prompt.len() + budget)?;
+        Ok((budget, context_limited))
     }
 
     /// Refuse a prompt `generate` cannot serve: an empty one, or one the

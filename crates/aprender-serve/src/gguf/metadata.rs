@@ -54,71 +54,84 @@ impl GGUFModel {
                 reason: format!("Offset {} exceeds platform usize limit", tensor.offset),
             })?;
         let offset = self.tensor_data_start + tensor_offset;
+
         Self::dequantize_at(tensor.qtype, file_data, offset, size)
     }
 
-    /// `size` elements of ggml type `qtype` stored at byte `offset` of `file_data`, dequantized
-    /// to f32 — the one type match behind [`Self::get_tensor_f32`]. APR-EMBED-001 EG-2 reads a
-    /// single row of a quantized token table through it (I-10: no second quant match).
+    /// Dequantize `size` values of GGUF type `qtype` starting at byte `offset` of
+    /// `file_data`. [`Self::get_tensor_f32`] passes a whole tensor; the Qwen3.5
+    /// embedding passes one row of its still-quantized table (#4991).
     ///
     /// # Errors
-    /// A byte range outside `file_data`, or a type with no dequantizer here.
+    /// The byte range lies outside `file_data`, or `qtype` is not supported.
     pub(crate) fn dequantize_at(
         qtype: u32,
         file_data: &[u8],
         offset: usize,
         size: usize,
     ) -> Result<Vec<f32>> {
-        // Extract and dequantize based on qtype. A block type reads whole blocks and trims the
-        // padding the last block carries; every type checks its byte range against the file first.
+        let (block_values, block_bytes, dequant) = Self::dequant_kernel(qtype)?;
+        let byte_size = size.div_ceil(block_values) * block_bytes;
+        let bytes = offset
+            .checked_add(byte_size)
+            .and_then(|end| file_data.get(offset..end))
+            .ok_or_else(|| RealizarError::UnsupportedOperation {
+                operation: "get_tensor_f32".to_string(),
+                reason: format!(
+                    "Data range [{}, {}) exceeds file size {}",
+                    offset,
+                    offset.saturating_add(byte_size),
+                    file_data.len()
+                ),
+            })?;
+        let mut values = dequant(bytes)?;
+        // Block types dequantize whole blocks; trim to the exact size.
+        values.truncate(size);
+        Ok(values)
+    }
+
+    /// `(values per block, bytes per block, dequantizer)` for GGUF type `qtype`.
+    ///
+    /// # Errors
+    /// `qtype` is not supported.
+    fn dequant_kernel(qtype: u32) -> Result<(usize, usize, Dequantizer)> {
         use crate::quantize::{
             dequantize_f16, dequantize_q2_k, dequantize_q3_k, dequantize_q4_0, dequantize_q4_1,
             dequantize_q4_k_simd, dequantize_q5_0, dequantize_q5_1, dequantize_q5_k,
             dequantize_q6_k, dequantize_q8_0_simd, QK_K,
         };
-        type Dequant = fn(&[u8]) -> Result<Vec<f32>>;
-        // (elements per block, bytes per block, dequantizer)
-        let blocked: Option<(usize, usize, Dequant)> = match qtype {
-            GGUF_TYPE_Q4_0 => Some((32, 18, dequantize_q4_0)),
-            GGUF_TYPE_Q8_0 => Some((32, 34, dequantize_q8_0_simd)),
-            GGUF_TYPE_Q2_K => Some((QK_K, 84, dequantize_q2_k)),
-            GGUF_TYPE_Q3_K => Some((QK_K, 110, dequantize_q3_k)),
-            GGUF_TYPE_Q4_K => Some((QK_K, 144, dequantize_q4_k_simd)),
-            GGUF_TYPE_Q5_K => Some((QK_K, 176, dequantize_q5_k)),
-            GGUF_TYPE_Q6_K => Some((QK_K, 210, dequantize_q6_k)),
-            GGUF_TYPE_Q4_1 => Some((32, 20, dequantize_q4_1)),
-            GGUF_TYPE_Q5_0 => Some((32, 22, dequantize_q5_0)),
-            GGUF_TYPE_Q5_1 => Some((32, 24, dequantize_q5_1)),
-            _ => None,
-        };
-        if let Some((block_elems, block_bytes, dequant)) = blocked {
-            let bytes = tensor_byte_range(file_data, offset, size.div_ceil(block_elems) * block_bytes)?;
-            let mut values = dequant(bytes)?;
-            values.truncate(size);
-            return Ok(values);
-        }
-        match qtype {
-            GGUF_TYPE_F32 => Ok(tensor_byte_range(file_data, offset, size * 4)?
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .map(|chunk| f32::from_le_bytes(*chunk))
-                .collect()),
-            GGUF_TYPE_F16 => dequantize_f16(tensor_byte_range(file_data, offset, size * 2)?),
-            // BF16 (bfloat16): 2 bytes/elem, no block structure. Reuses the existing SIMD
-            // converter (y = from_bits((bits as u32) << 16)) already used by the safetensors
-            // loaders + gguf/embedding.rs. #1893-class fix: without this arm a BF16 GGUF's
-            // embeddings/norms/lm_head hit the catch-all "Unsupported quantization type: 30".
-            GGUF_TYPE_BF16 => Ok(crate::inference::simd_bf16_to_f32(tensor_byte_range(
-                file_data,
-                offset,
-                size * 2,
-            )?)),
-            _ => Err(RealizarError::UnsupportedOperation {
-                operation: "get_tensor_f32".to_string(),
-                reason: format!("Unsupported quantization type: {qtype}"),
+        Ok(match qtype {
+            GGUF_TYPE_F32 => (1, 4, |b| {
+                Ok(b.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect())
             }),
-        }
+            GGUF_TYPE_F16 => (1, 2, dequantize_f16),
+            // BF16 (bfloat16): 2 bytes/elem, no block structure. Reuses the
+            // existing SIMD converter (y = from_bits((bits as u32) << 16))
+            // already used by the safetensors loaders + gguf/embedding.rs.
+            // #1893-class fix: without this arm a BF16 GGUF's
+            // embeddings/norms/lm_head hit the catch-all "Unsupported
+            // quantization type: 30".
+            GGUF_TYPE_BF16 => (1, 2, |b| Ok(crate::inference::simd_bf16_to_f32(b))),
+            // 32-value blocks: an f16 scale (+ an f16 min or high bits) and the quants.
+            GGUF_TYPE_Q4_0 => (32, 18, dequantize_q4_0),
+            GGUF_TYPE_Q4_1 => (32, 20, dequantize_q4_1),
+            GGUF_TYPE_Q5_0 => (32, 22, dequantize_q5_0),
+            GGUF_TYPE_Q5_1 => (32, 24, dequantize_q5_1),
+            // Q8_0 uses the SIMD-parallel path for faster loading.
+            GGUF_TYPE_Q8_0 => (32, 34, dequantize_q8_0_simd),
+            // K-quants: 256-value super-blocks.
+            GGUF_TYPE_Q2_K => (QK_K, 84, dequantize_q2_k),
+            GGUF_TYPE_Q3_K => (QK_K, 110, dequantize_q3_k),
+            GGUF_TYPE_Q4_K => (QK_K, 144, dequantize_q4_k_simd),
+            GGUF_TYPE_Q5_K => (QK_K, 176, dequantize_q5_k),
+            GGUF_TYPE_Q6_K => (QK_K, 210, dequantize_q6_k),
+            _ => {
+                return Err(RealizarError::UnsupportedOperation {
+                    operation: "get_tensor_f32".to_string(),
+                    reason: format!("Unsupported quantization type: {qtype}"),
+                })
+            },
+        })
     }
 
     /// Extract model architecture from metadata
@@ -306,19 +319,5 @@ impl GGUFModel {
     }
 }
 
-/// `file_data[offset..offset + byte_size]`, or the `get_tensor_f32` refusal naming the range when
-/// it runs past the end of the file.
-fn tensor_byte_range(file_data: &[u8], offset: usize, byte_size: usize) -> Result<&[u8]> {
-    if offset + byte_size > file_data.len() {
-        return Err(RealizarError::UnsupportedOperation {
-            operation: "get_tensor_f32".to_string(),
-            reason: format!(
-                "Data range [{}, {}) exceeds file size {}",
-                offset,
-                offset + byte_size,
-                file_data.len()
-            ),
-        });
-    }
-    Ok(&file_data[offset..offset + byte_size])
-}
+/// One GGUF type's whole-buffer dequantizer, as [`GGUFModel::dequantize_at`] picks it.
+type Dequantizer = fn(&[u8]) -> Result<Vec<f32>>;

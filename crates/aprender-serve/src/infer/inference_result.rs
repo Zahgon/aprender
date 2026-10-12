@@ -18,6 +18,20 @@ fn take_generation_start() -> Option<std::time::Instant> {
     GENERATION_START.with(std::cell::Cell::take)
 }
 
+/// #4342: one `apr run` turn on a loaded session, its generation marked only once the
+/// turn's setup is done. `load_for_run` has uploaded the weights by then, but the F2
+/// guard ran inside `generate`, on its first forward, so a qwen35 `--gpu` run's tok/s
+/// still divided by the guard's CPU probe. `prepare_turn` runs the guard first.
+fn generate_after_setup<F: crate::session::ArchForward>(
+    session: &mut crate::session::Session<F>,
+    input_tokens: &[u32],
+    gen_config: &crate::gguf::QuantizedGenerateConfig,
+) -> Result<crate::session::Turn> {
+    session.prepare_turn(input_tokens, gen_config.max_tokens)?;
+    mark_generation_start(); // #3981/#4342: load, upload and the F2 guard end here
+    session.generate(input_tokens, gen_config, &mut |_| true)
+}
+
 /// #3981: tokens per second over generation when it was measured, else over the whole
 /// inference window. Pure, so the rule is tested without a model.
 #[must_use]
@@ -379,8 +393,7 @@ fn run_gguf_inference(
             config.no_gpu,
             positions,
         )?;
-        mark_generation_start(); // #3981: host + device load end here
-        let turn = session.generate(&input_tokens, &gen_config, &mut |_| true)?;
+        let turn = generate_after_setup(&mut session, &input_tokens, &gen_config)?;
         // #3826: attempted is the same two facts as the MoE dispatch's.
         (turn.tokens, turn.used_gpu, cfg!(feature = "cuda") && !config.no_gpu)
     } else if let Some(model) = owned {
@@ -2348,3 +2361,8 @@ mod throughput_3981_tests {
     }
 }
 
+// ============================================================================
+// #4342: the F2 guard is setup, so generation is marked only after it.
+#[cfg(test)]
+#[path = "generation_mark_4342_tests.rs"]
+mod generation_mark_4342_tests;

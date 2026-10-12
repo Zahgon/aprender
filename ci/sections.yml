@@ -370,8 +370,8 @@ jobs:
           # warning below says so instead of the run silently paying the hour.
           case "${GITHUB_EVENT_NAME}" in
             merge_group|push)
-              git fetch --no-tags --depth=2 origin "${GITHUB_SHA}" 2>/dev/null \
-                || git fetch --no-tags --deepen=1 origin 2>/dev/null \
+              bash scripts/ci/fetch_p6.sh --no-tags --depth=2 origin "${GITHUB_SHA}" 2>/dev/null \
+                || bash scripts/ci/fetch_p6.sh --no-tags --deepen=1 origin 2>/dev/null \
                 || true
               if git rev-parse -q --verify 'HEAD^1' >/dev/null 2>&1; then
                 printf 'first parent available: %s\n' "$(git rev-parse HEAD^1)"
@@ -382,7 +382,7 @@ jobs:
           esac
           case "${GITHUB_EVENT_NAME}" in
             pull_request)
-              git fetch --no-tags --depth=1 origin "+refs/heads/${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}"
+              bash scripts/ci/fetch_p6.sh --no-tags --depth=1 origin "+refs/heads/${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}"
               # --no-renames (#3664): a rename must list BOTH paths, or a source
               # moved into docs/ reads as docs-only and runs zero tests.
               git diff --no-renames --name-only "origin/${GITHUB_BASE_REF}" HEAD > "$RUNNER_TEMP/touched.txt"
@@ -393,7 +393,7 @@ jobs:
               pr=$(printf '%s' "${GITHUB_REF_NAME}" | sed -n 's|^gh-readonly-queue/[^/]*/pr-\([0-9]*\)-.*|\1|p')
               if [ -n "$pr" ]; then
                 head=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr}" --jq .head.sha)
-                git fetch --no-tags --depth=1 origin "$head"
+                bash scripts/ci/fetch_p6.sh --no-tags --depth=1 origin "$head"
                 concl=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${head}/check-runs?check_name=workspace-test&per_page=20" --jq '[.check_runs[]|select(.status=="completed")]|sort_by(.completed_at)|last|.conclusion // "none"')
                 args+=(--pr-head "$head" --pr-head-conclusion "${concl:-none}")
               fi
@@ -421,7 +421,8 @@ jobs:
       # workflow_dispatch / merge_group / push shard had no base and the test panicked
       # "the refinement gate declined". Operator ruling (2026-09-28 09:41): compare HEAD
       # with the EVENT's base commit -- pull_request.base.sha, merge_group.base_sha,
-      # push's `before` -- and fall back to the origin/main tip only for
+      # push's `before` (a tag push: the tagged commit's first parent, #5172) -- and
+      # fall back to the origin/main tip only for
       # workflow_dispatch. That commit is pinned as refs/remotes/origin/main, so at
       # depth 1 (no merge-base) the gate's tip fallback compares against exactly it.
       # AFTER the tier step: its pull_request arm fetches main's CURRENT tip into
@@ -437,9 +438,25 @@ jobs:
           case "${GITHUB_EVENT_NAME}" in
             pull_request) base="${PR_BASE_SHA:-}" ;;
             merge_group) base="${MG_BASE_SHA:-}" ;;
-            push) base="${PUSH_BEFORE:-}" ;;
+            push)
+              base="${PUSH_BEFORE:-}"
+              # #5172: a push that CREATES a ref carries before=0000..., and a release tag
+              # push always does, so v0.71.0's tag run failed here. A tag push's base is
+              # ALWAYS the tagged commit's first parent, never `before` (on a moved tag that
+              # is the old target, not this commit's base). The tier step's merge_group|push
+              # arm deepened to depth 2, best effort; if that missed, fetch it here. A
+              # branch push with a zero `before` still fails below.
+              case "${GITHUB_REF:-}" in
+                refs/tags/*)
+                  git rev-parse -q --verify 'HEAD^1' >/dev/null 2>&1 \
+                    || bash scripts/ci/fetch_p6.sh --no-tags --depth=2 origin "${GITHUB_SHA}"
+                  base="$(git rev-parse -q --verify 'HEAD^1^{commit}' || true)"
+                  printf 'refinement base: tag push %s (before %s); using its first parent %s\n' "${GITHUB_REF#refs/tags/}" "${PUSH_BEFORE:-<none>}" "${base:-<none>}"
+                  ;;
+              esac
+              ;;
             workflow_dispatch)
-              git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
+              bash scripts/ci/fetch_p6.sh --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
               printf 'refinement base: origin/main tip %s (workflow_dispatch has no event base)\n' "$(git rev-parse origin/main)"
               exit 0
               ;;
@@ -449,7 +466,7 @@ jobs:
             printf '::error::refinement base: %s event carries no base sha (got "%s")\n' "${GITHUB_EVENT_NAME}" "$base"
             exit 1
           fi
-          git fetch --no-tags --depth=1 origin "$base"
+          bash scripts/ci/fetch_p6.sh --no-tags --depth=1 origin "$base"
           git update-ref refs/remotes/origin/main "$base"
           printf 'refinement base: %s base %s pinned as origin/main\n' "${GITHUB_EVENT_NAME}" "$(git rev-parse 'origin/main^{commit}')"
       - name: Workspace lib tests (25,300+)
@@ -1364,6 +1381,7 @@ jobs:
           python3 scripts/lib/roadmap_merge.py --selftest
           python3 scripts/nightly_manifest.py --self-test   # #4189 nightly gate/manifest/publish plan
           bash scripts/nightly_prune_release.sh --self-test   # nightly publish overflowed page one (422)
+          bash scripts/nightly_gate_retry.sh --self-test   # #5053 ci-pending retries, then RED never green
       # The baseline printer holds its OWN output to the same pairing rule and
       # re-derives every number the contract quotes.
       - name: Dogfood baselines must re-derive from the ledger
@@ -2987,9 +3005,18 @@ jobs:
   # `schedule`, over the PRs that merged.
 
   # ==========================================================================
-  # ADVISORY GPU JOBS AT PR TIME
+  # GPU LAB SECTIONS (were: ADVISORY GPU JOBS AT PR TIME)
   # spec docs/specifications/06x-release-schedule.md §2 row 67-C1 (`gpu-quick`,
   # gx10) and §2 row 67-D1 (`cuda-unit`, yoga).
+  #
+  # Q6 quorum, C324 (DELETE-TO-LAB 3/3): a check that cannot block a merge or a
+  # release is LAB, and LAB never runs in a PR, merge-queue or release job. These
+  # three sections no longer run in ci.yml at all. Their one home is
+  # .github/workflows/gpu-lab-nightly.yml (schedule + workflow_dispatch, gx10 in
+  # perf-gx10, yoga in perf-yoga). On those events gpu-touched does not select:
+  # there is no PR diff, so it answers the whole GPU set (gpu_touched=1,
+  # cuda_lint=1). The paragraphs below are the PR-time history, kept for why
+  # the shapes are what they are.
   #
   # WHY THEY ARE NOT IN `gate.needs`.
   #   They are ADVISORY in 0.67, deliberately. Each becomes a REQUIRED check
@@ -3031,7 +3058,8 @@ jobs:
     # whole point of splitting it out.
     runs-on: [self-hosted, X64, Linux, clean-room]
     timeout-minutes: 10
-    if: github.event_name == 'pull_request'
+    # Q6 quorum, C324: LAB, nightly only (gpu-lab-nightly.yml).
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     outputs:
       gpu_touched: ${{ steps.decide.outputs.gpu_touched }}
       gpu_crates: ${{ steps.decide.outputs.gpu_crates }}
@@ -3046,33 +3074,22 @@ jobs:
       # governs — a stale selector is caught on the same PR that broke it.
       - name: The GPU selector can still go RED (case table, no GPU, no cargo)
         run: bash scripts/ci_gpu_touched.sh --self-test
-      - name: Does this PR touch the GPU set? (rows 67-C1 / 67-D1)
+      # Q6 quorum, C324: the PR-diff selection (`ci_gpu_touched.sh --diff-from`
+      # against GITHUB_BASE_REF) left with the PR rows. A nightly has no PR
+      # diff and owes the whole GPU set, so the answer is the full set, stated.
+      - name: The nightly owes the whole GPU set (rows 67-C1 / 67-D1)
         id: decide
         run: |
           set -euo pipefail
-          # Shallow checkout: no merge-base. Tip-vs-tip is a SUPERSET of the
-          # PR's diff, which is the safe direction for a selector — it can only
-          # run the GPU jobs when they were not needed, never skip them when
-          # they were.
-          git fetch --no-tags --depth=1 origin \
-            "+refs/heads/${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}"
-          git diff --name-only "origin/${GITHUB_BASE_REF}" HEAD > "$RUNNER_TEMP/touched.txt"
-          printf 'touched (tip vs tip): %s path(s)\n' \
-            "$(wc -l < "$RUNNER_TEMP/touched.txt" | tr -d ' ')"
-          # No `|| true` and no pipe-swallowed status: the script exits 2 when
-          # the diff is undecidable, and an undecidable selection must fail the
-          # decision job rather than answer a green 0 that skips both GPU jobs
-          # forever.
-          bash scripts/ci_gpu_touched.sh --diff-from "$RUNNER_TEMP/touched.txt" \
-            > "$RUNNER_TEMP/gpu.txt"
-          cat "$RUNNER_TEMP/gpu.txt"
-          grep -E '^(gpu_touched|gpu_crates|cuda_lint|reason)=' "$RUNNER_TEMP/gpu.txt" >> "$GITHUB_OUTPUT"
+          printf 'gpu_touched=1\ncuda_lint=1\nreason=%s: no PR diff to select from; the whole GPU set is owed\n' \
+            "$GITHUB_EVENT_NAME" | tee -a "$GITHUB_OUTPUT"
 
   # ROW 67-C1 — `gpu-quick` on gx10 (GB10, sm_121, aarch64).
   # Promotion to required: row 68-C3, after 5 consecutive green gx10 nightlies.
   gpu-quick:
     needs: [gpu-touched]
-    if: github.event_name == 'pull_request' && needs.gpu-touched.outputs.gpu_touched == '1'
+    # Q6 quorum, C324: LAB, nightly only (gpu-lab-nightly.yml, perf-gx10).
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.gpu-touched.outputs.gpu_touched == '1'
     # LITERAL, not an expression: a guard can only check labels it can see, and
     # `runs-on: ${{ fromJSON(...) }}` hides them from check_runner_labels.sh.
     # `ephemeral, docker` is the DISPOSABLE gx10 runner (operator rule): its
@@ -3127,7 +3144,7 @@ jobs:
           procs=${procs:-0}
           echo "gx10: GPU memory.used=${used} MiB, existing compute procs=${procs}"
           if [ "${used:-0}" -gt 2000 ] || [ "${procs:-0}" -gt 0 ]; then
-            echo "::notice::gpu-quick: GPU busy (${used:-?} MiB, ${procs:-?} procs) — yielding to training, skipping the GPU leg on this PR"
+            echo "::notice::gpu-quick: GPU busy (${used:-?} MiB, ${procs:-?} procs) — yielding to training, skipping the GPU leg this run"
             echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
           echo "proceed=true" >> "$GITHUB_OUTPUT"
@@ -3165,7 +3182,8 @@ jobs:
     # gpu_touched=1 runs every step. cuda_lint=1 alone (an apr-cli-only diff,
     # #4336) runs ONLY the clippy step: the test steps carry their own
     # gpu_touched `if:`, so yoga is held for a check build, not the test builds.
-    if: github.event_name == 'pull_request' && (needs.gpu-touched.outputs.gpu_touched == '1' || needs.gpu-touched.outputs.cuda_lint == '1')
+    # Q6 quorum, C324: LAB, nightly only (gpu-lab-nightly.yml, perf-yoga).
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (needs.gpu-touched.outputs.gpu_touched == '1' || needs.gpu-touched.outputs.cuda_lint == '1')
     runs-on: [self-hosted, Linux, X64, cuda, yoga, ephemeral, docker]
     # 15 -> 35 (#3810): the derived cuda-only set needs a second, default-feature
     # test build of aprender-serve to list against. MEASURED on this PR's own run
