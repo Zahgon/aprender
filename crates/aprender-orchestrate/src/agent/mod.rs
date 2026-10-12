@@ -51,6 +51,7 @@ pub mod org_policy;
 pub mod permission;
 pub mod phase;
 pub mod pool;
+pub mod prompt_receipt;
 pub mod repl;
 mod repl_directives;
 mod repl_display;
@@ -74,6 +75,7 @@ pub use manifest::{AgentManifest, AutoPullError, ModelConfig, ResourceQuota};
 pub use memory::InMemorySubstrate;
 pub use phase::LoopPhase;
 pub use pool::{AgentId, AgentMessage, AgentPool, MessageRouter, SpawnConfig, ToolBuilder};
+pub use prompt_receipt::PromptReceipt;
 pub use result::{AgentError, AgentLoopResult, DriverError, StopReason, TokenUsage};
 
 use driver::{LlmDriver, StreamEvent};

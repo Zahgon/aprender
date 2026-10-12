@@ -26,6 +26,7 @@
 
 use super::code_prompts::exit_code;
 use super::driver::served_backend::BackendReport;
+use super::prompt_receipt::PromptReceipt;
 use super::result::{AgentError, AgentLoopResult, DriverError};
 
 /// How a non-interactive run ended, in the #3720 vocabulary.
@@ -39,17 +40,19 @@ pub struct CodeOutcome {
     pub message: String,
     /// The process exit status this run ends with.
     pub exit_code: i32,
+    /// #5190: the prompt measurement an `input_not_consumed` refusal carries.
+    pub prompt: Option<PromptReceipt>,
 }
 
 impl CodeOutcome {
     /// A refusal: a limit, policy or missing input said no.
     pub fn refused(kind: &'static str, message: impl Into<String>, exit_code: i32) -> Self {
-        Self { status: "refused", kind, message: message.into(), exit_code }
+        Self { status: "refused", kind, message: message.into(), exit_code, prompt: None }
     }
 
     /// A failure: the work ran and errored.
     pub fn failed(kind: &'static str, message: impl Into<String>, exit_code: i32) -> Self {
-        Self { status: "failed", kind, message: message.into(), exit_code }
+        Self { status: "failed", kind, message: message.into(), exit_code, prompt: None }
     }
 
     /// The outcome of an agent-loop error. `exit_code` is the code the caller
@@ -69,15 +72,20 @@ impl CodeOutcome {
             AgentError::CircuitBreak(_) => "circuit_break",
             AgentError::MaxIterationsReached => "max_iterations_reached",
             AgentError::ContextOverflow { .. } => "context_overflow",
+            AgentError::InputNotConsumed(_) => "input_not_consumed",
             AgentError::ManifestError(_) => "manifest_error",
             AgentError::Memory(_) => "memory_error",
         };
         let message = e.to_string();
-        if matches!(e, AgentError::CapabilityDenied { .. }) {
+        let mut outcome = if matches!(e, AgentError::CapabilityDenied { .. }) {
             Self::refused(kind, message, exit_code)
         } else {
             Self::failed(kind, message, exit_code)
+        };
+        if let AgentError::InputNotConsumed(r) = e {
+            outcome.prompt = Some(r.clone());
         }
+        outcome
     }
 
     /// An empty completion is a failure, not an answer (#3720 done_when 3).
@@ -144,6 +152,12 @@ pub fn envelope(
         "total_cost_usd": 0,
         "backend": backend.map_or(serde_json::Value::Null, BackendReport::to_json),
     });
+    // #5190: the prompt measurement, from the loop's result or from the refusal.
+    let prompt =
+        result.and_then(|r| r.prompt.as_ref()).or_else(|| outcome.and_then(|o| o.prompt.as_ref()));
+    for (k, v) in prompt.map(PromptReceipt::json_fields).into_iter().flatten() {
+        doc[k] = v;
+    }
     if let Some(o) = outcome {
         doc["error"] = serde_json::json!({
             "kind": o.kind,

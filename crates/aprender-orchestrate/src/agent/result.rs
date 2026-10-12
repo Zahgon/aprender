@@ -19,6 +19,10 @@ pub struct AgentLoopResult {
     pub iterations: u32,
     /// Number of tool calls made.
     pub tool_calls: u32,
+    /// #5190: how much of the turn's prompt reached the driver. `None` only for a
+    /// result no agent turn produced.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<super::prompt_receipt::PromptReceipt>,
 }
 
 /// Token usage counters.
@@ -96,6 +100,14 @@ pub enum AgentError {
         /// Tokens available.
         available: usize,
     },
+    /// #5190: the request handed to the driver carried fewer bytes of the turn's
+    /// prompt than were sent.
+    #[error(
+        "input not consumed: {} of {} prompt bytes reached the driver",
+        .0.input_bytes_consumed,
+        .0.input_bytes_sent
+    )]
+    InputNotConsumed(super::prompt_receipt::PromptReceipt),
     /// Manifest parsing error.
     #[error("manifest error: {0}")]
     ManifestError(String),
@@ -196,6 +208,7 @@ mod tests {
             usage: TokenUsage { input_tokens: 10, output_tokens: 5 },
             iterations: 2,
             tool_calls: 1,
+            prompt: None,
         };
         let json = serde_json::to_string(&result).expect("serialize failed");
         assert!(json.contains("\"text\":\"hello\""));

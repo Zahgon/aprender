@@ -1466,7 +1466,7 @@ fn emit_ccpa_trace(
         "blocks": [{"type": "text", "text": result.text}],
         "stop_reason": "end_turn",
     });
-    let session_end = serde_json::json!({
+    let mut session_end = serde_json::json!({
         "v": 1,
         "kind": "session_end",
         "turn": 1,
@@ -1475,6 +1475,10 @@ fn emit_ccpa_trace(
         "tokens_in": result.usage.input_tokens,
         "tokens_out": result.usage.output_tokens,
     });
+    // #5190: what of the prompt reached the driver, beside what it cost.
+    for (k, v) in result.prompt.iter().flat_map(super::prompt_receipt::PromptReceipt::json_fields) {
+        session_end[k] = v;
+    }
 
     let body = format!("{}\n{}\n{}\n{}\n", session_start, user_prompt, assistant_turn, session_end);
     std::fs::write(path, body)

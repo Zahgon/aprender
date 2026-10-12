@@ -16,6 +16,7 @@ use super::guard::{LoopGuard, LoopVerdict};
 use super::manifest::AgentManifest;
 use super::memory::{MemorySource, MemorySubstrate};
 use super::phase::LoopPhase;
+use super::prompt_receipt::{self, PromptReceipt};
 use super::result::{AgentError, AgentLoopResult, StopReason};
 use super::runtime_helpers::{call_with_retry, emit, truncate_messages};
 use super::tool::ToolRegistry;
@@ -111,6 +112,7 @@ pub async fn run_agent_turn(
     messages.push(Message::User(query.to_string()));
 
     let mut last_tool_sig: Option<String> = None; // PMAT-172: stuck-loop detection
+    let mut receipt = None; // #5190: the first request's measurement of the prompt
     let mut repeat_count: u32 = 0;
 
     loop {
@@ -124,8 +126,9 @@ pub async fn run_agent_turn(
         // ═══ REASON ═══
         emit(stream_tx.as_ref(), StreamEvent::PhaseChange { phase: LoopPhase::Reason }).await;
 
-        let response =
-            reason_step(driver, &messages, &tool_defs, manifest, &system, &context).await?;
+        let (response, measured) =
+            reason_step(driver, query, &messages, &tool_defs, manifest, &system, &context).await?;
+        receipt.get_or_insert(measured);
         check_verdict(guard.record_usage(&response.usage))?;
 
         // INV-005: Estimate cost and enforce budget (Muda)
@@ -153,8 +156,16 @@ pub async fn run_agent_turn(
                 if !retained.is_empty() {
                     history.push(Message::Assistant(retained));
                 }
-                return finish_loop(&response, &guard, manifest, query, memory, stream_tx.as_ref())
-                    .await;
+                return finish_loop(
+                    &response,
+                    &guard,
+                    manifest,
+                    query,
+                    receipt,
+                    memory,
+                    stream_tx.as_ref(),
+                )
+                .await;
             }
             StopReason::ToolUse => {
                 // PMAT-172: detect stuck loops (4+ identical tool calls → break)
@@ -172,6 +183,7 @@ pub async fn run_agent_turn(
                         &guard,
                         manifest,
                         query,
+                        receipt,
                         memory,
                         stream_tx.as_ref(),
                     )
@@ -259,12 +271,13 @@ fn check_verdict(verdict: LoopVerdict) -> Result<(), AgentError> {
 
 async fn reason_step(
     driver: &dyn LlmDriver,
+    prompt: &str,
     messages: &[Message],
     tool_defs: &[super::driver::ToolDefinition],
     manifest: &AgentManifest,
     system: &str,
     context: &ContextManager,
-) -> Result<CompletionResponse, AgentError> {
+) -> Result<(CompletionResponse, PromptReceipt), AgentError> {
     let truncated_messages = truncate_messages(messages, context)?;
 
     let request = CompletionRequest {
@@ -276,7 +289,11 @@ async fn reason_step(
         system: Some(system.to_string()),
     };
 
-    call_with_retry(driver, &request).await
+    #[cfg(test)]
+    let request = prompt_receipt::plant::drop_one_byte(request);
+    // #5190: measured on the request exactly as the driver receives it.
+    let receipt = prompt_receipt::check(prompt, &request, context)?;
+    Ok((call_with_retry(driver, &request).await?, receipt))
 }
 
 async fn finish_loop(
@@ -284,6 +301,7 @@ async fn finish_loop(
     guard: &LoopGuard,
     manifest: &AgentManifest,
     query: &str,
+    prompt: Option<PromptReceipt>,
     memory: &dyn MemorySubstrate,
     stream_tx: Option<&mpsc::Sender<StreamEvent>>,
 ) -> Result<AgentLoopResult, AgentError> {
@@ -303,6 +321,7 @@ async fn finish_loop(
         usage: guard.usage().clone(),
         iterations: guard.current_iteration(),
         tool_calls: guard.total_tool_calls(),
+        prompt,
     })
 }
 
