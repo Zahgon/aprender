@@ -15,8 +15,6 @@ crates/aprender-core/src/models/qwen2/tests.rs
 crates/aprender-gpu/src/testing/integration_tests/mod.rs
 crates/aprender-present-terminal/src/widgets/battery_panel.rs
 crates/aprender-present-terminal/src/widgets/disk_panel.rs
-crates/aprender-serve/src/apr/tests_matmul_scaling.rs
-crates/aprender-serve/src/bench/tests_04.rs
 crates/aprender-serve/src/bench_viz_tests_benchmark_runner.rs
 crates/aprender-serve/src/cli/inference_tests_sample_next.rs
 crates/aprender-serve/src/cli/tests_12.rs
