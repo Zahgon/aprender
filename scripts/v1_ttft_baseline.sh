@@ -59,11 +59,9 @@ if [ -d "$OUT" ] && [ -n "$(find "$OUT" -mindepth 1 -maxdepth 1 -print -quit)" ]
 fi
 
 # A port that already answers is held by a process this run did not start.
-command -v curl > /dev/null || { printf 'FAIL  curl not found: the health checks need it\n' >&2; exit 2; }
-port_free() { # port_free <port>: curl exit 7 = nothing listening
-    local rc=0
-    curl -s --max-time 2 -o /dev/null "http://127.0.0.1:$1/" > /dev/null 2>&1 || rc=$?
-    [ "$rc" -eq 7 ]
+# The probes are bash /dev/tcp, so the script needs no curl.
+port_free() { # port_free <port>: nothing accepts a connection there
+    ! (exec 3<> "/dev/tcp/127.0.0.1/$1") 2> /dev/null
 }
 for p in "$APORT" "$LPORT"; do
     case "$p" in ''|*[!0-9]*) printf 'FAIL  port %s is not a number\n' "$p" >&2; exit 2 ;; esac
@@ -134,7 +132,9 @@ trap stop_servers EXIT
 
 wait_healthy() { # wait_healthy <port> <pid> <limit>: the server this run started answers
     local i=0
-    until curl -sf --max-time 5 "http://127.0.0.1:$1/health" > /dev/null 2>&1; do
+    # GET /health over /dev/tcp; a 2xx or 3xx status line within 5 s is an answer.
+    until (exec 3<> "/dev/tcp/127.0.0.1/$1" && printf 'GET /health HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n' >&3 \
+        && IFS= read -r -t 5 line <&3 && case "$line" in "HTTP/1."?" "[23]*) ;; *) exit 1 ;; esac) 2> /dev/null; do
         kill -0 "$2" 2> /dev/null || { printf 'FAIL  pid %s exited before port %s answered\n' "$2" "$1" >&2; return 1; }
         i=$((i + 1)); [ "$i" -lt "$3" ] || return 1; sleep 1
     done

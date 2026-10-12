@@ -1327,8 +1327,8 @@ mod tests {
         let llama = free_ports().1;
         let (rc, err) = baseline_script("lambda", out.path(), ("18o90", llama));
         assert_eq!(rc, 2, "{err}");
-        // Without the number check, curl refuses the URL and the run is
-        // refused for the wrong reason: "port 18o90 already answers".
+        // Without the number check, /dev/tcp refuses the name, the port reads
+        // as free and the run goes on with a server it can never reach.
         assert!(err.contains("port 18o90 is not a number"), "{err}");
     }
 

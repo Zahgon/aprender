@@ -363,11 +363,13 @@ impl Benchmark {
 fn kill_group(child: &tokio::process::Child) {
     #[cfg(unix)]
     if let Some(pid) = child.id() {
-        let _ = std::process::Command::new("kill")
-            .args(["-KILL", "--", &format!("-{pid}")])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+        // In-process, so teardown needs no `kill` binary on the host (#5200).
+        if let Ok(pgid) = i32::try_from(pid) {
+            let _ = nix::sys::signal::killpg(
+                nix::unistd::Pid::from_raw(pgid),
+                nix::sys::signal::Signal::SIGKILL,
+            );
+        }
     }
     #[cfg(not(unix))]
     let _ = child;
@@ -806,13 +808,10 @@ mod tests {
                     !exited(server),
                     "{sig}: server {server} not running before the signal"
                 );
-                let sent = tokio::process::Command::new("kill")
-                    .arg(format!("-{}", &sig[3..]))
-                    .arg(std::process::id().to_string())
-                    .status()
-                    .await
-                    .unwrap();
-                assert!(sent.success(), "{sig}: kill failed");
+                // Sent in-process, so the test needs no `kill` binary (#5200).
+                let signal: nix::sys::signal::Signal = sig.parse().expect("a signal name");
+                nix::sys::signal::kill(nix::unistd::Pid::this(), signal)
+                    .unwrap_or_else(|e| panic!("{sig}: kill failed: {e}"));
                 server
             };
             let (result, server) =

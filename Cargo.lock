@@ -1618,6 +1618,7 @@ dependencies = [
  "image",
  "js-sys",
  "mp4",
+ "nix 0.30.1",
  "notify",
  "png 0.17.16",
  "proc-macro2",

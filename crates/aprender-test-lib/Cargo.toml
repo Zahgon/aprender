@@ -37,7 +37,7 @@ watch = ["dep:notify"]
 # LLM types and assertions (no HTTP dependencies)
 llm-types = []
 # LLM/API testing and load testing (includes llm-types + HTTP client)
-llm = ["llm-types", "dep:reqwest", "tokio", "futures"]
+llm = ["llm-types", "dep:reqwest", "tokio", "futures", "dep:nix"]
 
 [lib]
 name = "jugar_probar"
@@ -110,6 +110,10 @@ futures = { workspace = true, optional = true }
 # Optional WASM runtime for logic testing
 wasmtime = { workspace = true, optional = true }
 async-trait = { workspace = true, optional = true }
+
+# Signals sent in-process (server teardown, and the interrupt tests), so no `kill` binary is needed (#5200)
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.30", default-features = false, features = ["signal"], optional = true }
 
 # WASM-specific dependencies
 [target.'cfg(target_arch = "wasm32")'.dependencies]
