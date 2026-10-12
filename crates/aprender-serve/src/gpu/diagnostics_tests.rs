@@ -114,7 +114,7 @@ fn test_log_config_with_level() {
     let config = LogConfig::new().with_level(LogLevel::Debug);
     let logger = Logger::new(config);
     assert!(logger.is_enabled(LogLevel::Debug, "any"));
-    assert!(logger.is_enabled(LogLevel::Trace, "any") == false);
+    assert!(!logger.is_enabled(LogLevel::Trace, "any"));
 }
 
 #[test]
@@ -426,7 +426,7 @@ fn test_request_capture_from_json_missing_input() {
 
 #[test]
 fn test_request_capture_from_json_invalid_input() {
-    let json = r#"{"input":"#; // Malformed - no closing quote
+    let json = r#"{"input":"abc"#; // Malformed - no closing quote
     let result = RequestCapture::from_json(json);
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), "Invalid input");

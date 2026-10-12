@@ -446,3 +446,9 @@ include!("mod_quantized_dot.rs");
 include!("mod_max_error_recovery.rs");
 include!("mod_connection_state.rs");
 include!("resource_monitor.rs");
+
+#[cfg(test)]
+mod diagnostics_tests;
+
+#[cfg(test)]
+mod executor_tests;

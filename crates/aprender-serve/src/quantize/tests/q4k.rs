@@ -17,10 +17,9 @@ fn test_q4k_with_inf_scale_p22() {
     assert!(result.is_ok());
 
     let output = result.expect("test value should be present");
-    // With infinite scale, results will be inf
+    // An inf super-scale leaves no finite output: values come out inf, or NaN where inf meets 0.
     for val in &output {
-        // Should be inf or finite (not NaN unless quants are 0)
-        assert!(!val.is_nan() || val.is_infinite() || val.is_finite());
+        assert!(!val.is_finite(), "Expected inf or NaN, got {}", val);
     }
 }
 

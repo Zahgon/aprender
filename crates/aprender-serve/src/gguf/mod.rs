@@ -152,3 +152,6 @@ pub mod moe_session;
 /// decode state that outlives the turn (#3595 `apr chat`, #3571 `apr serve`).
 #[path = "inference/forward/qwen35_session.rs"]
 pub mod qwen35_session;
+
+#[cfg(test)]
+mod loader_tests;

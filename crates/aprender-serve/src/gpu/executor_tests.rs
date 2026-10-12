@@ -401,7 +401,10 @@ fn test_mock_executor_calls_returns_all() {
     assert_eq!(calls.len(), 3);
 
     assert!(matches!(calls[0], ExecutorCall::Matmul { m: 2, .. }));
-    assert!(matches!(calls[1], ExecutorCall::MatmulTransposeB { m: 2, .. }));
+    assert!(matches!(
+        calls[1],
+        ExecutorCall::MatmulTransposeB { m: 2, .. }
+    ));
     assert!(matches!(calls[2], ExecutorCall::Matmul { m: 3, .. }));
 }
 

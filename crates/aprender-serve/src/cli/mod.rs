@@ -457,3 +457,6 @@ include!("mod_print_benchmark.rs");
 include!("mod_gguf_info.rs");
 include!("mod_server_commands.rs");
 include!("mod_06.rs");
+
+#[cfg(test)]
+mod tests_format_model;

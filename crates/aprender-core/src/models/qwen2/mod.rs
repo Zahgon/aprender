@@ -391,5 +391,8 @@ mod tests_embedding_contract;
 #[path = "tests_embedding_backward_gradflow.rs"]
 mod tests_embedding_backward_gradflow;
 
+#[cfg(test)]
+mod tests;
+
 include!("constructors.rs");
 include!("element-wise.rs");

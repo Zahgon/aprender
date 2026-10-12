@@ -11,7 +11,6 @@
 # (found once targets were resolved per declaring file) are among these. One,
 # layers/tests/tests_10.rs, is disabled on purpose: its mod.rs line reads
 # "// mod tests_10; // Disabled: compilation errors".
-crates/aprender-core/src/models/qwen2/tests.rs
 crates/aprender-present-terminal/src/widgets/battery_panel.rs
 crates/aprender-present-terminal/src/widgets/disk_panel.rs
 crates/aprender-serve/src/apr/tests_matmul_scaling.rs
@@ -19,16 +18,12 @@ crates/aprender-serve/src/bench/tests_04.rs
 crates/aprender-serve/src/bench_viz_tests_benchmark_runner.rs
 crates/aprender-serve/src/cli/inference_tests_sample_next.rs
 crates/aprender-serve/src/cli/tests_12.rs
-crates/aprender-serve/src/cli/tests_format_model.rs
 crates/aprender-serve/src/convert/tests_conversion_stats_orphan.rs
 crates/aprender-serve/src/convert/tests_gguf_converter.rs
 crates/aprender-serve/src/convert/writing.rs
 crates/aprender-serve/src/cuda/executor/reference.rs
 crates/aprender-serve/src/generate/make.rs
-crates/aprender-serve/src/gguf/loader_tests.rs
 crates/aprender-serve/src/gguf/tests/loader_tests_02.rs
-crates/aprender-serve/src/gpu/diagnostics_tests.rs
-crates/aprender-serve/src/gpu/executor_tests.rs
 crates/aprender-serve/src/gpu/metrics_tests.rs
 crates/aprender-serve/src/gpu/scheduler/config.rs
 crates/aprender-serve/src/gpu/scheduler/kv_tests.rs
@@ -36,7 +31,6 @@ crates/aprender-serve/src/gpu/scheduler/model_tests.rs
 crates/aprender-serve/src/gpu/tests/tests_09.rs
 crates/aprender-serve/src/infer/tests_12.rs
 crates/aprender-serve/src/layers/tests/tests_10.rs
-crates/aprender-serve/src/quantize/tests/tests_22.rs
 crates/aprender-serve/src/safetensors/transform.rs
 crates/aprender-test-cli/src/commands_tests.rs
 crates/aprender-test-cli/src/main_tests.rs

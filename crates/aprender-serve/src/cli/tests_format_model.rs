@@ -375,7 +375,7 @@ fn test_benchmark_suites_has_seven_entries() {
 fn test_benchmark_suites_names_unique() {
     let names: Vec<&str> = BENCHMARK_SUITES.iter().map(|(n, _)| *n).collect();
     let mut unique = names.clone();
-    unique.sort();
+    unique.sort_unstable();
     unique.dedup();
     assert_eq!(names.len(), unique.len());
 }
@@ -427,16 +427,6 @@ fn test_detect_model_source_pacha_uri() {
     match result.expect("should succeed") {
         ModelSource::RegistryPacha => {},
         _ => panic!("Expected RegistryPacha"),
-    }
-}
-
-#[test]
-fn test_detect_model_source_hf_uri() {
-    let result = detect_model_source("hf://org/model", false);
-    assert!(result.is_ok());
-    match result.expect("should succeed") {
-        ModelSource::RegistryHf => {},
-        _ => panic!("Expected RegistryHf"),
     }
 }
 

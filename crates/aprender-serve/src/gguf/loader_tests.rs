@@ -12,9 +12,9 @@
 
 use crate::error::RealizarError;
 use crate::gguf::{
-    GGUFModel, GGUFValue, GGUF_ALIGNMENT, GGUF_MAGIC, GGUF_TYPE_F16, GGUF_TYPE_F32,
-    GGUF_TYPE_Q4_0, GGUF_TYPE_Q4_1, GGUF_TYPE_Q4_K, GGUF_TYPE_Q5_0, GGUF_TYPE_Q5_1,
-    GGUF_TYPE_Q5_K, GGUF_TYPE_Q6_K, GGUF_TYPE_Q8_0, GGUF_VERSION_V3,
+    GGUFModel, GGUFValue, GGUF_ALIGNMENT, GGUF_MAGIC, GGUF_TYPE_F16, GGUF_TYPE_F32, GGUF_TYPE_Q4_0,
+    GGUF_TYPE_Q4_1, GGUF_TYPE_Q4_K, GGUF_TYPE_Q5_0, GGUF_TYPE_Q5_1, GGUF_TYPE_Q5_K, GGUF_TYPE_Q6_K,
+    GGUF_TYPE_Q8_0, GGUF_VERSION_V3,
 };
 
 // =============================================================================
@@ -202,7 +202,11 @@ fn test_loader_metadata_all_integer_types() {
     // u32
     data.extend(build_metadata("val_u32", 4, &0xDEADBEEFu32.to_le_bytes()));
     // i32
-    data.extend(build_metadata("val_i32", 5, &(-2147483648i32).to_le_bytes()));
+    data.extend(build_metadata(
+        "val_i32",
+        5,
+        &(-2147483648i32).to_le_bytes(),
+    ));
 
     let model = GGUFModel::from_bytes(&data).expect("Should parse all integer types");
 
@@ -264,16 +268,8 @@ fn test_loader_metadata_float_special_values() {
     let mut data = build_header(0, 6);
 
     // f32 specials
-    data.extend(build_metadata(
-        "f32_nan",
-        6,
-        &f32::NAN.to_le_bytes(),
-    ));
-    data.extend(build_metadata(
-        "f32_inf",
-        6,
-        &f32::INFINITY.to_le_bytes(),
-    ));
+    data.extend(build_metadata("f32_nan", 6, &f32::NAN.to_le_bytes()));
+    data.extend(build_metadata("f32_inf", 6, &f32::INFINITY.to_le_bytes()));
     data.extend(build_metadata(
         "f32_neg_inf",
         6,
@@ -281,16 +277,8 @@ fn test_loader_metadata_float_special_values() {
     ));
 
     // f64 specials
-    data.extend(build_metadata(
-        "f64_nan",
-        12,
-        &f64::NAN.to_le_bytes(),
-    ));
-    data.extend(build_metadata(
-        "f64_inf",
-        12,
-        &f64::INFINITY.to_le_bytes(),
-    ));
+    data.extend(build_metadata("f64_nan", 12, &f64::NAN.to_le_bytes()));
+    data.extend(build_metadata("f64_inf", 12, &f64::INFINITY.to_le_bytes()));
     data.extend(build_metadata(
         "f64_neg_inf",
         12,

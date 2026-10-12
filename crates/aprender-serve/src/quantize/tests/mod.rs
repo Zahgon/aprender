@@ -34,3 +34,6 @@ mod tests_34; // T-COV-95 Phase 50: Deep coverage for quantize/mod.rs and activa
 mod fused_q6k; // T-COV-95 Phase 50: Deep coverage for fused_q5k_q6k.rs and fused_k.rs
 mod valid; // T-COV-95: Deep inner-loop coverage for fused_k.rs (scalar + SIMD parity)
 mod q5k_ggml; // FALSIFY-QDOT-007 (PMAT-1101): Q5_K reader vs gguf-py on a llama.cpp-quantized block
+
+#[cfg(test)]
+mod tests_22;

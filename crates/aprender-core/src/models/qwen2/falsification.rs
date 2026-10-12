@@ -115,7 +115,9 @@ fn s5_model_tensor_count() {
 
     let config = Qwen2Config::qwen2_0_5b_instruct();
     let mut model = Qwen2Model::new_uninitialized(&config);
-    let loaded = model.load_from_safetensors(&safetensors_path).expect("load");
+    let loaded = model
+        .load_from_safetensors(&safetensors_path)
+        .expect("load");
 
     // Qwen2-0.5B has exactly 219 tensors:
     // - 1 embed_tokens
