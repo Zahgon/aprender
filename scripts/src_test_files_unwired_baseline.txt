@@ -12,7 +12,6 @@
 # layers/tests/tests_10.rs, is disabled on purpose: its mod.rs line reads
 # "// mod tests_10; // Disabled: compilation errors".
 crates/aprender-core/src/models/qwen2/tests.rs
-crates/aprender-gpu/src/testing/integration_tests/mod.rs
 crates/aprender-present-terminal/src/widgets/battery_panel.rs
 crates/aprender-present-terminal/src/widgets/disk_panel.rs
 crates/aprender-serve/src/apr/tests_matmul_scaling.rs
