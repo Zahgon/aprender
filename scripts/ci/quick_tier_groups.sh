@@ -16,6 +16,9 @@
 #   longest raise path into each (Y raises X => X sits in a later call than Y), so no call holds a crate together
 #   with one that raises it, and the number of calls is the longest raise chain plus one, not one per crate
 #   (PMAT-1098: as few build graphs as the rule allows).
+#   A raise CYCLE (two crates raising each other, e.g. through dev-dependencies) has no layering; then every
+#   selected crate gets its own call. The helper refuses (rc 3) any output that does not hold every selected crate
+#   exactly once.
 #   Nothing is filtered: every selected crate is still run, each with its own default features.
 #
 # NOT SEEN. Only a direct dependency between two selected crates. A raise through an unselected crate in between
@@ -26,7 +29,9 @@
 #
 # USAGE  quick_tier_groups.sh --metadata FILE CRATE...   FILE = `cargo metadata --no-deps --format-version 1`
 #        quick_tier_groups.sh --self-test                the case table, on synthetic metadata
-# EXIT   0 printed · 1 the table broke · 3 caller error (no metadata, or a crate the metadata does not name)
+#        quick_tier_groups.sh --mutants                  each planted mutant of the rule must turn the table red
+# EXIT   0 printed · 1 the table broke (or a mutant survived) · 3 caller error (no metadata, a crate the metadata does
+#        not name) or a split that does not hold every selected crate exactly once
 set -euo pipefail
 
 # jq program: $sel = selected crate names. Prints "RAISED<TAB>X<TAB>by Y: f" lines, then "GROUP<TAB>a b c" lines.
@@ -56,8 +61,13 @@ JQ='
   # level = longest raise path into the crate: Y raises X => level(X) > level(Y), so no call holds a raise.
   | (reduce range(0; $sel | length) as $_ ($sel | map({key: ., value: 0}) | from_entries;
        . as $lv | reduce $edges[] as $e (.; .[$e[1]] = ([.[$e[1]], $lv[$e[0]] + 1] | max)))) as $level
+  # A raise cycle has no layering: in a DAG the longest path is < n, so a level >= n means a cycle reaches the crate.
+  # Then every crate gets its own call: correct for any raise graph, only slower.
+  | [$sel[] | select($level[.] >= ($sel | length))] as $cyc
   | ($raises[] | "RAISED\t\(.x)\tby \(.y): \(.f)"),
-    ([$level[]] | unique[] as $l | [$sel[] | select($level[.] == $l)] | "GROUP\t" + join(" "))
+    ($cyc | select(length > 0) | "CYCLE\t" + join(" ")),
+    ($sel[] | select($cyc != []) | "GROUP\t" + .),
+    (select($cyc == []) | [$level[]] | unique[] as $l | [$sel[] | select($level[.] == $l)] | "GROUP\t" + join(" "))
 '
 
 groups() { # groups <metadata> <crate>...
@@ -66,9 +76,40 @@ groups() { # groups <metadata> <crate>...
     missing="$(jq -r '[.packages[].name] as $all | $ARGS.positional[] | select(. as $c | $all | index([$c]) | not)' \
         "$meta" --args "$@")" || { echo "quick_tier_groups: cannot read $meta" >&2; return 3; }
     [ -z "$missing" ] || { echo "quick_tier_groups: not in the metadata: $missing" >&2; return 3; }
-    out="$(jq -r "\$ARGS.positional as \$sel | $JQ" "$meta" --args "$@")" || return 3
+    out="$(jq -r "\$ARGS.positional as \$sel | ${QTG_MUTANT_JQ:-$JQ}" "$meta" --args "$@")" || return 3
     grep '^RAISED' <<< "$out" | cut -f2- | sed 's/^/quick_tier_groups: raised: /' >&2 || true
+    grep '^CYCLE' <<< "$out" | cut -f2- | sed 's/^/quick_tier_groups: raise cycle reaches: /; s/$/ (one call per crate)/' >&2 || true
+    # every selected crate exactly once, or nothing: a split that drops a crate is a filter
+    if [ "$(grep '^GROUP' <<< "$out" | cut -f2- | tr ' ' '\n' | sort)" != "$(printf '%s\n' "$@" | sort)" ]; then
+        echo "quick_tier_groups: the calls do not hold every selected crate exactly once" >&2; return 3
+    fi
     grep '^GROUP' <<< "$out" | cut -f2- || true
+}
+
+mutants() { # each mutant of the rule must turn --self-test red
+    local killed=0 survived=0 from to mut m
+    local -a M=(
+        'select(.kind != "build")@@select(true)'
+        'select(.name != $y.name)@@select(true)'
+        '( ($d.features[]),@@( empty,'
+        'startswith($key + "?/")@@false'
+        '["default"]) | index([$f]) | not)@@["default"]) | index([$f]))'
+        '$lv[$e[0]] + 1@@$lv[$e[0]]'
+        '.todo += ($feats[$f] // [])@@.todo += []'
+        '($d.rename // $d.name) as $key@@$d.name as $key'
+        'entries($y.features; ["default"])[]@@closure($y.features; ["default"])[]'
+        'select($level[.] >= ($sel | length))@@select($level[.] > ($sel | length))'
+    )
+    for m in "${M[@]}"; do
+        from="${m%%@@*}"; to="${m#*@@}"
+        if [[ "$JQ" != *"$from"* ]]; then echo "STALE  $from (not in the rule)"; survived=$((survived + 1)); continue; fi
+        mut="${JQ/"$from"/"$to"}"
+        if QTG_MUTANT_JQ="$mut" bash "$0" --self-test > /dev/null 2>&1; then
+            echo "SURVIVED $from -> $to"; survived=$((survived + 1))
+        else echo "killed   $from -> $to"; killed=$((killed + 1)); fi
+    done
+    echo "quick_tier_groups mutants: $killed killed, $survived survived of ${#M[@]}"
+    [ "$survived" = 0 ]
 }
 
 self_test() {
@@ -103,6 +144,10 @@ self_test() {
         "$(pkg a '{"default":["b/y"]}' "[$(dep b null '[]')]")" > "$T/chain.json"
     # the raised feature is already in the dependency's own default closure
     printf '{"packages":[%s,%s]}' "$(pkg tlib '{"default":["tui"],"tui":["browser"],"browser":[]}' '[]')" "$cli" > "$T/held.json"
+    # p and q raise each other through dev-dependencies: no layering exists
+    printf '{"packages":[%s,%s,%s]}' "$lib" \
+        "$(pkg p '{"default":["q/x"],"y":[]}' "[$(dep q null '[]' '"dev"')]")" \
+        "$(pkg q '{"default":["p/y"],"x":[]}' "[$(dep p null '[]' '"dev"')]")" > "$T/cycle.json"
 
     check() { # check <name> <want rc> <meta> <want stdout, | for newline> <crate>...
         local name="$1" want="$2" meta="$3" wantout="$4" got out; shift 4
@@ -125,6 +170,8 @@ self_test() {
     check empty_selection_prints_nothing  0 "$T/m.json"    ""
     check unknown_crate_is_caller_error   3 "$T/m.json"    ""                    tlib nope
     check unreadable_metadata_is_error    3 "$T/nope.json" ""                    tlib
+    check cycle_is_one_call_per_crate     0 "$T/cycle.json" "p|q|tlib"           p q tlib
+    check cycle_member_alone_is_one_call  0 "$T/cycle.json" "p"                  p
     # the reason is printed, so a split is never silent
     rows=$((rows + 1))
     if bash "$0" --metadata "$T/m.json" tcli tlib 2>&1 >/dev/null | grep -qx 'quick_tier_groups: raised: tlib	by tcli: browser'; then
@@ -136,6 +183,7 @@ self_test() {
 
 main() {
     [ "${1:-}" = --self-test ] && { self_test; return; }
+    [ "${1:-}" = --mutants ] && { mutants; return; }
     [ "${1:-}" = --metadata ] && [ -n "${2:-}" ] || { echo "usage: $0 --metadata FILE CRATE... | --self-test" >&2; exit 3; }
     local meta="$2"; shift 2
     [ -r "$meta" ] || { echo "quick_tier_groups: cannot read $meta" >&2; exit 3; }

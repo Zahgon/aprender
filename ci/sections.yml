@@ -803,6 +803,8 @@ jobs:
           bash scripts/ci/quick_tier_groups.sh --metadata "$RUNNER_TEMP/quick-meta.json" "${crates[@]}" > "$RUNNER_TEMP/quick-calls.txt"
           mapfile -t calls < "$RUNNER_TEMP/quick-calls.txt"
           printf 'nextest calls: %s\n' "${#calls[@]}"
+          # CRATES is set here (the step's if:), so zero calls would run zero tests green
+          [ "${#calls[@]}" -gt 0 ] || { echo "::error::quick tier: crates selected but the split printed no nextest call"; exit 1; }
           mkdir -p "$RUNNER_TEMP/quick-sel"
           tgt="/mnt/nvme-raid0/targets/aprender-ci/${PR_OR_REF}/run-${GITHUB_RUN_ID}"
           rc=0
@@ -999,6 +1001,7 @@ jobs:
           rc=0
           if [ -n "$CRATES" ]; then
             n="$(wc -l < "$sig/quick-sel.calls")"
+            [ "$n" -gt 0 ] || { echo "::error::quick tier: crates selected but the split printed no nextest call"; rc=1; }
             for ((i = 0; i < n; i++)); do
               python3 scripts/ci/sigma_executed.py nextest --kind "quick selected crates, call $i" --junit "$sig/quick-sel/$i.junit.xml" --list-json "$sig/quick-sel/$i.list.json" || rc=1
             done
