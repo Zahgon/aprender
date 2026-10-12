@@ -286,6 +286,18 @@ pub enum KernelType {
         k: u32,
         n: u32,
     },
+    /// #5221: Multi-warp Q5_K GEMV for decode bandwidth
+    ///
+    /// Contracts:
+    /// - Precondition: k % 256 == 0 (Q5K super-block alignment, enforced at dispatch)
+    /// - Precondition: num_warps in {1,2,3,4,6,8}
+    /// - Postcondition: output equal to Q5KGemv within f32 summation-order tolerance
+    /// - Invariant: PARITY-114 barrier safety (all threads reach bar.sync)
+    MwvQ5KGemv {
+        k: u32,
+        n: u32,
+        num_warps: u32,
+    },
     /// Q6_K quantized GEMV (fused dequantization) - PAR-003
     Q6KGemv {
         k: u32,

@@ -72,6 +72,7 @@ impl CudaKernels {
             KernelType::Gemv { .. } => "gemv_warp_reduce",
             KernelType::CoalescedGemv { .. } => "gemv_coalesced",
             KernelType::Q5KGemv { .. } => "q5k_gemv_warp_reduce",
+            KernelType::MwvQ5KGemv { .. } => "mwv_q5k_gemv",
             KernelType::Q6KGemv { .. } => "q6k_gemv_warp_reduce",
             KernelType::CoalescedQ6KGemv { .. } => "coalesced_q6k_gemv",
             KernelType::BatchedQ6KGemv { .. } => "batched_q6k_gemv_warp_reduce",

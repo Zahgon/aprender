@@ -100,10 +100,23 @@ impl CudaExecutor {
     ) -> Result<(), GpuError> {
         validate_device_ptr(weight_ptr, "q5k_gemv_into")?;
         // PAR-058: Zero allocation Q5K GEMV for mixed-quantization models
-        let kernel_type = KernelType::Q5KGemv { k, n };
+        // #5221: the multi-warp kernel reads 256-value super-blocks with
+        // compile-time sub-block indices; non-aligned K keeps the single-warp path.
+        let (kernel_type, cache_key, config) = if k.is_multiple_of(256) {
+            let num_warps = self.gpu_profile.mwv_warps;
+            (
+                KernelType::MwvQ5KGemv { k, n, num_warps },
+                module_key!(self, "mwv_q5k_gemv_{}_{}_{}", k, n, num_warps),
+                LaunchConfig::grid_2d(n, 1, num_warps * 32, 1),
+            )
+        } else {
+            (
+                KernelType::Q5KGemv { k, n },
+                module_key!(self, "q5k_gemv_{}_{}", k, n),
+                LaunchConfig::grid_2d(n, 1, 32, 1),
+            )
+        };
         let kernel_name = self.kernels.kernel_name(&kernel_type);
-        let cache_key = module_key!(self, "q5k_gemv_{}_{}", k, n);
-        let config = LaunchConfig::grid_2d(n, 1, 32, 1);
 
         self.ensure_kernel_module(&cache_key, &kernel_type)?;
 

@@ -67,6 +67,9 @@ impl CudaKernels {
             KernelType::Gemv { k, n } => GemvKernel::new(*k, *n).emit_ptx_for_target(target),
             KernelType::CoalescedGemv { k, n } => CoalescedGemvKernel::new(*k, *n).emit_ptx_for_target(target),
             KernelType::Q5KGemv { k, n } => Q5KGemvKernel::new(*k, *n).emit_ptx_for_target(target),
+            KernelType::MwvQ5KGemv { k, n, num_warps } => {
+                MultiWarpQ5KGemvKernel::with_warps(*k, *n, *num_warps).emit_ptx_for_target(target)
+            },
             KernelType::Q6KGemv { k, n } => Q6KGemvKernel::new(*k, *n).emit_ptx_for_target(target),
             KernelType::CoalescedQ6KGemv { k, n } => CoalescedQ6KGemvKernel::new(*k, *n).emit_ptx_for_target(target),
             KernelType::BatchedQ6KGemv { k, n, m } => {

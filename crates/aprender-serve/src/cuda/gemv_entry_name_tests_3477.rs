@@ -91,6 +91,7 @@ mod gemv_entry_name_tests_3477 {
             },
             KernelType::CoalescedQ6KGemv { k, n },
             KernelType::BatchedQ6KGemv { k, n, m: w },
+            KernelType::MwvQ5KGemv { k, n, num_warps: w },
             KernelType::MwvQ6KGemv { k, n, num_warps: w },
             KernelType::Dp4aQ6KGemv { k, n, num_warps: w },
             KernelType::HwDp4aQ6KGemv { k, n, num_warps: w },
