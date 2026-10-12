@@ -241,20 +241,27 @@ log_proves() {
 # infra_curl PATH -> the body of API PATH, read with INFRA_TOKEN (measure's read)
 infra_curl() { api "$API/$1" "$INFRA_TOKEN"; }
 
+# infra_gh_failed PATH STATUS KEY -> one stderr line naming the failed read; gh's error text, never a header
+infra_gh_failed() {
+    printf 'infra read failed: %s: HTTP %s: %s\n' "$1" "$2" "$(head -n 1 -- "$3.err" 2> /dev/null)" >&2
+}
+
 # infra_gh PATH -> the body of API PATH, read with gh as INFRA_TOKEN and sent with the ETag cached in INFRA_CACHE
 # (measured-cpu's read). 200 refreshes the cache; 304 reuses it, and a 304 with nothing cached is a failed read, as
 # is any other status. gh's own exit is not read: on a 304 it is non-zero, so the status line decides.
+# A failed read names its path, its status and gh's first error line on stderr (#5052: the night printed only
+# "clean-room runs were not read", and which read failed, and why, was lost).
 infra_gh() {
     local k st hdr=()
     k="$INFRA_CACHE/$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"
     [ -s "$k.etag" ] && [ -f "$k.body" ] && hdr=(-H "If-None-Match: $(cat -- "$k.etag")")
-    GH_TOKEN="$INFRA_TOKEN" gh api -i "${hdr[@]}" "$1" > "$k.http" 2>/dev/null
+    GH_TOKEN="$INFRA_TOKEN" gh api -i "${hdr[@]}" "$1" > "$k.http" 2> "$k.err"
     st="$(awk 'NR == 1 { print $2; exit }' "$k.http")"
     case "$st" in
-        200) awk 'f { print } /^\r?$/ { f = 1 }' "$k.http" > "$k.body" || return 1
+        200) awk 'f { print } /^\r?$/ { f = 1 }' "$k.http" > "$k.body" || { infra_gh_failed "$1" "200, body not written" "$k"; return 1; }
              awk 'tolower($1) == "etag:" { sub(/\r$/, ""); sub(/^[^:]*: */, ""); print; exit }' "$k.http" > "$k.etag" ;;
-        304) [ -f "$k.body" ] || return 1 ;;
-        *) return 1 ;;
+        304) [ -f "$k.body" ] || { infra_gh_failed "$1" "304 with nothing cached" "$k"; return 1; } ;;
+        *) infra_gh_failed "$1" "${st:-none}" "$k"; return 1 ;;
     esac
     cat -- "$k.body"
 }
