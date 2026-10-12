@@ -1,5 +1,5 @@
 metadata:
-  version: 1.4.0
+  version: 1.5.0
   created: '2026-09-20'
   author: PAIML Engineering
   description: |
@@ -44,7 +44,7 @@ metadata:
   - 'GitHub #3418 (serve sizes from TRAITS, one table), #3430 (M1), #3431 (M2 reconciliation), #3421 (epic), #3563 (pin-derived artifacts, general case)'
 
 name: ggml-type
-version: 1.4.0
+version: 1.5.0
 scope: aprender-quant (trueno_quant) ggml tensor-type enum and TRAITS table
 
 description: |
@@ -255,6 +255,23 @@ falsification_tests:
     Measured 2026-10-12 on la-74/3418 e307f52ce, before the derivation: GREEN.
     The ten hand-written block sizes in gguf/embedding.rs quant_block_layout
     already equalled TRAITS; the derivation deletes them.
+
+- id: FT-GGMLT-010
+  rule: the CUDA layer graph carries every weight type through its ggml id and back (#3418)
+  prediction: |
+    graph_carries_every_weight_type_through_its_ggml_id_3418 (aprender-serve,
+    feature cuda) walks WeightQuantType::ALL; for each type the code
+    graph_builder writes on the node equals ggml_id(), and graph_dispatch maps
+    that code back to the same type. GREEN once both directions read the one
+    exhaustive ggml_id(); a type that either side turns into Q4_K (and so
+    dequantizes with the Q4_K kernel, the PERF-050 failure) turns it RED with
+    the type in the message.
+  test: cargo test -p aprender-serve --features cuda --lib graph_carries_every_weight_type_through_its_ggml_id_3418
+  if_fails: 'a weight on the CUDA graph path is dispatched to a kernel for a different ggml type.'
+  evidence: |
+    Measured 2026-10-12 on la-74/3418 70acee883, before the derivation: RED.
+    11 of the 18 types (F32, F16, BF16, Q2_K, Q5_1 and six IQ types) were
+    carried as 12 and read back as Q4_K. GREEN after.
 
 kani_harnesses:
 - id: KANI-GGMLT-001

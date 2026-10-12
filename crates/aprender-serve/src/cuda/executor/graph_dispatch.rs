@@ -15,20 +15,15 @@ use super::CudaExecutor;
 impl CudaExecutor {
     /// PERF-050: map the GGML type code carried on a graph node back to the executor's enum.
     ///
-    /// Unknown codes fall back to Q4_K, which is what this dispatcher assumed for every weight
-    /// before the code was carried at all -- so an unrecognised type is no worse than the old
-    /// behaviour, and the types this model actually uses are all named.
-    fn qtype_from_ggml(code: u32) -> crate::cuda::types::WeightQuantType {
-        use crate::cuda::types::WeightQuantType as W;
-        match code {
-            2 => W::Q4_0,
-            3 => W::Q4_1,
-            6 => W::Q5_0,
-            8 => W::Q8_0,
-            13 => W::Q5K,
-            14 => W::Q6K,
-            _ => W::Q4K,
-        }
+    /// #3418 (FT-GGMLT-010): the inverse of `graph_builder::ggml_code`, through the one
+    /// exhaustive `WeightQuantType::ggml_id`. It used to turn every code it did not list into
+    /// Q4_K; a code no weight type has is now refused instead of dispatched with that kernel.
+    fn qtype_from_ggml(code: u32) -> Result<crate::cuda::types::WeightQuantType, GpuError> {
+        crate::cuda::types::WeightQuantType::from_ggml_type(code).ok_or_else(|| {
+            GpuError::InvalidLaunchConfig(format!(
+                "graph node carries ggml type {code}, which no CUDA weight type has"
+            ))
+        })
     }
 }
 
@@ -70,7 +65,7 @@ impl KernelDispatch for CudaExecutor {
         let qtype = if std::env::var("APR_GRAPH_QTYPE_HARDCODE").as_deref() == Ok("1") {
             crate::cuda::types::WeightQuantType::Q4K
         } else {
-            Self::qtype_from_ggml(node.params.weight_qtype)
+            Self::qtype_from_ggml(node.params.weight_qtype)?
         };
 
         // PMAT-295: Use inline Q8 DP4A GEMV when enabled.
@@ -421,5 +416,28 @@ impl CudaExecutor {
     fn use_inline_q8_gemv() -> bool {
         static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         *ENABLED.get_or_init(|| std::env::var("INLINE_Q8_GEMV").as_deref() == Ok("1"))
+    }
+}
+
+#[cfg(test)]
+mod one_table_tests_3418 {
+    use super::CudaExecutor;
+    use crate::cuda::executor::graph_builder::ggml_code;
+    use crate::cuda::types::WeightQuantType;
+
+    /// FT-GGMLT-010 (#3418): the code on a graph node is the weight's ggml id,
+    /// and the dispatcher reads it back as the same type. Before this, both
+    /// sides turned every type they did not list into Q4_K.
+    #[test]
+    fn graph_carries_every_weight_type_through_its_ggml_id_3418() {
+        let mut wrong = Vec::new();
+        for q in WeightQuantType::ALL {
+            let code = ggml_code(q);
+            let back = CudaExecutor::qtype_from_ggml(code).ok();
+            if code != q.ggml_id() || back != Some(q) {
+                wrong.push(format!("{q:?}: carried as {code}, read back as {back:?}"));
+            }
+        }
+        assert!(wrong.is_empty(), "graph type round trip: {wrong:#?}");
     }
 }

@@ -24,17 +24,12 @@ use crate::cuda::types::{ValidatedLayerWeights, WeightQuantType};
 #[allow(clippy::too_many_arguments)]
 /// PERF-050 (aprender#2753): GGML type code for a weight, so the graph can carry what the
 /// dispatcher used to assume.
-fn ggml_code(q: WeightQuantType) -> u32 {
-    match q {
-        WeightQuantType::Q4_0 => 2,
-        WeightQuantType::Q4_1 => 3,
-        WeightQuantType::Q5_0 => 6,
-        WeightQuantType::Q8_0 => 8,
-        WeightQuantType::Q4K => 12,
-        WeightQuantType::Q5K => 13,
-        WeightQuantType::Q6K => 14,
-        _ => 12,
-    }
+///
+/// #3418 (FT-GGMLT-010): the one exhaustive `WeightQuantType::ggml_id`. The hand-written
+/// table here sent every type it did not list to 12, so a Q5_1, Q2_K, F16, BF16 or IQ weight
+/// reached the Q4_K kernel on the graph path.
+pub(super) fn ggml_code(q: WeightQuantType) -> u32 {
+    q.ggml_id()
 }
 
 pub fn build_layer_graph(
