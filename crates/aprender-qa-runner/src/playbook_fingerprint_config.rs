@@ -256,7 +256,7 @@ pub fn compute_playbook_hash(path: impl AsRef<Path>) -> Result<String> {
 /// Returns an error if the file cannot be read or parsed.
 pub fn load_lock_file(path: impl AsRef<Path>) -> Result<PlaybookLockFile> {
     let content = std::fs::read_to_string(path)?;
-    serde_saphyr::from_str(&content).map_err(Error::from)
+    serde_saphyr::from_str_with_options(&content, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false }).map_err(Error::from)
 }
 
 /// Save a lock file to YAML
@@ -367,7 +367,7 @@ pub fn find_skip_files(playbook_dir: &Path, name: &str) -> Vec<SkipReason> {
         return Vec::new();
     };
 
-    match serde_saphyr::from_str(&content) {
+    match serde_saphyr::from_str_with_options(&content, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false }) {
         Ok(reasons) => reasons,
         Err(e) => {
             eprintln!(

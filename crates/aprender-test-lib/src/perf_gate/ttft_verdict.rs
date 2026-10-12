@@ -99,7 +99,7 @@ impl TtftPolicy {
     /// The matrix does not parse, has no `arms.L3.v1` or `protocol.replicates_min`,
     /// or holds a floor that is not a positive finite number or an empty host list.
     pub fn from_matrix(source: &str) -> Result<Self, String> {
-        let doc: serde_json::Value = serde_saphyr::from_str(source)
+        let doc: serde_json::Value = serde_saphyr::from_str_with_options(source, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false })
             .map_err(|e| format!("perf-matrix.yaml does not parse as YAML: {e}"))?;
         let block = doc
             .get("arms")

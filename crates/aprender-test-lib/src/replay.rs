@@ -247,7 +247,7 @@ impl Replay {
     pub fn load_yaml(path: &Path) -> ProbarResult<Self> {
         let yaml = fs::read_to_string(path)?;
         let replay: Replay =
-            serde_saphyr::from_str(&yaml).map_err(|e| ProbarError::SnapshotSerializationError {
+            serde_saphyr::from_str_with_options(&yaml, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false }).map_err(|e| ProbarError::SnapshotSerializationError {
                 message: format!("Failed to deserialize replay: {e}"),
             })?;
         Ok(replay)

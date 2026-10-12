@@ -742,7 +742,10 @@ impl Scene {
     ///
     /// Returns an error if the YAML is invalid or fails validation.
     pub fn from_yaml(yaml: &str) -> Result<Self, SceneError> {
-        let scene: Self = serde_saphyr::from_str(yaml)?;
+        let scene: Self = serde_saphyr::from_str_with_options(
+            yaml,
+            serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false },
+        )?;
         scene.validate()?;
         Ok(scene)
     }

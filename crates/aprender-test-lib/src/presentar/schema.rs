@@ -570,7 +570,10 @@ impl PanelType {
 impl PresentarConfig {
     /// Parse configuration from YAML string.
     pub fn from_yaml(yaml: &str) -> Result<Self, serde_saphyr::Error> {
-        serde_saphyr::from_str(yaml)
+        serde_saphyr::from_str_with_options(
+            yaml,
+            serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false },
+        )
     }
 
     /// Serialize configuration to YAML string.
@@ -671,7 +674,7 @@ panels:
   cpu:
     histogram: block
 "#;
-        let config: PresentarConfig = serde_saphyr::from_str(yaml).unwrap();
+        let config: PresentarConfig = serde_saphyr::from_str_with_options(yaml, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false }).unwrap();
         assert_eq!(config.panels.cpu.histogram, HistogramStyle::Block);
     }
 
@@ -681,7 +684,7 @@ panels:
 layout:
   border_style: sharp
 "#;
-        let config: PresentarConfig = serde_saphyr::from_str(yaml).unwrap();
+        let config: PresentarConfig = serde_saphyr::from_str_with_options(yaml, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false }).unwrap();
         assert_eq!(config.layout.border_style, BorderStyle::Sharp);
     }
 
