@@ -11,7 +11,7 @@ struct AprTensorLookup<'a> {
     transpose_cublas_weights: bool,
 }
 
-/// Dequantize Q4K/Q5K tensor data, handling per-row padding for 2D tensors (GH-202).
+/// Dequantize Q4K tensor data, handling per-row padding for 2D tensors (GH-202).
 fn dequant_q4k_tensor(tensor_data: &[u8], dims: &[usize]) -> Vec<f32> {
     if dims.len() == 2 && !dims[1].is_multiple_of(256) {
         dequant_perrow(tensor_data, dims, 256, 144, |block, out| {
@@ -20,6 +20,26 @@ fn dequant_q4k_tensor(tensor_data: &[u8], dims: &[usize]) -> Vec<f32> {
     } else {
         let num_elements: usize = dims.iter().product();
         dequantize_q4_k_apr(tensor_data, num_elements)
+    }
+}
+
+/// Dequantize Q5K tensor data, handling per-row padding for 2D tensors (GH-202).
+///
+/// #3418 (FT-GGMLT-011): Q5_K has its own 176-byte super-block. It used to share the Q4_K
+/// arm, which read it with the 144-byte layout and dropped the fifth bit of every weight.
+fn dequant_q5k_tensor(tensor_data: &[u8], dims: &[usize]) -> Vec<f32> {
+    let num_elements: usize = dims.iter().product();
+    if dims.len() == 2 && !dims[1].is_multiple_of(256) {
+        dequant_perrow(tensor_data, dims, 256, 176, |block, out| {
+            if let Ok(values) = crate::quantize::dequantize_q5_k(block) {
+                out.copy_from_slice(&values);
+            }
+        })
+    } else {
+        let mut values = crate::quantize::dequantize_q5_k(tensor_data)
+            .unwrap_or_else(|_| vec![0.0; num_elements]);
+        values.resize(num_elements, 0.0);
+        values
     }
 }
 
@@ -52,7 +72,8 @@ fn dequant_by_dtype(tensor_data: &[u8], dims: &[usize], dtype: u8) -> Vec<f32> {
         // GH-88: Q5_1 (GGML type 7) — 32-element blocks, 24 bytes each
         7 => crate::quantize::dequantize_q5_1(tensor_data)
             .unwrap_or_else(|_| vec![0.0; dims.iter().product()]),
-        12 | 13 => dequant_q4k_tensor(tensor_data, dims),
+        12 => dequant_q4k_tensor(tensor_data, dims),
+        13 => dequant_q5k_tensor(tensor_data, dims),
         14 => dequant_q6k_tensor(tensor_data, dims),
         // GH-239: dtype=8 is ambiguous — either GGML Q8_0 or APR Q4 native.
         8 => {
@@ -152,10 +173,11 @@ impl AprTensorLookup<'_> {
     }
 
     /// Extract raw Q4K bytes (no dequantization) for fused kernel.
-    /// GH-191 FIX: Use GGML dtype values (12=Q4_K, 13=Q5_K).
+    /// GH-191 FIX: Use GGML dtype value 12=Q4_K. #3418 (FT-GGMLT-011): Q5_K (13) is not
+    /// admitted; its 176-byte super-blocks are not the Q4_K kernel's, so it takes the f32 path.
     fn get_q4k(&self, name: &str) -> Option<Vec<u8>> {
         self.raw_bytes(name).and_then(|(data, _, dtype)| {
-            if dtype != 12 && dtype != 13 { return None; }
+            if dtype != 12 { return None; }
             Some(data.to_vec())
         })
     }
@@ -561,5 +583,49 @@ mod tests_dequant_bf16 {
         assert_eq!(result[0], 0.0);
         let expected_last = f32::from_bits(((n - 1) as f32).to_bits() & 0xFFFF_0000);
         assert!((result[n - 1] - expected_last).abs() < 0.1);
+    }
+}
+
+#[cfg(test)]
+mod q5k_arm_tests_3418 {
+    use super::{dequant_by_dtype, AprTensorLookup};
+    use std::collections::BTreeMap;
+
+    /// `n` Q5_K super-blocks: d = 1.0, dmin = 0.5, every other byte a fixed pattern.
+    fn q5k_superblocks(n: usize) -> Vec<u8> {
+        let mut data: Vec<u8> = (0..n * 176).map(|i| ((i * 37 + 11) % 256) as u8).collect();
+        for sb in data.chunks_exact_mut(176) {
+            sb[..4].copy_from_slice(&[0x00, 0x3C, 0x00, 0x38]);
+        }
+        data
+    }
+
+    /// FT-GGMLT-011 (#3418): dtype 13 is decoded with the Q5_K layout and is
+    /// never handed to a Q4_K kernel.
+    #[test]
+    fn apr_q5k_is_never_read_as_q4k_3418() {
+        let one = q5k_superblocks(1);
+        let reference = crate::quantize::dequantize_q5_k(&one).expect("one Q5_K super-block");
+        assert_eq!(dequant_by_dtype(&one, &[256], 13), reference, "1-D Q5_K");
+
+        // GH-202: two rows of 200 columns, each padded to one 256 super-block.
+        let two = q5k_superblocks(2);
+        let mut padded = Vec::new();
+        for row in two.chunks_exact(176) {
+            let r = crate::quantize::dequantize_q5_k(row).expect("one Q5_K row");
+            padded.extend_from_slice(&r[..200]);
+        }
+        assert_eq!(dequant_by_dtype(&two, &[2, 200], 13), padded, "padded 2-D Q5_K");
+
+        let mut tensors = BTreeMap::new();
+        tensors.insert("q4k".to_string(), (0, 144, vec![256], 12u8));
+        tensors.insert("q5k".to_string(), (0, 176, vec![256], 13u8));
+        let lookup = AprTensorLookup {
+            data: &one,
+            tensors: &tensors,
+            transpose_cublas_weights: false,
+        };
+        assert!(lookup.get_q4k("q4k").is_some(), "Q4_K bytes must reach the Q4_K kernel");
+        assert!(lookup.get_q4k("q5k").is_none(), "Q5_K bytes reached the Q4_K kernel");
     }
 }

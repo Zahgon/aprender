@@ -366,7 +366,7 @@ fn test_from_apr_bytes_q4k_flat_weights() {
 }
 
 // ============================================================================
-// Q5_K dtype branch coverage (flat path — uses Q4_K dequant)
+// Q5_K dtype branch coverage (flat path — its own Q5_K dequant, #3418)
 // ============================================================================
 
 #[test]
@@ -392,8 +392,12 @@ fn test_from_apr_bytes_q5k_flat_weights() {
 
     let apr = result.expect("test value should be present");
     assert_eq!(apr.layers.len(), 1);
-    // Q5_K should also produce q4k raw bytes (dtype 13 accepted by get_q4k_raw_bytes)
-    assert!(apr.q4k_layers.is_some());
+    // #3418 (FT-GGMLT-011): Q5_K bytes are not the Q4_K kernel's, so get_q4k refuses
+    // them and the matmuls take the f32 weights dequantized with the Q5_K layout.
+    assert!(
+        apr.q4k_layers.is_none(),
+        "Q5_K bytes were handed to the Q4_K kernel"
+    );
 }
 
 // ============================================================================
