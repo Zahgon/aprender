@@ -96,9 +96,9 @@ fn dispatch_sibling_cli_commands(cli: &Cli) -> Option<Result<(), CliError>> {
             cgp::cli::dispatch(command.clone(), cli.json)
                 .map_err(|e| CliError::ValidationFailed(format!("cgp: {e}"))),
         ),
-        Commands::PtxDebug(command) => Some(ptx_debug_result(
-            trueno_ptx_debug::run::run(command.clone()),
-        )),
+        Commands::PtxDebug(command) => Some(ptx_debug_result(trueno_ptx_debug::run::run(
+            command.clone(),
+        ))),
         Commands::Pv(command) => Some(
             aprender_contracts_cli::dispatch(command.clone())
                 .map_err(|e| CliError::ValidationFailed(format!("pv: {e}"))),
@@ -251,123 +251,7 @@ fn dispatch_runtime_commands(cli: &Cli) -> Option<Result<(), CliError>> {
         // GH-685: forward cli.verbose to check
         Commands::Check { file, no_gpu, json } => crate::error::resolve_model_path(file)
             .and_then(|r| commands::check::run(&r, *no_gpu, *json || cli.json, cli.verbose)),
-        Commands::Run {
-            source,
-            positional_prompt,
-            input,
-            prompt,
-            max_tokens,
-            stream,
-            language,
-            task,
-            format,
-            no_gpu,
-            gpu,
-            revalidate,
-            offline,
-            benchmark,
-            trace,
-            trace_steps,
-            trace_verbose,
-            trace_output,
-            trace_level,
-            trace_payload,
-            profile,
-            temperature,
-            top_k,
-            top_p,
-            seed,
-            repeat_penalty,
-            repeat_last_n,
-            chat,
-            split_prompt,
-            batch_jsonl,
-            verbose,
-            backend: BackendArg { backend },
-            thinking,
-        } => {
-            request_f2_revalidate(*revalidate);
-            // GH-614: --backend cpu forces CPU-only inference
-            let backend_forces_cpu = backend.as_deref() == Some("cpu");
-            if let Err(e) = check_run_backend(backend.as_deref()) {
-                return Some(Err(e));
-            }
-            // PERF-021: `apr run` is the surface #2696 was MEASURED through —
-            // 15.7 tok/s decode, 0.099x llama.cpp — and it was the surface with
-            // no guard. The jidoka refusal landed only on `apr serve`, one
-            // command over from where the defect was recorded.
-            //
-            // Placed ABOVE `effective_no_gpu` and above the `batch_jsonl` early
-            // return below: that return bypasses `dispatch_run` entirely, so a
-            // check any lower is skipped by `apr run --gpu --batch-jsonl f.jsonl`.
-            if let Err(e) = crate::accel::ensure_available(
-                *gpu && !*no_gpu,
-                &crate::accel::asked_flag(*gpu, backend.as_deref()),
-            ) {
-                return Some(Err(e));
-            }
-
-            let accel_forced = run_accelerator_forced(*gpu, *no_gpu, backend.as_deref());
-
-            // GH-326: --gpu overrides --no-gpu when both specified
-            let effective_no_gpu = if *gpu {
-                false
-            } else {
-                *no_gpu || backend_forces_cpu
-            };
-
-            // Batch JSONL mode: load model once, process all prompts
-            #[cfg(feature = "inference")]
-            if let Some(ref batch_file) = batch_jsonl {
-                return Some(run_batch_jsonl(
-                    source,
-                    batch_file,
-                    thinking.mode().is_some(),
-                    *max_tokens,
-                    *temperature,
-                    *top_k,
-                    effective_no_gpu,
-                    *verbose || cli.verbose,
-                ));
-            }
-
-            // GH-240: merge global --json flag into output format
-            let effective_format = if cli.json { "json" } else { format.as_str() };
-            let trace_steps = trace_steps.as_deref().map(batuta_common::cli_roles::strings);
-            dispatch_run(
-                source,
-                positional_prompt.as_ref().map(PromptText::as_string),
-                input.as_deref(),
-                prompt.as_ref().map(PromptText::as_string),
-                *max_tokens,
-                *stream,
-                language.as_deref(),
-                task.as_deref(),
-                effective_format,
-                effective_no_gpu,
-                accel_forced,
-                *offline,
-                *benchmark,
-                *verbose || cli.verbose,
-                *trace,
-                *trace_payload,
-                trace_steps.as_deref(),
-                *trace_verbose,
-                trace_output.as_deref().map(Path::to_path_buf),
-                trace_level.as_str(),
-                *profile,
-                *chat,
-                // PMAT-496: Sampling parameters — no longer silently dropped
-                *temperature,
-                *top_k,
-                *top_p,
-                *seed,
-                *repeat_penalty,
-                *repeat_last_n,
-                *split_prompt,
-                thinking.mode(),
-            )
-        }
+        Commands::Run { .. } => return dispatch_run_command(cli),
 
         Commands::Serve { command } => dispatch_serve_command(command, cli),
 
@@ -627,7 +511,11 @@ fn dispatch_inspection_commands(cli: &Cli) -> Option<Result<(), CliError>> {
 
         Commands::Manifest { files, output } => {
             // CRUX-G-05 — SHA-256 manifest of the input file set.
-            commands::manifest::run(&batuta_common::cli_roles::path_bufs(files), output, cli.json)
+            commands::manifest::run(
+                &batuta_common::cli_roles::path_bufs(files),
+                output,
+                cli.json,
+            )
         }
         Commands::Explain {
             code_or_file,
@@ -656,6 +544,135 @@ fn dispatch_inspection_commands(cli: &Cli) -> Option<Result<(), CliError>> {
 }
 
 /// Dispatch diagnostic commands: trace, tensors, diff.
+
+/// `apr run`: split out of [`dispatch_runtime_commands`] to keep each function under the
+/// complexity threshold (#5227). `None` when the command is not `run`.
+fn dispatch_run_command(cli: &Cli) -> Option<Result<(), CliError>> {
+    let Commands::Run {
+        source,
+        positional_prompt,
+        input,
+        prompt,
+        max_tokens,
+        stream,
+        language,
+        task,
+        format,
+        no_gpu,
+        gpu,
+        revalidate,
+        offline,
+        benchmark,
+        trace,
+        trace_steps,
+        trace_verbose,
+        trace_output,
+        trace_level,
+        trace_payload,
+        profile,
+        temperature,
+        top_k,
+        top_p,
+        seed,
+        repeat_penalty,
+        repeat_last_n,
+        chat,
+        split_prompt,
+        batch_jsonl,
+        verbose,
+        backend: BackendArg { backend },
+        thinking,
+    } = cli.command.as_ref()
+    else {
+        return None;
+    };
+    Some({
+        request_f2_revalidate(*revalidate);
+        // GH-614: --backend cpu forces CPU-only inference
+        let backend_forces_cpu = backend.as_deref() == Some("cpu");
+        if let Err(e) = check_run_backend(backend.as_deref()) {
+            return Some(Err(e));
+        }
+        // PERF-021: `apr run` is the surface #2696 was MEASURED through —
+        // 15.7 tok/s decode, 0.099x llama.cpp — and it was the surface with
+        // no guard. The jidoka refusal landed only on `apr serve`, one
+        // command over from where the defect was recorded.
+        //
+        // Placed ABOVE `effective_no_gpu` and above the `batch_jsonl` early
+        // return below: that return bypasses `dispatch_run` entirely, so a
+        // check any lower is skipped by `apr run --gpu --batch-jsonl f.jsonl`.
+        if let Err(e) = crate::accel::ensure_available(
+            *gpu && !*no_gpu,
+            &crate::accel::asked_flag(*gpu, backend.as_deref()),
+        ) {
+            return Some(Err(e));
+        }
+
+        let accel_forced = run_accelerator_forced(*gpu, *no_gpu, backend.as_deref());
+
+        // GH-326: --gpu overrides --no-gpu when both specified
+        let effective_no_gpu = if *gpu {
+            false
+        } else {
+            *no_gpu || backend_forces_cpu
+        };
+
+        // Batch JSONL mode: load model once, process all prompts
+        #[cfg(feature = "inference")]
+        if let Some(ref batch_file) = batch_jsonl {
+            return Some(run_batch_jsonl(
+                source,
+                batch_file,
+                thinking.mode().is_some(),
+                *max_tokens,
+                *temperature,
+                *top_k,
+                effective_no_gpu,
+                *verbose || cli.verbose,
+            ));
+        }
+
+        // GH-240: merge global --json flag into output format
+        let effective_format = if cli.json { "json" } else { format.as_str() };
+        let trace_steps = trace_steps
+            .as_deref()
+            .map(batuta_common::cli_roles::strings);
+        dispatch_run(
+            source,
+            positional_prompt.as_ref().map(PromptText::as_string),
+            input.as_deref(),
+            prompt.as_ref().map(PromptText::as_string),
+            *max_tokens,
+            *stream,
+            language.as_deref(),
+            task.as_deref(),
+            effective_format,
+            effective_no_gpu,
+            accel_forced,
+            *offline,
+            *benchmark,
+            *verbose || cli.verbose,
+            *trace,
+            *trace_payload,
+            trace_steps.as_deref(),
+            *trace_verbose,
+            trace_output.as_deref().map(Path::to_path_buf),
+            trace_level.as_str(),
+            *profile,
+            *chat,
+            // PMAT-496: Sampling parameters — no longer silently dropped
+            *temperature,
+            *top_k,
+            *top_p,
+            *seed,
+            *repeat_penalty,
+            *repeat_last_n,
+            *split_prompt,
+            thinking.mode(),
+        )
+    })
+}
+
 fn dispatch_diagnostic_commands(cli: &Cli) -> Option<Result<(), CliError>> {
     Some(match cli.command.as_ref() {
         Commands::Trace {
@@ -678,38 +695,10 @@ fn dispatch_diagnostic_commands(cli: &Cli) -> Option<Result<(), CliError>> {
             // to the existing trace path.
             #[cfg(feature = "inference")]
             if let Some(stages) = save_tensor.as_deref() {
-                let ext_lower = r
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .map(str::to_ascii_lowercase);
-                match ext_lower.as_deref() {
-                    Some("apr") => {
-                        return crate::commands::trace_save_tensor::run_save_tensor_apr(
-                            &r,
-                            stages,
-                            save_tensor_dir.as_deref(),
-                            save_tensor_layers,
-                        );
-                    }
-                    Some("gguf") => {
-                        // M-MOE-SUB-2 step (a) CLI completion: GGUF dispatches
-                        // to the MoE-traced wireup if the arch is qwen3_moe;
-                        // dense-GGUF will be wired in SHIP-007 PR-E.
-                        return crate::commands::trace_save_tensor::run_save_tensor_gguf_moe(
-                            &r,
-                            stages,
-                            save_tensor_dir.as_deref(),
-                            save_tensor_layers,
-                        );
-                    }
-                    _ => {
-                        eprintln!(
-                            "apr trace --save-tensor: only .apr and .gguf (qwen3_moe arch) \
-                             supported today; .safetensors will be wired in SHIP-007 PR-E \
-                             (got {})",
-                            r.display()
-                        );
-                    }
+                if let Some(done) =
+                    trace_save_tensor(&r, stages, save_tensor_dir.as_deref(), save_tensor_layers)
+                {
+                    return done;
                 }
             }
             trace::run(
@@ -740,49 +729,7 @@ fn dispatch_diagnostic_commands(cli: &Cli) -> Option<Result<(), CliError>> {
             crate::pipe::with_stdin_support(file, |p| tensors::run(p, s, f.as_deref(), j, l))
         }
 
-        Commands::Diff {
-            file1,
-            file2,
-            weights,
-            values,
-            filter,
-            limit,
-            transpose_aware,
-            json,
-            quant_roundtrip,
-            threshold,
-            no_threshold,
-        } => {
-            if *quant_roundtrip {
-                // CRUX-B-20: per-tensor quant roundtrip error report.
-                crate::error::resolve_model_path(file1).and_then(|r1| {
-                    crate::error::resolve_model_path(file2).and_then(|r2| {
-                        dispatch_quant_roundtrip(
-                            &r1,
-                            &r2,
-                            *threshold,
-                            *no_threshold,
-                            *json || cli.json,
-                        )
-                    })
-                })
-            } else {
-                crate::error::resolve_model_path(file1).and_then(|r1| {
-                    crate::error::resolve_model_path(file2).and_then(|r2| {
-                        diff::run(
-                            &r1,
-                            &r2,
-                            *weights,
-                            *values,
-                            filter.as_deref(),
-                            *limit,
-                            *transpose_aware,
-                            *json || cli.json,
-                        )
-                    })
-                })
-            }
-        }
+        Commands::Diff { .. } => return dispatch_diff_command(cli),
 
         _ => return None,
     })
@@ -1217,4 +1164,90 @@ fn dispatch_model_commands(cli: &Cli) -> Option<Result<(), CliError>> {
 
         _ => return None,
     })
+}
+
+/// `apr trace --save-tensor`: the end-to-end save-tensor wrapper for `.apr` and
+/// `.gguf` (qwen3_moe). `None` falls through to the ordinary trace path. Split
+/// out of [`dispatch_diagnostic_commands`] to keep it under the complexity
+/// threshold (#5227).
+#[cfg(feature = "inference")]
+fn trace_save_tensor(
+    r: &Path,
+    stages: &str,
+    save_tensor_dir: Option<&Path>,
+    save_tensor_layers: &str,
+) -> Option<Result<(), CliError>> {
+    let ext_lower = r
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase);
+    match ext_lower.as_deref() {
+        Some("apr") => Some(crate::commands::trace_save_tensor::run_save_tensor_apr(
+            r,
+            stages,
+            save_tensor_dir,
+            save_tensor_layers,
+        )),
+        Some("gguf") => {
+            // M-MOE-SUB-2 step (a) CLI completion: GGUF dispatches
+            // to the MoE-traced wireup if the arch is qwen3_moe;
+            // dense-GGUF will be wired in SHIP-007 PR-E.
+            Some(
+                crate::commands::trace_save_tensor::run_save_tensor_gguf_moe(
+                    r,
+                    stages,
+                    save_tensor_dir,
+                    save_tensor_layers,
+                ),
+            )
+        }
+        _ => {
+            eprintln!(
+                "apr trace --save-tensor: only .apr and .gguf (qwen3_moe arch) \
+                 supported today; .safetensors will be wired in SHIP-007 PR-E \
+                 (got {})",
+                r.display()
+            );
+            None
+        }
+    }
+}
+
+/// `apr diff`: split out of [`dispatch_diagnostic_commands`] to keep it under the
+/// complexity threshold (#5227). `None` when the command is not `diff`.
+fn dispatch_diff_command(cli: &Cli) -> Option<Result<(), CliError>> {
+    let Commands::Diff {
+        file1,
+        file2,
+        weights,
+        values,
+        filter,
+        limit,
+        transpose_aware,
+        json,
+        quant_roundtrip,
+        threshold,
+        no_threshold,
+    } = cli.command.as_ref()
+    else {
+        return None;
+    };
+    Some(crate::error::resolve_model_path(file1).and_then(|r1| {
+        let r2 = crate::error::resolve_model_path(file2)?;
+        if *quant_roundtrip {
+            // CRUX-B-20: per-tensor quant roundtrip error report.
+            dispatch_quant_roundtrip(&r1, &r2, *threshold, *no_threshold, *json || cli.json)
+        } else {
+            diff::run(
+                &r1,
+                &r2,
+                *weights,
+                *values,
+                filter.as_deref(),
+                *limit,
+                *transpose_aware,
+                *json || cli.json,
+            )
+        }
+    }))
 }
