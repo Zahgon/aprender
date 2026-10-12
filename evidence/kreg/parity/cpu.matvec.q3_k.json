@@ -1,5 +1,5 @@
 {
-  "build_identity": "fd27cc465e",
+  "build_identity": "5942b9ad3f53cdafdec75eab2c71401e18e0f1d8",
   "host": "mac-server",
   "host_arch": "x86_64",
   "input_set": {
@@ -7,10 +7,10 @@
     "driver": "none",
     "oracle": "gguf_py_dequant_f64@evidence/kreg/oracle/Q3_K@60b06ab9a9eeec26f8125c9316ccbf4ee4713d1f@mag.bin:defed7b19cf9ebe49c604779070b66b0ed13fd4970ae61e6d7d26c369c9fb3a5,ref.bin:b1d884cc16af5f390b1124c2a6d62e5aea07148b3102e9d7eaa2a2b06058ce60,weights.bin:b3ba87bdbb4b1c6f51f1b0a2b7f5b9cca994aa66c341884fb4c62457f27c75cc,x.bin:8f512591a7f20764589caff6875fc94d8f9c444e6b3e1e68d5af0811df7187c4",
     "row_sha256": "7f26841cc82152e7e10b4079b595d5cc7c03c9fa8a39a5410b667d6d84573771",
-    "source_sha256": "5ee9e074fbac29de6cdbccc38021302057f94477d541a42f8976af231b87ea58",
+    "source_sha256": "ce3dc9c8ba129f0290bce8688de1810eeffb3768e2aec8f05c920bb0202d2aef",
     "toolchain": "1.93.0"
   },
-  "input_set_hash": "e8ec4e959da609ec2a10941711b495df01cce1f1a5cee8b4535c1ccad324fa07",
+  "input_set_hash": "c7a857418884566289b876980766904a426f010f063f1647017ba3dca9e2153e",
   "isa_detected": [
     "sse4.2",
     "avx",
@@ -20,6 +20,7 @@
     "avx512bw",
     "avx512vnni"
   ],
+  "isa_forced": "native",
   "kernel_id": "cpu.matvec.q3_k",
   "margin": {
     "acc": "f32",
@@ -49,7 +50,7 @@
   },
   "source_fn": "dequantize_q3_k",
   "tolerance_rel": 2e-6,
-  "ts": "2026-09-28T12:28:31Z",
+  "ts": "2026-10-12T00:52:24Z",
   "workload": {
     "in_dim": 1024,
     "out_dim": 32,

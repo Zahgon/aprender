@@ -1,5 +1,5 @@
 {
-  "build_identity": "fd27cc465e",
+  "build_identity": "5942b9ad3f53cdafdec75eab2c71401e18e0f1d8",
   "host": "mac-server",
   "host_arch": "x86_64",
   "input_set": {
@@ -7,10 +7,10 @@
     "driver": "none",
     "oracle": "gguf_py_dequant_f64@evidence/kreg/oracle/Q5_1@60b06ab9a9eeec26f8125c9316ccbf4ee4713d1f@mag.bin:ab40f72d6c022ced917432dbc6b8699b2d783897a544a9b1b97b16548d022ef1,ref.bin:5be13116d0a81eeef11c4e7f0bb5763389322d72ff298d3fb146d33b2578a050,weights.bin:5c876069b18bdf65ece0d6f5f06bff0ff58c6d753c1f9811f30e90cf7ddf9ca3,x.bin:40a2e68540af4d9ba9b88bb45b3a62dd4bed07c089ea58856ab9f944da640f84",
     "row_sha256": "2dc272828f66c057737827ee44e789f8718dee6a144cafc54f3f7800e8276b64",
-    "source_sha256": "9e7efef9651a00e4eb492679c1010d8a86c525fd7b3790f81e8eec6ca410f750",
+    "source_sha256": "62694124cdf9205e613e5441bf9f8bf3650682f2a4affddfe79c4207ad69774c",
     "toolchain": "1.93.0"
   },
-  "input_set_hash": "2c6a4bdf1de6ca13f00ccf3306d1a4b568c70f1cdd8f3c2879bccb659ab69f39",
+  "input_set_hash": "ab772b36a1981b9eab393eeead7c99993c3a8a02a7ac2b83510da50311ffa9fd",
   "isa_detected": [
     "sse4.2",
     "avx",
@@ -20,6 +20,7 @@
     "avx512bw",
     "avx512vnni"
   ],
+  "isa_forced": "native",
   "kernel_id": "cpu.matvec.q5_1",
   "margin": {
     "acc": "f32",
@@ -49,7 +50,7 @@
   },
   "source_fn": "dequantize_q5_1",
   "tolerance_rel": 2e-6,
-  "ts": "2026-09-28T12:28:31Z",
+  "ts": "2026-10-12T00:52:24Z",
   "workload": {
     "in_dim": 1024,
     "out_dim": 32,
