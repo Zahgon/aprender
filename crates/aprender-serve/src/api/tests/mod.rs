@@ -78,3 +78,4 @@ mod completions_eog_stop_4339; // aprender#4339: raw /v1/completions stops on EO
 #[cfg(feature = "gpu")]
 mod completions_eog_stop_4345; // aprender#4345: the wgpu GpuModel /v1/completions path stops on EOS + EOG too
 mod stream_tool_calls_4918; // aprender#4918: streamed tool calls arrive as delta.tool_calls, finish tool_calls (T1-T12)
+mod embed_kind_eg3_4902; // APR-EMBED-001 EG-3 (#4902): embedding routes serve the CLI vector, generative routes name the kind, media refused (I-7)
