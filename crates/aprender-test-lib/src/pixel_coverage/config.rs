@@ -156,7 +156,10 @@ impl PixelCoverageConfig {
     /// # Errors
     /// Returns error if YAML parsing fails
     pub fn from_yaml(yaml: &str) -> Result<Self, serde_saphyr::Error> {
-        serde_saphyr::from_str(yaml)
+        serde_saphyr::from_str_with_options(
+            yaml,
+            serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false },
+        )
     }
 
     /// Serialize to JSON

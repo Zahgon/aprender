@@ -682,7 +682,7 @@ fn test_get_dataset() {
 #[test]
 fn test_error_display_yaml() {
     let yaml_err: serde_saphyr::Error =
-        serde_saphyr::from_str::<serde_json::Value>("{{").unwrap_err();
+        serde_saphyr::from_str_with_options::<serde_json::Value>("{{", serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false }).unwrap_err();
     let err = SceneError::Yaml(yaml_err);
     assert!(err.to_string().contains("YAML error"));
 }
@@ -729,7 +729,7 @@ fn test_error_display_missing_hash() {
 #[test]
 fn test_error_source() {
     let yaml_err: serde_saphyr::Error =
-        serde_saphyr::from_str::<serde_json::Value>("{{").unwrap_err();
+        serde_saphyr::from_str_with_options::<serde_json::Value>("{{", serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false }).unwrap_err();
     let err = SceneError::Yaml(yaml_err);
     assert!(err.source().is_some());
 

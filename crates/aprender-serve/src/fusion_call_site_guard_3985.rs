@@ -78,7 +78,7 @@ fn every_active_fusion_call_site_is_a_live_call_of_its_kernel() {
     };
     let contract = std::fs::read_to_string(root.join("contracts/kernel-fusion-v1.yaml"))
         .expect("read contract");
-    let doc: serde_json::Value = serde_saphyr::from_str(&contract).expect("parse contract");
+    let doc: serde_json::Value = serde_saphyr::from_str_with_options(&contract, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false }).expect("parse contract");
     let decisions = doc["fusion_decisions"]
         .as_object()
         .expect("fusion_decisions mapping");

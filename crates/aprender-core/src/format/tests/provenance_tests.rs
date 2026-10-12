@@ -183,7 +183,7 @@ fn falsify_ship_009_gate_apr_prov_004_has_partial_discharge_marker() {
         return;
     };
 
-    let doc: serde_json::Value = serde_saphyr::from_str(contract_yaml.as_str())
+    let doc: serde_json::Value = serde_saphyr::from_str_with_options(contract_yaml.as_str(), serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false })
         .expect("apr-provenance-v1.yaml must parse as YAML");
 
     let gates = doc["gates"]
