@@ -237,6 +237,12 @@ jobs:
           # 4. the satd class of the ratchet-semantics case table (rebuilds nothing)
           DR_ENV=()
           dr "$GITHUB_WORKSPACE" bash scripts/tests/ratchet_semantics_test.sh --class satd
+      # The hand-list guard (#3745 S3). LAB, not GATE: it runs here, never on a PR,
+      # merge-queue or release path. One ticket, one owner (#3745); a red updates it.
+      # Its case tables run with apr-cli lib tests; this is the tree scan.
+      - name: Release surfaces may not hand-list apr verbs or flags (#3745 S3)
+        if: ${{ !cancelled() }}
+        run: cargo test -p apr-cli --lib hand_list_guard -- --ignored
       - name: Summary
         if: always()
         run: |
