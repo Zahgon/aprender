@@ -329,7 +329,6 @@ crates/aprender-present-terminal/src/widgets/box_plot.rs::render_vertical_box 17
 crates/aprender-present-terminal/src/widgets/cluster_plot.rs::paint 26 63
 crates/aprender-present-terminal/src/widgets/core_stats_dataframe.rs::paint 19 39
 crates/aprender-present-terminal/src/widgets/dataframe.rs::event 14 43
-crates/aprender-present-terminal/src/widgets/disk_panel.rs::paint 15 31
 crates/aprender-present-terminal/src/widgets/force_graph.rs::render 13 29
 crates/aprender-present-terminal/src/widgets/graph.rs::render_braille 17 39
 crates/aprender-present-terminal/src/widgets/histogram.rs::paint_vertical 14 26
