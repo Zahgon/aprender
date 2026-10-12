@@ -1,0 +1,4 @@
+{"kind":"inbound","outcome":"answered:status"}
+{"kind":"inbound","outcome":"answered:prs"}
+{"kind":"inbound","outcome":"refused:no-route"}
+{"kind":"inbound","outcome":"answered:do"}

@@ -1,0 +1,23 @@
+metadata:
+  version: "1.0.0"
+  kind: pattern
+  created: '2026-10-12'
+  last_modified: '2026-10-12'
+  author: fixture
+  description: fixture — a JSONL ledger whose every row conforms; one row is one focus node (aprender#3610)
+name: inbound-rows
+version: "1.0.0"
+scope: fixture
+status: active
+entity:
+  type: json
+  ref: data/inbound.jsonl
+vocabulary:
+  prefix: inb
+  root_class: inb:Row
+shape:
+  targetClass: inb:Row
+  closed: true
+  properties:
+    - {path: inb:kind,    minCount: 1, maxCount: 1, in: [inbound]}
+    - {path: inb:outcome, minCount: 1, maxCount: 1, pattern: "^(answered:(status|findings|prs)|refused:[a-z-]+)$"}

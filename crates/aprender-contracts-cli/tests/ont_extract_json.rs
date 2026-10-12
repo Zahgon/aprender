@@ -157,6 +157,37 @@ fn a_torn_jsonl_line_declines_with_warn_naming_the_line_and_the_other_rows_are_f
     );
 }
 
+/// aprender#3610 arm 2: one JSONL row is one focus node. The control is the same contract over three
+/// conforming rows; it must Pass with exactly three focus nodes, so a build that reads the file as one node
+/// (or none) fails here before the pair below can mean anything.
+#[test]
+fn a_conforming_jsonl_entity_passes_with_one_focus_node_per_row() {
+    let r = gate(&fixture("json-jsonl-ok"));
+    assert_eq!(r.code, 0, "{}", show(&r));
+    let j = json_of(&r);
+    assert_eq!(j["verdict"], "Pass", "{}", show(&r));
+    assert_eq!(j["extra"]["focus_nodes_n"], 3, "{}", show(&r));
+    assert_eq!(j["extra"]["violations"], 0, "{}", show(&r));
+}
+
+/// aprender#3610, the reproduction as filed: a well-formed row whose `outcome` the `sh:pattern` forbids
+/// (`answered:do`) passed under `type: jsonl`. One planted row over the control's three must Fail at exit 1,
+/// naming the value, with the fourth row counted as a focus node.
+#[test]
+fn a_jsonl_row_the_pattern_forbids_fails_naming_the_value() {
+    let r = gate(&fixture("json-jsonl-pattern"));
+    assert_eq!(r.code, 1, "{}", show(&r));
+    let j = json_of(&r);
+    assert_eq!(j["verdict"], "Fail", "{}", show(&r));
+    assert_eq!(j["extra"]["focus_nodes_n"], 4, "{}", show(&r));
+    assert_eq!(j["extra"]["violations"], 1, "{}", show(&r));
+    assert!(
+        r.stdout.contains("answered:do"),
+        "the violation names the value\n{}",
+        show(&r)
+    );
+}
+
 #[test]
 fn pv_extract_carries_the_json_entity_and_is_deterministic() {
     let dir = tempfile::tempdir().expect("scratch");
