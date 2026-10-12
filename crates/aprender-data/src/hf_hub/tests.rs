@@ -1343,8 +1343,20 @@ task_categories: [
 ---
 ";
     let errors = DatasetCardValidator::validate_readme(readme);
-    // Should not crash, just return empty errors (YAML parse fails gracefully)
-    assert!(errors.is_empty());
+    // #5232: malformed front matter is reported, not skipped as clean.
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].field, "frontmatter");
+}
+
+/// #5232 RED row: `task_categories: [unclosed` must not validate clean, and the
+/// strict form (what `upload_readme_validated` calls) must refuse it.
+#[test]
+fn test_validator_unclosed_flow_sequence_is_an_error() {
+    let readme = "---\ntask_categories: [unclosed\n---\n# Card\n";
+    let errors = DatasetCardValidator::validate_readme(readme);
+    assert!(!errors.is_empty(), "broken front matter validated clean");
+    assert_eq!(errors[0].field, "frontmatter");
+    assert!(DatasetCardValidator::validate_readme_strict(readme).is_err());
 }
 
 #[test]

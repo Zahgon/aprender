@@ -151,13 +151,24 @@ impl DatasetCardValidator {
         };
 
         // Parse YAML. A card with `.inf`/`.nan` loaded under serde_yaml, so it
-        // must still parse here or validation is silently skipped; the
-        // non-finite option keeps `.inf` as text instead of an error (#5205).
-        let Ok(yaml) = serde_saphyr::from_str_with_options::<serde_json::Value>(
+        // must still parse here; the non-finite option keeps `.inf` as text
+        // instead of an error (#5205).
+        let yaml = match serde_saphyr::from_str_with_options::<serde_json::Value>(
             &yaml_content,
             serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false },
-        ) else {
-            return errors;
+        ) {
+            Ok(yaml) => yaml,
+            // #5232: front matter that does not parse is an error, never a pass.
+            // Returning the empty list here let a broken card validate clean and
+            // `upload_readme_validated` upload it.
+            Err(e) => {
+                errors.push(ValidationError {
+                    field: "frontmatter".to_string(),
+                    value: e.to_string(),
+                    suggestions: Vec::new(),
+                });
+                return errors;
+            }
         };
 
         // Validate task_categories
