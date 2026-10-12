@@ -623,7 +623,7 @@ fn prepare_tokens_gguf(config: &InferenceConfig, prompt: &str) -> Result<Prepare
         thinking_mode(config, prompt.to_string())?
     };
 
-    // #3793: a constraint applies to no-think output only (cop ruling (2) on #3568)
+    // #3793: a constraint applies to no-think output only (ruling (2) on #3568)
     if config.constraint.is_some() && prompt_opens_thinking(&formatted_prompt) {
         return Err(RealizarError::Constraint(
             crate::constrain::ConstraintError::WithThinking(
