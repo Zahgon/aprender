@@ -428,4 +428,33 @@ mod ggml_type_table_tests {
         let err = flat_byte_size(15, usize::MAX).expect_err("must not wrap");
         assert!(err.contains("overflows usize"), "got: {err}");
     }
+
+    /// #3418: serve's table against the one TRAITS table (trueno_quant), id by id.
+    #[test]
+    fn serve_table_matches_trueno_quant_traits() {
+        let mut diffs = Vec::new();
+        for (id, q) in trueno_quant::TRAITS.iter().enumerate() {
+            let id = u32::try_from(id).expect("43 ids fit u32");
+            let sized = q.blck_size > 0;
+            match traits(id) {
+                Some(t) if !sized => diffs.push(format!("{id} {}: serve sizes a removed id", t.name)),
+                Some(t) => {
+                    if t.name != q.name || t.blck_size != q.blck_size as usize || t.type_size != q.type_size as usize {
+                        diffs.push(format!(
+                            "{id}: serve ({}, {}, {}) vs TRAITS ({}, {}, {})",
+                            t.name, t.blck_size, t.type_size, q.name, q.blck_size, q.type_size
+                        ));
+                    }
+                }
+                None if sized => diffs.push(format!("{id} {}: TRAITS sizes it, serve does not ({:?})", q.name, name(id))),
+                None => {}
+            }
+        }
+        for t in GGML_TYPES {
+            if t.id as usize >= trueno_quant::TRAITS.len() {
+                diffs.push(format!("{} {}: serve sizes an id TRAITS lacks", t.id, t.name));
+            }
+        }
+        assert!(diffs.is_empty(), "{} rows differ:\n{}", diffs.len(), diffs.join("\n"));
+    }
 }

@@ -1,5 +1,5 @@
 metadata:
-  version: 1.0.0
+  version: 1.1.0
   created: '2026-09-20'
   author: PAIML Engineering
   description: |
@@ -41,10 +41,10 @@ metadata:
   - 'scripts/extract_ggml_traits.sh + scripts/extract_ggml_traits.awk -- the committed extraction command'
   - 'crates/aprender-quant/fixtures/ggml_traits.json -- the checked-in fixture, recording its sha'
   - 'crates/aprender-quant/src/ggml_type.rs -- GgmlType, QuantTraits, TRAITS[43]'
-  - 'GitHub #3430 (M1), #3431 (M2 reconciliation), #3421 (epic), #3563 (pin-derived artifacts, general case)'
+  - 'GitHub #3418 (serve sizes from TRAITS, one table), #3430 (M1), #3431 (M2 reconciliation), #3421 (epic), #3563 (pin-derived artifacts, general case)'
 
 name: ggml-type
-version: 1.0.0
+version: 1.1.0
 scope: aprender-quant (trueno_quant) ggml tensor-type enum and TRAITS table
 
 description: |
@@ -123,6 +123,16 @@ proof_obligations:
     ∀ i ∈ 0..43:
       (TRAITS[i].family ∉ {Float, Int, Removed}) ↔ fixture.types[i].is_quantized
 
+- id: GGMLT-INV-006
+  type: invariant
+  property: aprender-serve sizes a tensor from TRAITS, never from a table of its own (#3418)
+  formal: |
+    ∀ i ∈ 0..43:
+      serve::traits(i).is_some() ↔ TRAITS[i].blck_size > 0 ∧
+      serve::traits(i) ≠ None → serve::traits(i).{name,blck_size,type_size}
+                               ≡ TRAITS[i].{name,blck_size,type_size}
+    ∀ u ≥ 43: serve::traits(u) ≡ None
+
 falsification_tests:
 - id: FT-GGMLT-001
   rule: mutating any one TRAITS row turns the fixture test RED
@@ -180,6 +190,21 @@ falsification_tests:
   evidence: |
     Measured 2026-09-20 by mutation M3 (TRAITS[4].family Removed -> Affine),
     which this test catches independently of the row-for-row comparison.
+
+- id: FT-GGMLT-006
+  rule: aprender-serve's sizing table cannot drift from TRAITS (#3418, one table)
+  prediction: |
+    serve_table_matches_trueno_quant_traits walks every TRAITS id and lists each
+    row where serve's traits(id) differs in name, blck_size or type_size, sizes
+    an id TRAITS calls removed, or leaves unsized an id TRAITS sizes. Once serve
+    reads TRAITS it is GREEN; restoring a hand-written serve row (e.g. Q8_1
+    type_size 40) turns it RED with the id in the message.
+  test: cargo test -p aprender-serve --lib serve_table_matches_trueno_quant_traits
+  if_fails: 'aprender-serve sizes a ggml type differently from the upstream-extracted TRAITS table.'
+  evidence: |
+    Measured 2026-10-12 on origin/main 8c12fca86d, before the derivation: RED,
+    4 rows differ -- 39 MXFP4 (serve names it, sizes nothing), 40 NVFP4,
+    41 Q1_0, 42 Q2_0 (serve has no row); ids 0..38 equal.
 
 kani_harnesses:
 - id: KANI-GGMLT-001
