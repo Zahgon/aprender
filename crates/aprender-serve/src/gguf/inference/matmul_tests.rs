@@ -564,6 +564,36 @@ fn test_fused_matmul_unsupported_type() {
     }
 }
 
+/// #3418: ids 39..42 are now SIZED (from TRAITS) but have no dequantizer here.
+/// Sizing is not support: the matmul must still refuse them loudly, by name of
+/// the operation, rather than read their bytes as some other type.
+#[test]
+fn test_fused_matmul_refuses_sized_types_with_no_dequantizer_3418() {
+    let model = create_test_model(64, 100);
+    let input = vec![1.0f32; 64];
+    for qtype in 39u32..=42 {
+        let bytes = crate::gguf::ggml_type_table::byte_size(qtype, &[32, 64])
+            .unwrap_or_else(|e| panic!("TRAITS sizes {qtype}, so serve must: {e}"));
+        let weight = OwnedQuantizedTensor {
+            data: vec![0u8; bytes],
+            in_dim: 64,
+            out_dim: 32,
+            qtype,
+        };
+        let refused = model.fused_matmul(&input, &weight);
+        assert!(
+            matches!(refused, Err(RealizarError::UnsupportedOperation { .. })),
+            "qtype {qtype}: fused_matmul must refuse, got {refused:?}"
+        );
+        let mut output = vec![0.0f32; 32];
+        let refused = model.fused_matmul_into(&input, &weight, &mut output);
+        assert!(
+            matches!(refused, Err(RealizarError::UnsupportedOperation { .. })),
+            "qtype {qtype}: fused_matmul_into must refuse, got {refused:?}"
+        );
+    }
+}
+
 // ============================================================================
 // fused_matmul_into() Tests
 // ============================================================================
