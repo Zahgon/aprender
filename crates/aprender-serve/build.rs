@@ -308,7 +308,7 @@ fn emit_contract_bindings() {
         },
     };
 
-    let bindings: BindingFile = match serde_yaml_ng::from_str(&yaml_content) {
+    let bindings: BindingFile = match serde_saphyr::from_str(&yaml_content) {
         Ok(b) => b,
         Err(e) => {
             println!(
@@ -526,7 +526,7 @@ fn generate_arch_requirements_file() {
         },
     };
 
-    let req: ArchRequirements = match serde_yaml_ng::from_str(&yaml_content) {
+    let req: ArchRequirements = match serde_saphyr::from_str(&yaml_content) {
         Ok(r) => r,
         Err(e) => {
             println!(
@@ -626,7 +626,7 @@ fn generate_arch_constraints_file() {
         },
     };
 
-    let contract: ArchConstraintsContract = match serde_yaml_ng::from_str(&yaml_content) {
+    let contract: ArchConstraintsContract = match serde_saphyr::from_str(&yaml_content) {
         Ok(c) => c,
         Err(e) => {
             println!(
@@ -855,7 +855,7 @@ fn emit_contract_assertions() {
         let Ok(c) = std::fs::read_to_string(&p) else {
             continue;
         };
-        let Ok(y): Result<ContractYaml, _> = serde_yaml_ng::from_str(&c) else {
+        let Ok(y): Result<ContractYaml, _> = serde_saphyr::from_str(&c) else {
             continue;
         };
         for (eq, e) in &y.equations {

@@ -667,7 +667,7 @@ profile_ci:
   formats: [safetensors]
   backends: [cpu, gpu]
 "#;
-    let playbook: Playbook = serde_yaml::from_str(yaml).expect("parse");
+    let playbook: Playbook = serde_saphyr::from_str(yaml).expect("parse");
     let model_id = playbook.model_id();
     let (_passed, failed) = executor.run_perf_gates(Path::new("/mock/model"), &model_id, &playbook);
 

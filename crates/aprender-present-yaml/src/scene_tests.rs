@@ -681,8 +681,8 @@ fn test_get_dataset() {
 
 #[test]
 fn test_error_display_yaml() {
-    let yaml_err: serde_yaml_ng::Error =
-        serde_yaml_ng::from_str::<serde_yaml_ng::Value>("{{").unwrap_err();
+    let yaml_err: serde_saphyr::Error =
+        serde_saphyr::from_str::<serde_json::Value>("{{").unwrap_err();
     let err = SceneError::Yaml(yaml_err);
     assert!(err.to_string().contains("YAML error"));
 }
@@ -728,8 +728,8 @@ fn test_error_display_missing_hash() {
 
 #[test]
 fn test_error_source() {
-    let yaml_err: serde_yaml_ng::Error =
-        serde_yaml_ng::from_str::<serde_yaml_ng::Value>("{{").unwrap_err();
+    let yaml_err: serde_saphyr::Error =
+        serde_saphyr::from_str::<serde_json::Value>("{{").unwrap_err();
     let err = SceneError::Yaml(yaml_err);
     assert!(err.source().is_some());
 
