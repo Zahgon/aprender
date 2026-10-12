@@ -764,6 +764,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "aprender-decide-train"
+version = "0.71.1"
+dependencies = [
+ "aprender-decide",
+]
+
+[[package]]
 name = "aprender-distribute"
 version = "0.71.1"
 dependencies = [

@@ -1,0 +1,27 @@
+[package]
+name = "aprender-decide-train"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "The Rust Laya trainer: data rules and the fine-tune loop over aprender-decide"
+keywords = ["classification", "training", "laya", "modernbert", "aprender"]
+categories = ["science"]
+# NOT published: the one new crate of APR-LAYA-TRAIN-001, in-tree and CI-tested only.
+publish = false
+
+# Library only, no [[bin]] (FALSIFY-MONO-011 allows binaries only on the listed crates).
+[lib]
+name = "aprender_decide_train"
+path = "src/lib.rs"
+
+[dependencies]
+# The judge's public API only: `verify::normalized_sha256` is the `nfc-trim-ws-v1` hash
+# the demo data rule dedups and refuses overlap by. Path dependency: aprender-decide is
+# publish = false and has no workspace alias.
+aprender-decide = { path = "../aprender-decide" }
+
+[lints]
+workspace = true
