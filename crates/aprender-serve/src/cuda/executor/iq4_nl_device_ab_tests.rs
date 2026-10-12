@@ -1278,6 +1278,119 @@ mod iq4_nl_device_ab_tests {
         );
     }
 
+    /// #5119: the prefill dequant against the CPU oracle on SYNTHETIC blocks whose f16
+    /// scale is NaN, +Inf or -Inf -- the case no real tensor holds. One super-block per
+    /// row; every row has the same pseudo-random body and row r gets `scales[r]` written
+    /// at every offset in `at`. The oracle propagates NaN/Inf (pinned on the CPU side by
+    /// `the_q2_k_oracle_propagates_non_finite_d_and_dmin_5119`), so the kernel must too:
+    /// every value bit-exact, except that a NaN matches any NaN -- the sign and payload of
+    /// a NaN made by arithmetic are the hardware's default NaN and differ by design
+    /// between x86 and the GPU.
+    fn assert_non_finite_scale_dequant_matches_oracle(
+        qtype: crate::cuda::types::WeightQuantType,
+        block_bytes: usize,
+        at: &[usize],
+        oracle: impl Fn(&[u8]) -> Vec<f32>,
+    ) {
+        const K: usize = 256;
+        let scales: [u16; 4] = [0x3C00, 0x7E00, 0x7C00, 0xFC00]; // 1.0, NaN, +Inf, -Inf
+        let Some(mut exec) = create_executor() else {
+            eprintln!("SKIP: no CUDA device");
+            return;
+        };
+        let mut seed = 0x5119_u32;
+        let body: Vec<u8> = (0..block_bytes)
+            .map(|_| {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (seed >> 24) as u8
+            })
+            .collect();
+        let mut bytes = Vec::with_capacity(scales.len() * block_bytes);
+        for &s in &scales {
+            let mut b = body.clone();
+            for &o in at {
+                b[o..o + 2].copy_from_slice(&s.to_le_bytes());
+            }
+            bytes.extend(b);
+        }
+        let n = scales.len();
+        let want = oracle(&bytes);
+        assert_eq!(want.len(), n * K);
+        assert!(
+            want[K..].iter().any(|v| !v.is_finite()),
+            "#5119 {qtype:?}: the planted rows reach the oracle as non-finite values"
+        );
+        let nan = vec![f32::NAN; n * K];
+        exec.dequant_scratch = Some(GpuBuffer::from_host(&exec.context, &nan).unwrap());
+        exec.dequant_scratch_size = nan.len();
+        let w = GpuBuffer::from_host(&exec.context, &bytes).unwrap();
+        exec.qwen35_dequant_f32(qtype, w.as_ptr(), n as u32, K as u32)
+            .unwrap_or_else(|e| panic!("#5119 {qtype:?} dequant: {e:?}"));
+        exec.stream.synchronize().unwrap();
+        let mut got = vec![0.0f32; n * K];
+        exec.dequant_scratch
+            .as_ref()
+            .unwrap()
+            .copy_to_host(&mut got)
+            .unwrap();
+        let same = |g: f32, w: f32| g.to_bits() == w.to_bits() || (g.is_nan() && w.is_nan());
+        for (r, &s) in scales.iter().enumerate() {
+            let row = r * K..(r + 1) * K;
+            let bad = row.clone().filter(|&i| !same(got[i], want[i])).count();
+            let first = row.clone().find(|&i| !same(got[i], want[i]));
+            assert_eq!(
+                bad,
+                0,
+                "#5119 {qtype:?} scale {s:#06x} at {at:?}: {bad} of {K} values differ from the \
+                 CPU oracle; first {:?}",
+                first.map(|i| (i, got[i], want[i]))
+            );
+        }
+        eprintln!("#5119 {qtype:?}: {n} rows (1.0, NaN, +Inf, -Inf at {at:?}) match the oracle");
+    }
+
+    #[test]
+    fn the_q2_k_dequant_matches_the_oracle_on_a_non_finite_d_on_device() {
+        use crate::cuda::types::WeightQuantType::Q2K;
+        let q2k = |b: &[u8]| crate::quantize::dequantize_q2_k(b).expect("CPU oracle");
+        assert_non_finite_scale_dequant_matches_oracle(Q2K, 84, &[80], q2k);
+        assert_non_finite_scale_dequant_matches_oracle(Q2K, 84, &[82], q2k);
+        assert_non_finite_scale_dequant_matches_oracle(Q2K, 84, &[80, 82], q2k);
+    }
+
+    #[test]
+    fn the_iq_dequants_match_the_oracle_on_a_non_finite_d_on_device() {
+        use crate::cuda::types::WeightQuantType::{IQ2S, IQ2XXS, IQ3S, IQ3XXS};
+        use crate::quantize::iq_dispatch::dequantize_iq_tensor;
+        for (qtype, t, b) in [
+            (
+                IQ2XXS,
+                crate::quantize::iq2_xxs::GGML_TYPE_IQ2_XXS,
+                crate::quantize::iq2_xxs::IQ2_XXS_BLOCK_BYTES,
+            ),
+            (
+                IQ3XXS,
+                crate::quantize::iq3_xxs::GGML_TYPE_IQ3_XXS,
+                crate::quantize::iq3_xxs::IQ3_XXS_BLOCK_BYTES,
+            ),
+            (
+                IQ3S,
+                crate::quantize::iq3_s::GGML_TYPE_IQ3_S,
+                crate::quantize::iq3_s::IQ3_S_BLOCK_BYTES,
+            ),
+        ] {
+            assert_non_finite_scale_dequant_matches_oracle(qtype, b, &[0], |x| {
+                dequantize_iq_tensor(t, x).expect("CPU oracle")
+            });
+        }
+        assert_non_finite_scale_dequant_matches_oracle(
+            IQ2S,
+            crate::quantize::iq2_s::IQ2_S_BLOCK_BYTES,
+            &[0],
+            |x| crate::quantize::iq2_s::dequantize_iq2_s(x).expect("CPU oracle"),
+        );
+    }
+
     /// The same comparison at a shape whose rows do NOT divide evenly, so the
     /// kernel's `x_idx >= k_dim` guard is exercised rather than assumed.
     #[test]

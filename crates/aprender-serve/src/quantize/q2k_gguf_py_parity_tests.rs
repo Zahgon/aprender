@@ -192,20 +192,31 @@ fn the_q2_k_oracle_propagates_non_finite_d_and_dmin_5119() {
     const INF: u16 = 0x7C00;
     const NAN: u16 = 0x7E00;
     let dq = |qs, d, dmin| super::dequant::dequantize_q2_k(&block(qs, d, dmin)).expect("Q2_K");
-    for (label, qs, d, dmin) in [
-        ("d=NaN", 0x55u8, NAN, ZERO),
-        ("dmin=NaN", 0x55, ONE, NAN),
-        ("d=+Inf q=1", 0x55, INF, ZERO),
-        ("d=+Inf q=0", 0x00, INF, ZERO),
-        ("dmin=+Inf", 0x55, ONE, INF),
-        ("d=+Inf dmin=+Inf q=1", 0x55, INF, INF),
+    // Measured on x86 2026-10-12. NaN sign/payload bits are the host's default NaN and
+    // are not pinned; the class is: NaN, +Inf or -Inf, never 0.
+    let (nan, pinf, ninf) = ("NaN", "+Inf", "-Inf");
+    let class = |v: f32| match v {
+        v if v.is_nan() => nan,
+        f32::INFINITY => pinf,
+        f32::NEG_INFINITY => ninf,
+        _ => "finite",
+    };
+    for (label, qs, d, dmin, want) in [
+        ("d=NaN", 0x55u8, NAN, ZERO, nan),
+        ("dmin=NaN", 0x55, ONE, NAN, nan),
+        ("d=+Inf q=1", 0x55, INF, ZERO, pinf),
+        ("d=+Inf q=0 (Inf*0)", 0x00, INF, ZERO, nan),
+        ("dmin=+Inf", 0x55, ONE, INF, ninf),
+        ("d=+Inf dmin=+Inf (Inf-Inf)", 0x55, INF, INF, nan),
     ] {
         let out = dq(qs, d, dmin);
-        let first = out[0];
-        eprintln!(
-            "PROBE-5119 {label}: out[0]={first} bits={:#010x} all-equal={}",
-            first.to_bits(),
-            out.iter().all(|v| v.to_bits() == first.to_bits())
+        let bad = out.iter().filter(|&&v| class(v) != want).count();
+        assert_eq!(
+            bad,
+            0,
+            "#5119 {label}: {bad} of {} values are not {want}; out[0]={}",
+            out.len(),
+            out[0]
         );
     }
 }
