@@ -178,7 +178,9 @@ impl OwnedQuantizedModel {
         //              arm, the IQ*/Q2_K/Q3_K dequant fallback (PMAT-3477 / #3091)
         let data = &weight.data;
         match weight.qtype {
-            GGUF_TYPE_F32 => Ok(Self::fused_matmul_f32(input, data, in_dim, out_dim, seq_len)),
+            GGUF_TYPE_F32 => Ok(Self::fused_matmul_f32(
+                input, data, in_dim, out_dim, seq_len,
+            )),
             GGUF_TYPE_BF16 => Ok(float16_matmul(
                 input,
                 data,
