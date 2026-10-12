@@ -859,15 +859,13 @@ fn recheck(lake: Lake<'_>, lean_dir: &Path, lc: Leanchecker, r: &mut Report) {
         return;
     }
     // A scope that cannot be created would otherwise read as leanchecker's own non-zero exit: probe it first.
-    if lc.scope.is_some() {
-        if !scope_creatable() {
-            r.decline = Some(
-                "`systemd-run --user --scope` is unavailable here: leanchecker did not run (pass \
-                 --leanchecker-unscoped only on a host where an uncapped run cannot starve other work, #4348)"
-                    .to_string(),
-            );
-            return;
-        }
+    if lc.scope.is_some() && !scope_creatable() {
+        r.decline = Some(
+            "`systemd-run --user --scope` is unavailable here: leanchecker did not run (pass \
+             --leanchecker-unscoped only on a host where an uncapped run cannot starve other work, #4348)"
+                .to_string(),
+        );
+        return;
     }
     let argv = recheck_argv(lake.bin, lc);
     let out = Command::new(&argv[0])
@@ -1234,7 +1232,6 @@ mod tests {
         std::fs::write(&slow, body).expect("w");
         let t1 = Some(Leanchecker {
             timeout_s: 1,
-            scope: None,
             ulimit_v_kib: None,
             threads: 8,
             scope: None,
@@ -1500,7 +1497,6 @@ mod tests {
         std::fs::write(&slow, body).expect("w");
         let t1 = Some(Leanchecker {
             timeout_s: 1,
-            scope: None,
             ulimit_v_kib: None,
             threads: 8,
             scope: None,
