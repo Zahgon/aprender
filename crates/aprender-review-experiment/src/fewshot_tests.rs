@@ -54,7 +54,7 @@ fn pool() -> Vec<(Item, String)> {
 }
 
 #[test]
-fn falsify_rxf_001_a_test_item_in_the_pool_is_an_error() {
+fn falsify_rxc_004_a_test_item_in_the_pool_is_an_error() {
     let mut p = pool();
     p.push(item(
         "T01",
@@ -73,7 +73,7 @@ fn falsify_rxf_001_a_test_item_in_the_pool_is_an_error() {
 }
 
 #[test]
-fn falsify_rxf_002_retrieval_ranks_by_similarity_and_never_returns_the_query() {
+fn falsify_rxc_005_retrieval_ranks_by_similarity_and_never_returns_the_query() {
     let p = pool();
     let (q, qd) = item(
         "Q",
@@ -94,7 +94,7 @@ fn falsify_rxf_002_retrieval_ranks_by_similarity_and_never_returns_the_query() {
 }
 
 #[test]
-fn falsify_rxf_003_a_rendered_prompt_carrying_a_test_hunk_is_refused() {
+fn falsify_rxc_006_a_rendered_prompt_carrying_a_test_hunk_is_refused() {
     let p = pool();
     let test = item(
         "T07",
