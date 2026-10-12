@@ -102,6 +102,9 @@ batuta-common = { workspace = true }
 # Content-addressable hashing (native-only, used by playbook cache)
 blake3 = { version = "1.8", optional = true }
 
+# L22 (#4600): prompt_sha256 of the bytes an agent turn handed to its driver
+sha2 = { version = "0.10", optional = true }
+
 # Ordered maps preserving YAML key order (native-only, used by playbook stages)
 indexmap = { version = "2.7", features = ["serde"], optional = true }
 
@@ -288,7 +291,7 @@ banco = ["native", "axum", "tower", "async-stream", "tokio-stream", "aprender", 
 coursera-assets = ["resvg", "native"]
 
 # Autonomous agent runtime (perceive-reason-act loop)
-agents = ["native"]
+agents = ["native", "sha2"]
 # Agent with local inference (RealizarDriver)
 agents-inference = ["agents", "inference"]
 # Agent with RAG (TruenoMemory + RagTool)

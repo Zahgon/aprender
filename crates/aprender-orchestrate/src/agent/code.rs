@@ -1474,6 +1474,10 @@ fn emit_ccpa_trace(
         "elapsed_ms": elapsed.as_millis() as u64,
         "tokens_in": result.usage.input_tokens,
         "tokens_out": result.usage.output_tokens,
+        "input_bytes_sent": result.input.input_bytes_sent,
+        "input_bytes_consumed": result.input.input_bytes_consumed,
+        "prompt_sha256": result.input.prompt_sha256,
+        "prompt_tokens": result.input.prompt_tokens,
     });
 
     let body = format!("{}\n{}\n{}\n{}\n", session_start, user_prompt, assistant_turn, session_end);

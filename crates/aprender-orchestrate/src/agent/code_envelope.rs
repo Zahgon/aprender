@@ -69,6 +69,7 @@ impl CodeOutcome {
             AgentError::CircuitBreak(_) => "circuit_break",
             AgentError::MaxIterationsReached => "max_iterations_reached",
             AgentError::ContextOverflow { .. } => "context_overflow",
+            AgentError::InputNotConsumed { .. } => "input_not_consumed",
             AgentError::ManifestError(_) => "manifest_error",
             AgentError::Memory(_) => "memory_error",
         };
@@ -144,6 +145,13 @@ pub fn envelope(
         "total_cost_usd": 0,
         "backend": backend.map_or(serde_json::Value::Null, BackendReport::to_json),
     });
+    // L22 (#4600): a result that ran states how much of its prompt the driver got.
+    if let Some(r) = result {
+        doc["input_bytes_sent"] = r.input.input_bytes_sent.into();
+        doc["input_bytes_consumed"] = r.input.input_bytes_consumed.into();
+        doc["prompt_sha256"] = r.input.prompt_sha256.as_str().into();
+        doc["prompt_tokens"] = r.input.prompt_tokens.into();
+    }
     if let Some(o) = outcome {
         doc["error"] = serde_json::json!({
             "kind": o.kind,

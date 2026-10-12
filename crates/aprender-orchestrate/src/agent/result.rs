@@ -19,6 +19,55 @@ pub struct AgentLoopResult {
     pub iterations: u32,
     /// Number of tool calls made.
     pub tool_calls: u32,
+    /// L22 (#4600): how much of the turn's prompt reached the driver.
+    pub input: InputAccount,
+}
+
+/// L22 (#4600): a turn's proof that the driver was handed its whole prompt.
+///
+/// Measured on the request itself, not assumed from the prompt: a result that
+/// exits 0 without `input_bytes_consumed == input_bytes_sent` proves nothing.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct InputAccount {
+    /// Bytes of the prompt the turn was asked to answer.
+    pub input_bytes_sent: u64,
+    /// Bytes of that prompt present in the request handed to the driver.
+    pub input_bytes_consumed: u64,
+    /// SHA-256 (lowercase hex) of the consumed bytes.
+    pub prompt_sha256: String,
+    /// Tokens of the consumed prompt, by the counter that sizes the window.
+    pub prompt_tokens: u64,
+}
+
+impl InputAccount {
+    /// Account for `prompt` against the messages of a driver request.
+    ///
+    /// The consumed bytes are the request's last `User` message when that message
+    /// is part of `prompt`, else nothing: an evicted or shortened prompt can never
+    /// count as consumed.
+    pub fn measure(prompt: &str, request: &[super::driver::Message], prompt_tokens: u64) -> Self {
+        use sha2::{Digest, Sha256};
+        let consumed = request
+            .iter()
+            .rev()
+            .find_map(|m| match m {
+                super::driver::Message::User(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .filter(|text| prompt.contains(*text))
+            .unwrap_or("");
+        Self {
+            input_bytes_sent: prompt.len() as u64,
+            input_bytes_consumed: consumed.len() as u64,
+            prompt_sha256: format!("{:x}", Sha256::digest(consumed.as_bytes())),
+            prompt_tokens,
+        }
+    }
+
+    /// The driver was handed every byte of the prompt.
+    pub fn is_complete(&self) -> bool {
+        self.input_bytes_consumed == self.input_bytes_sent
+    }
 }
 
 /// Token usage counters.
@@ -95,6 +144,14 @@ pub enum AgentError {
         required: usize,
         /// Tokens available.
         available: usize,
+    },
+    /// L22 (#4600): the driver request carried less of the prompt than was sent.
+    #[error("input not consumed: the driver was handed {consumed} of the prompt's {sent} bytes")]
+    InputNotConsumed {
+        /// Bytes of the prompt.
+        sent: u64,
+        /// Bytes of the prompt in the driver request.
+        consumed: u64,
     },
     /// Manifest parsing error.
     #[error("manifest error: {0}")]
@@ -196,6 +253,7 @@ mod tests {
             usage: TokenUsage { input_tokens: 10, output_tokens: 5 },
             iterations: 2,
             tool_calls: 1,
+            input: InputAccount::default(),
         };
         let json = serde_json::to_string(&result).expect("serialize failed");
         assert!(json.contains("\"text\":\"hello\""));

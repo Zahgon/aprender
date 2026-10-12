@@ -16,7 +16,7 @@ use super::guard::{LoopGuard, LoopVerdict};
 use super::manifest::AgentManifest;
 use super::memory::{MemorySource, MemorySubstrate};
 use super::phase::LoopPhase;
-use super::result::{AgentError, AgentLoopResult, StopReason};
+use super::result::{AgentError, AgentLoopResult, InputAccount, StopReason};
 use super::runtime_helpers::{call_with_retry, emit, truncate_messages};
 use super::tool::ToolRegistry;
 use crate::serve::context::{
@@ -112,6 +112,8 @@ pub async fn run_agent_turn(
 
     let mut last_tool_sig: Option<String> = None; // PMAT-172: stuck-loop detection
     let mut repeat_count: u32 = 0;
+    // L22 (#4600): the account of the first request, the one that carried the prompt.
+    let mut input: Option<InputAccount> = None;
 
     loop {
         check_verdict(guard.check_iteration())?;
@@ -124,8 +126,9 @@ pub async fn run_agent_turn(
         // ═══ REASON ═══
         emit(stream_tx.as_ref(), StreamEvent::PhaseChange { phase: LoopPhase::Reason }).await;
 
-        let response =
-            reason_step(driver, &messages, &tool_defs, manifest, &system, &context).await?;
+        let (response, account) =
+            reason_step(driver, &messages, query, &tool_defs, manifest, &system, &context).await?;
+        input.get_or_insert(account);
         check_verdict(guard.record_usage(&response.usage))?;
 
         // INV-005: Estimate cost and enforce budget (Muda)
@@ -153,8 +156,16 @@ pub async fn run_agent_turn(
                 if !retained.is_empty() {
                     history.push(Message::Assistant(retained));
                 }
-                return finish_loop(&response, &guard, manifest, query, memory, stream_tx.as_ref())
-                    .await;
+                return finish_loop(
+                    &response,
+                    &guard,
+                    input.take().unwrap_or_default(),
+                    manifest,
+                    query,
+                    memory,
+                    stream_tx.as_ref(),
+                )
+                .await;
             }
             StopReason::ToolUse => {
                 // PMAT-172: detect stuck loops (4+ identical tool calls → break)
@@ -170,6 +181,7 @@ pub async fn run_agent_turn(
                     return finish_loop(
                         &response,
                         &guard,
+                        input.take().unwrap_or_default(),
                         manifest,
                         query,
                         memory,
@@ -260,12 +272,23 @@ fn check_verdict(verdict: LoopVerdict) -> Result<(), AgentError> {
 async fn reason_step(
     driver: &dyn LlmDriver,
     messages: &[Message],
+    query: &str,
     tool_defs: &[super::driver::ToolDefinition],
     manifest: &AgentManifest,
     system: &str,
     context: &ContextManager,
-) -> Result<CompletionResponse, AgentError> {
+) -> Result<(CompletionResponse, InputAccount), AgentError> {
     let truncated_messages = truncate_messages(messages, context)?;
+
+    // L22 (#4600): measure the request the driver gets, and refuse it short.
+    let prompt_tokens = TokenEstimator::new().estimate(query) as u64;
+    let account = InputAccount::measure(query, &truncated_messages, prompt_tokens);
+    if !account.is_complete() {
+        return Err(AgentError::InputNotConsumed {
+            sent: account.input_bytes_sent,
+            consumed: account.input_bytes_consumed,
+        });
+    }
 
     let request = CompletionRequest {
         model: String::new(),
@@ -276,12 +299,13 @@ async fn reason_step(
         system: Some(system.to_string()),
     };
 
-    call_with_retry(driver, &request).await
+    Ok((call_with_retry(driver, &request).await?, account))
 }
 
 async fn finish_loop(
     response: &CompletionResponse,
     guard: &LoopGuard,
+    input: InputAccount,
     manifest: &AgentManifest,
     query: &str,
     memory: &dyn MemorySubstrate,
@@ -303,6 +327,7 @@ async fn finish_loop(
         usage: guard.usage().clone(),
         iterations: guard.current_iteration(),
         tool_calls: guard.total_tool_calls(),
+        input,
     })
 }
 
@@ -480,6 +505,9 @@ mod tests;
 #[cfg(test)]
 #[path = "runtime_tests_4599.rs"]
 mod tests_4599;
+#[cfg(test)]
+#[path = "runtime_tests_4600.rs"]
+mod tests_4600;
 #[cfg(test)]
 #[path = "runtime_tests_advanced.rs"]
 mod tests_advanced;
