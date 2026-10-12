@@ -1,0 +1,18 @@
+- id: PMAT-5119
+  github_issue: 5119
+  item_type: task
+  title: Q2_K prefill dequant non-finite d/dmin vs CPU oracle (#5119)
+  status: planned
+  priority: medium
+  assigned_to: null
+  created: 2026-10-12T12:56:44Z
+  updated: 2026-10-12T12:56:44Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 3998

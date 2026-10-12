@@ -172,3 +172,40 @@ fn q2_k_geometry_the_kernel_relies_on_3960() {
         "scale-byte use per lane mapping: {uses:?}"
     );
 }
+
+/// #5119: what the CPU oracle writes for a block whose `d` or `dmin` is NaN or Inf.
+/// The GPU prefill dequant (#5117) is held bit-exact to this decoder, so its output on
+/// non-finite scales is pinned here first: f16 NaN/Inf pass through `read_f16` unchanged
+/// and IEEE arithmetic carries them into the weights. It does NOT write 0.
+#[test]
+fn the_q2_k_oracle_propagates_non_finite_d_and_dmin_5119() {
+    // one super-block: scales all 0x11 (scale 1, min 1), qs given, d/dmin given
+    fn block(qs: u8, d: u16, dmin: u16) -> Vec<u8> {
+        let mut b = vec![0x11u8; 16];
+        b.extend(std::iter::repeat(qs).take(64));
+        b.extend(d.to_le_bytes());
+        b.extend(dmin.to_le_bytes());
+        b
+    }
+    const ONE: u16 = 0x3C00;
+    const ZERO: u16 = 0x0000;
+    const INF: u16 = 0x7C00;
+    const NAN: u16 = 0x7E00;
+    let dq = |qs, d, dmin| super::dequant::dequantize_q2_k(&block(qs, d, dmin)).expect("Q2_K");
+    for (label, qs, d, dmin) in [
+        ("d=NaN", 0x55u8, NAN, ZERO),
+        ("dmin=NaN", 0x55, ONE, NAN),
+        ("d=+Inf q=1", 0x55, INF, ZERO),
+        ("d=+Inf q=0", 0x00, INF, ZERO),
+        ("dmin=+Inf", 0x55, ONE, INF),
+        ("d=+Inf dmin=+Inf q=1", 0x55, INF, INF),
+    ] {
+        let out = dq(qs, d, dmin);
+        let first = out[0];
+        eprintln!(
+            "PROBE-5119 {label}: out[0]={first} bits={:#010x} all-equal={}",
+            first.to_bits(),
+            out.iter().all(|v| v.to_bits() == first.to_bits())
+        );
+    }
+}
