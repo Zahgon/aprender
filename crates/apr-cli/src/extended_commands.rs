@@ -1562,6 +1562,8 @@ pub enum ModelCommands {
         json: bool,
     },
     /// Build a release dir plus model-release-v1.json from pacha lineage (deterministic)
+    // `--version` is this verb's own (the release's X.Y.Z), so clap's generated one is off here.
+    #[command(disable_version_flag = true)]
     Pack {
         /// Registered model: id, content hash, recorded sha256 or model file
         #[arg(value_name = "MODEL")]
