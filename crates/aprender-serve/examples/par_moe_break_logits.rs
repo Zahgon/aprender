@@ -3,9 +3,10 @@
 //! `cargo run --release -p aprender-serve --example par_moe_break_logits -- GOOD BROKEN IDS`
 //!
 //! Runs two CPU qwen3moe forwards on the same prompt ids (comma-separated)
-//! against GOOD and BROKEN: the full-sequence `forward_qwen3_moe` (FP32
-//! activations) and the cached per-token forward `apr run` takes (Q8_K
-//! activations, the production path; 1i). For each it prints the argmax of
+//! against GOOD and BROKEN: the full-sequence `forward_qwen3_moe` (the path
+//! `apr trace` takes) and the cached per-token forward `apr run` takes (the
+//! production path; 1i, 1k). Both use Q8_K activations; they differ only in
+//! attention summation order, which Q8_K rounding amplifies. For each it prints the argmax of
 //! each model and the size of the logits difference. A swap the forward never
 //! reads prints a zero difference.
 
@@ -92,7 +93,7 @@ fn main() -> Res<()> {
     let ids: Vec<u32> = ids.split(',').map(str::parse).collect::<Result<_, _>>()?;
     let (gf, gc) = logits(good, &ids)?;
     let (bf, bc) = logits(broken, &ids)?;
-    println!("full FP32: {}", compare(&gf, &bf));
+    println!("full: {}", compare(&gf, &bf));
     println!("cached Q8_K: {}", compare(&gc, &bc));
     Ok(())
 }

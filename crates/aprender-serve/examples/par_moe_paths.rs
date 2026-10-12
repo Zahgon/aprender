@@ -3,9 +3,11 @@
 //! `cargo run --release -p aprender-serve --example par_moe_paths -- MODEL IDS`
 //!
 //! On the same prompt ids (comma-separated), prints the argmax and top-2
-//! margin of three CPU forwards: the full-sequence `forward_qwen3_moe`, and
-//! the cached per-token `forward_single_qwen3_moe_with_cache` (the path
-//! `apr run` takes) with the default Q8_K activations and with FP32 ones.
+//! margin of four CPU forwards: the full-sequence `forward_qwen3_moe` (the
+//! path `apr trace` and `apr bench` take) and the cached per-token
+//! `forward_single_qwen3_moe_with_cache` (the path `apr run` takes), each with
+//! the default Q8_K activations and with FP32 ones, and the logits cosine
+//! between them.
 
 use realizar::gguf::qwen3_moe_load::{load_qwen3_moe_layer, Qwen3MoeQuantizedLayer};
 use realizar::gguf::{MappedGGUFModel, OwnedQuantizedKVCache, OwnedQuantizedModel};
@@ -59,6 +61,16 @@ fn top2(v: &[f32]) -> String {
     format!("argmax {a} margin {:e}", v[a] - second)
 }
 
+fn cosine(a: &[f32], b: &[f32]) -> f64 {
+    let dot: f64 = a
+        .iter()
+        .zip(b)
+        .map(|(x, y)| f64::from(*x) * f64::from(*y))
+        .sum();
+    let n = |v: &[f32]| v.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>().sqrt();
+    dot / (n(a) * n(b))
+}
+
 fn main() -> Res<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let [path, ids] = args.as_slice() else {
@@ -83,9 +95,19 @@ fn main() -> Res<()> {
         shape,
         data: mapped.data(),
     };
-    println!("full forward_qwen3_moe: {}", top2(&moe.full(&ids)?));
-    println!("cached, Q8_K activations: {}", top2(&moe.cached(&ids)?));
+    let full = moe.full(&ids)?;
+    let full32 = with_fp32_activations(|| moe.full(&ids))?;
+    let q8k = moe.cached(&ids)?;
     let fp32 = with_fp32_activations(|| moe.cached(&ids))?;
+    println!("full forward_qwen3_moe: {}", top2(&full));
+    println!("full, FP32 activations: {}", top2(&full32));
+    println!("cached, Q8_K activations: {}", top2(&q8k));
     println!("cached, FP32 activations: {}", top2(&fp32));
+    println!(
+        "cosine full/cached Q8_K {:.9}; full FP32/cached FP32 {:.9}; full/full FP32 {:.9}",
+        cosine(&full, &q8k),
+        cosine(&full32, &fp32),
+        cosine(&full, &full32),
+    );
     Ok(())
 }
