@@ -19,35 +19,39 @@ impl GgufToAprQ4KConverter {
     /// we cannot size is to say so.
     fn ggml_tensor_byte_size_h(qtype: u32, num_elements: usize) -> Result<usize> {
         use crate::gguf::{
-            GGUF_TYPE_BF16, GGUF_TYPE_F16, GGUF_TYPE_F32, GGUF_TYPE_Q2_K, GGUF_TYPE_Q3_K,
-            GGUF_TYPE_Q4_0, GGUF_TYPE_Q4_1, GGUF_TYPE_Q4_K, GGUF_TYPE_Q5_0, GGUF_TYPE_Q5_1,
-            GGUF_TYPE_Q5_K, GGUF_TYPE_Q6_K, GGUF_TYPE_Q8_0,
+            ggml_type_table::traits, GGUF_TYPE_BF16, GGUF_TYPE_F16, GGUF_TYPE_F32, GGUF_TYPE_Q2_K,
+            GGUF_TYPE_Q3_K, GGUF_TYPE_Q4_0, GGUF_TYPE_Q4_1, GGUF_TYPE_Q4_K, GGUF_TYPE_Q5_0,
+            GGUF_TYPE_Q5_1, GGUF_TYPE_Q5_K, GGUF_TYPE_Q6_K, GGUF_TYPE_Q8_0,
         };
-        use crate::quantize::QK_K;
 
-        // Named, not bare numerals: these are the same super-block sizes
-        // gguf/metadata.rs reads with, and the two must not drift apart again.
-        const QK: usize = 32; // legacy (non-K) block size
-        let size = match qtype {
-            GGUF_TYPE_F32 => num_elements * 4,
-            GGUF_TYPE_F16 | GGUF_TYPE_BF16 => num_elements * 2,
-            GGUF_TYPE_Q4_0 => num_elements.div_ceil(QK) * 18,
-            GGUF_TYPE_Q4_1 => num_elements.div_ceil(QK) * 20,
-            GGUF_TYPE_Q5_0 => num_elements.div_ceil(QK) * 22,
-            GGUF_TYPE_Q5_1 => num_elements.div_ceil(QK) * 24,
-            GGUF_TYPE_Q8_0 => num_elements.div_ceil(QK) * 34,
-            GGUF_TYPE_Q2_K => num_elements.div_ceil(QK_K) * 84,
-            GGUF_TYPE_Q3_K => num_elements.div_ceil(QK_K) * 110,
-            GGUF_TYPE_Q4_K => num_elements.div_ceil(QK_K) * 144,
-            GGUF_TYPE_Q5_K => num_elements.div_ceil(QK_K) * 176,
-            GGUF_TYPE_Q6_K => num_elements.div_ceil(QK_K) * 210,
-            other => {
+        // #3418: which types this converter reads is its own list; what each one
+        // weighs comes from the one sizing table (FT-GGMLT-007).
+        let admitted = matches!(
+            qtype,
+            GGUF_TYPE_F32
+                | GGUF_TYPE_F16
+                | GGUF_TYPE_BF16
+                | GGUF_TYPE_Q4_0
+                | GGUF_TYPE_Q4_1
+                | GGUF_TYPE_Q5_0
+                | GGUF_TYPE_Q5_1
+                | GGUF_TYPE_Q8_0
+                | GGUF_TYPE_Q2_K
+                | GGUF_TYPE_Q3_K
+                | GGUF_TYPE_Q4_K
+                | GGUF_TYPE_Q5_K
+                | GGUF_TYPE_Q6_K
+        );
+        let size = match traits(qtype).filter(|_| admitted) {
+            Some(t) => num_elements.div_ceil(t.blck_size) * t.type_size,
+            None => {
+                let other = qtype;
                 return Err(RealizarError::FormatError {
                     reason: format!(
-                        "GGUF tensor uses ggml type {other}, whose byte size this converter \
-                         does not know. Refusing to guess: assuming F32 would mis-size the \
-                         tensor and read past it into the next one. Add the super-block size \
-                         for this type to ggml_tensor_byte_size_h."
+                        "GGUF tensor uses ggml type {other}, which this converter does not \
+                         read. Refusing to guess: assuming F32 would mis-size the tensor and \
+                         read past it into the next one. Admit the type in \
+                         ggml_tensor_byte_size_h once the converter reads it."
                     ),
                 })
             }

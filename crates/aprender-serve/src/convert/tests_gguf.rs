@@ -432,3 +432,25 @@
             result
         );
     }
+
+    /// FT-GGMLT-007 (#3418): the GGUF->APR Q4_K converter sizes every tensor it
+    /// admits from the one sizing table, and admits exactly the 13 types it reads.
+    #[test]
+    fn converter_sizes_from_the_one_ggml_table_3418() {
+        use crate::gguf::ggml_type_table::traits;
+        const ADMITTED: [u32; 13] = [0, 1, 2, 3, 6, 7, 8, 10, 11, 12, 13, 14, 30];
+        let mut wrong = Vec::new();
+        for id in 0..64u32 {
+            for n in [1usize, 31, 32, 33, 255, 256, 257, 4096] {
+                let got = GgufToAprQ4KConverter::ggml_tensor_byte_size_h(id, n).ok();
+                let want = ADMITTED
+                    .contains(&id)
+                    .then(|| traits(id).map(|t| n.div_ceil(t.blck_size) * t.type_size))
+                    .flatten();
+                if got != want {
+                    wrong.push(format!("{id} n={n}: {got:?} != {want:?}"));
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{} rows differ: {wrong:?}", wrong.len());
+    }
