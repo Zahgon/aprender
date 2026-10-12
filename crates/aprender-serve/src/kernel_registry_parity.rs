@@ -422,9 +422,9 @@ struct Margin {
 }
 
 /// EM-DOT for these kernels: f32 accumulation over one row, stored as f32, no flush-to-zero.
-fn em_dot(k: usize) -> aprender_kernel_oracle::ErrorModel {
-    use aprender_kernel_oracle::Dtype;
-    aprender_kernel_oracle::ErrorModel::Dot {
+fn em_dot(k: usize) -> crate::kernel_oracle::ErrorModel {
+    use crate::kernel_oracle::Dtype;
+    crate::kernel_oracle::ErrorModel::Dot {
         k,
         acc: Dtype::F32,
         out: Dtype::F32,
@@ -444,7 +444,7 @@ fn margin_of(got: &[f32], deq: &[f32], x_used: &[f32], oracle: &[f64], in_dim: u
                 .sum()
         })
         .collect();
-    let r = aprender_kernel_oracle::margin::judge_model(got, oracle, &mags, &em_dot(in_dim))
+    let r = crate::kernel_oracle::margin::judge_model(got, oracle, &mags, &em_dot(in_dim))
         .unwrap_or_else(|e| panic!("EM-DOT K={in_dim} refused: {e:?}"));
     Margin {
         max: r.max_margin,
@@ -858,13 +858,9 @@ fn measure_fixture(k: &FixtureKernel, f: &Fixture) -> Measured {
     assert_eq!(f.magnitudes.len(), out_dim, "{}: mag length", k.id);
     // Every fixture row is precision=f32: the kernel consumes x as given, so ref.bin is already
     // the oracle on the activations it saw (KTEST-001 §0.4).
-    let r = aprender_kernel_oracle::margin::judge_model(
-        &y,
-        &f.reference,
-        &f.magnitudes,
-        &em_dot(in_dim),
-    )
-    .unwrap_or_else(|e| panic!("{}: EM-DOT K={in_dim} refused: {e:?}", k.id));
+    let r =
+        crate::kernel_oracle::margin::judge_model(&y, &f.reference, &f.magnitudes, &em_dot(in_dim))
+            .unwrap_or_else(|e| panic!("{}: EM-DOT K={in_dim} refused: {e:?}", k.id));
     Measured {
         max_abs_err,
         max_rel_err: max_abs_err / scale,

@@ -879,10 +879,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aprender-kernel-oracle"
-version = "0.71.1"
-
-[[package]]
 name = "aprender-mcp"
 version = "0.71.1"
 dependencies = [
@@ -1402,7 +1398,6 @@ dependencies = [
  "aprender-data",
  "aprender-db",
  "aprender-gpu",
- "aprender-kernel-oracle",
  "aprender-present-terminal",
  "aprender-profile-core",
  "aprender-quant",

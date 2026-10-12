@@ -1648,9 +1648,9 @@ mod tests {
     }
 
     /// The files rustc compiles into a crate, walked from `lib`: `mod x;` (x.rs or x/mod.rs in
-    /// the module dir), `#[path = "…"] mod x;`, and `include!("…")` (the included text keeps
-    /// the includer's module dir). Anything it does not understand is not reached, so a row
-    /// in such a file fails closed.
+    /// the module dir), `mod x;` under a `#[path]` attribute, and `include!` of a quoted path
+    /// (the included text keeps the includer's module dir). Anything it does not understand is
+    /// not reached, so a row in such a file fails closed.
     fn compiled_files(
         root: &std::path::Path,
         lib: &str,

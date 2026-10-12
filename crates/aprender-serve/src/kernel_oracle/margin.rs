@@ -8,7 +8,7 @@
 //!
 //! An element with Bᵢ = 0 (bit-exact models, all-zero inputs) passes only on an exact match.
 
-use crate::error_model::{ErrorModel, Refusal};
+use super::error_model::{ErrorModel, Refusal};
 
 /// llama.cpp `test-backend-ops` default max NMSE, for receipts comparable with it (§1).
 pub const LLAMA_CPP_NMSE_DEFAULT: f64 = 1e-7;
@@ -117,11 +117,11 @@ pub fn judge(yhat: &[f32], oracle: &[f64], bounds: &[f64]) -> Result<Report, Ref
                 margins.push(m);
                 err2 += (f64::from(yh) - y).powi(2);
                 ref2 += y * y;
-            }
-            Ok(None) => {}
+            },
+            Ok(None) => {},
             Err(f) => {
                 first_failure.get_or_insert(f);
-            }
+            },
         }
     }
     margins.sort_by(f64::total_cmp);
@@ -179,8 +179,8 @@ pub fn judge_model(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error_model::Dtype;
-    use crate::oracle;
+    use crate::kernel_oracle::error_model::Dtype;
+    use crate::kernel_oracle::oracle;
 
     /// splitmix64: a seeded, dependency-free generator so every failure reproduces from its seed.
     struct Rng(u64);
@@ -281,7 +281,7 @@ mod tests {
                     "names the tile: {index}"
                 );
                 assert!(margin > 1.0);
-            }
+            },
             v => panic!("F-12: the margin must be RED while NMSE passes, got {v:?}"),
         }
     }

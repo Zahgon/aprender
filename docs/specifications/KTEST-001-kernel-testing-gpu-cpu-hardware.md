@@ -326,7 +326,7 @@ The mechanism (`APR_FORCE_ISA`, every serve dispatch site gated, and trueno back
 |---|---|---|---|---|
 | **KTEST-00** | 0.71 | Genchi genbutsu: resolve every `[U]` in §1 from `forjar.yaml` + device queries (wgpu adapter info/limits/features, `nvidia-smi`, `rocminfo`, `lscpu`/`sysctl`) | a fleet device table with sources; ROCm eligibility per card | 0.5 d |
 | **KTEST-01** | 0.71 | Registry fields (§5.1) in KREG-001: `error_model`, `requires`, `determinism`, `input_set_hash` | S-REG + S-EM green on main; F-7 armed | 1 d |
-| **KTEST-02** | 0.71 | The f64 scalar oracle crate plus the per-element margin harness (§3.2); NMSE reported alongside | F-12 RED while NMSE passes | 1.5 d |
+| **KTEST-02** | 0.71 | The f64 scalar oracle (a std-only test module, its independence enforced by a source scan) plus the per-element margin harness (§3.2); NMSE reported alongside | F-12 RED while NMSE passes | 1.5 d |
 | **KTEST-03** | 0.71 | Shape-class generator from tile/vec/limits (§4) + adversarial inputs (§3.3) | F-1 and F-6 RED | 1 d |
 | **KTEST-04** | 0.71 | CPU ISA forcing (`APR_FORCE_ISA`) + receipts on intel, gx10, mini | every compiled ISA path has receipts; F-11 armed | 1 d |
 | **KTEST-05** | 0.71 | CUDA: SASS-per-arch check + PTX-JIT arm + compute-sanitizer nightly | F-4 and F-5 RED | 1 d |

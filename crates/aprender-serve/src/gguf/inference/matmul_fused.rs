@@ -575,24 +575,25 @@ mod tests {
         ))
         .expect("reference json");
         let reg = crate::kernel_registry::registry().expect("registry");
-        let model = crate::gguf::test_helpers::create_test_model_with_config(&crate::gguf::GGUFConfig {
-            architecture: "test".to_string(),
-            constraints: crate::gguf::ArchConstraints::from_architecture("test"),
-            hidden_dim: 256,
-            intermediate_dim: 512,
-            num_heads: 4,
-            num_kv_heads: 4,
-            num_layers: 1,
-            vocab_size: 100,
-            rope_theta: 10000.0,
-            context_length: 512,
-            eps: 1e-5,
-            rope_type: 0,
-            explicit_head_dim: None,
-            query_pre_attn_scalar: None,
-            bos_token_id: None,
-            eos_token_id: None,
-        });
+        let model =
+            crate::gguf::test_helpers::create_test_model_with_config(&crate::gguf::GGUFConfig {
+                architecture: "test".to_string(),
+                constraints: crate::gguf::ArchConstraints::from_architecture("test"),
+                hidden_dim: 256,
+                intermediate_dim: 512,
+                num_heads: 4,
+                num_kv_heads: 4,
+                num_layers: 1,
+                vocab_size: 100,
+                rope_theta: 10000.0,
+                context_length: 512,
+                eps: 1e-5,
+                rope_type: 0,
+                explicit_head_dim: None,
+                query_pre_attn_scalar: None,
+                bos_token_id: None,
+                eos_token_id: None,
+            });
         let (in_dim, out_dim) = (256usize, 2usize);
         let input = vec![0.5f32; in_dim];
         let mut served_rows = 0;
@@ -601,11 +602,22 @@ mod tests {
             let id = u32::try_from(u["ggml_type"].as_u64().expect("id")).expect("u32 id");
             let block = usize::try_from(u["block_elems"].as_u64().expect("block")).expect("usize");
             let size = usize::try_from(u["type_size"].as_u64().expect("size")).expect("usize");
-            let t = mk_tensor(vec![0u8; in_dim / block * size * out_dim], in_dim, out_dim, id);
-            let has_row = reg.rows().iter().any(|r| r.backend == "cpu" && r.ggml_type == id);
+            let t = mk_tensor(
+                vec![0u8; in_dim / block * size * out_dim],
+                in_dim,
+                out_dim,
+                id,
+            );
+            let has_row = reg
+                .rows()
+                .iter()
+                .any(|r| r.backend == "cpu" && r.ggml_type == id);
             let served = model.fused_matmul(&input, &t);
             if has_row {
-                assert!(served.is_ok(), "{qtype}: has a cpu row but is not served: {served:?}");
+                assert!(
+                    served.is_ok(),
+                    "{qtype}: has a cpu row but is not served: {served:?}"
+                );
                 served_rows += 1;
             } else {
                 assert!(served.is_err(), "{qtype}: served with no cpu row");
@@ -622,6 +634,9 @@ mod tests {
             .iter()
             .filter(|r| r.backend == "cpu" && r.ggml_type < 128)
             .count();
-        assert_eq!(served_rows, upstream_cpu_rows, "a cpu row names a type with no upstream reference");
+        assert_eq!(
+            served_rows, upstream_cpu_rows,
+            "a cpu row names a type with no upstream reference"
+        );
     }
 }

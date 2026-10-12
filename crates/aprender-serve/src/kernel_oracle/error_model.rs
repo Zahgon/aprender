@@ -121,7 +121,7 @@ impl std::fmt::Display for Refusal {
                     f,
                     "{id}: no implemented error bound; refusing to guess one (S-1)"
                 )
-            }
+            },
             Self::LengthMismatch {
                 yhat,
                 oracle,
@@ -222,7 +222,7 @@ impl ErrorModel {
             }),
             Self::Elementwise | Self::Softmax | Self::Attention | Self::Rope => {
                 Err(Refusal::NotImplemented { id })
-            }
+            },
         }
     }
 }

@@ -6,7 +6,7 @@
 //! `oracle_independent: true`.
 //!
 //! Most error models these rows declare (EM-RED for a norm's reduction followed by a rsqrt and a
-//! scale, EM-ELEM for tanh) have no implemented bound in `aprender-kernel-oracle` yet, so the
+//! scale, EM-ELEM for tanh) have no implemented bound in `kernel_oracle` yet, so the
 //! receipt's margin block says `not_modelled` and decides nothing. EM-ROPE is modelled here
 //! ([`modelled_bound`]): RoPE forms its angle in f32 and drifts ~1e-3 by position 32k, so an
 //! f32-exact ceiling is the wrong test for it. What the receipt DOES claim is checked: the
