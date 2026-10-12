@@ -141,6 +141,49 @@ use crate::autograd::cuda_tensor::Result;
 #[cfg(feature = "cuda")]
 use super::config::TransformerConfig;
 
+/// NaN-scan the named activations of layer `layer` (tagged `L{layer} {name}`) when
+/// APR_NAN_SCAN=1. The tags are formatted only when the scan is on.
+#[cfg(feature = "cuda")]
+fn nan_scan_layer(layer: usize, bufs: &[(&str, &GpuBuffer<f32>, usize)], stream: &CudaStream) {
+    if !nan_scan_enabled() {
+        return;
+    }
+    for &(name, buf, n) in bufs {
+        nan_scan_f32(&format!("L{layer} {name}"), buf, n, stream);
+    }
+}
+
+/// C-CAUSAL-001: the `[seq, seq]` causal mask, 0 at and below the diagonal, -inf above it.
+#[cfg(feature = "cuda")]
+fn causal_mask(max_seq_len: usize) -> Vec<f32> {
+    (0..max_seq_len * max_seq_len)
+        .map(|idx| {
+            let row = idx / max_seq_len;
+            let col = idx % max_seq_len;
+            if col <= row {
+                0.0f32
+            } else {
+                f32::NEG_INFINITY
+            }
+        })
+        .collect()
+}
+
+/// The fp16 copy of an activation, allocated (`len` values) the first time the fp16 path
+/// needs it and reused after that.
+#[cfg(feature = "cuda")]
+fn f16_scratch<'a>(
+    slot: &'a mut Option<GpuBuffer<u16>>,
+    ctx: &Arc<CudaContext>,
+    len: usize,
+) -> Result<&'a mut GpuBuffer<u16>> {
+    let buf = match slot.take() {
+        Some(buf) => buf,
+        None => GpuBuffer::new(ctx, len)?,
+    };
+    Ok(slot.insert(buf))
+}
+
 /// CUDA-accelerated transformer block
 ///
 /// All operations run on GPU with minimal CPU<->GPU transfers.
@@ -335,17 +378,7 @@ impl CudaBlockScratch {
 
         // C-CAUSAL-001: Precompute causal mask [seq × seq] — shared across all heads
         // 4 MB for seq=1024. Applied per-head in compute_attention_cuda.
-        let causal_mask_data: Vec<f32> = (0..max_seq_len * max_seq_len)
-            .map(|idx| {
-                let row = idx / max_seq_len;
-                let col = idx % max_seq_len;
-                if col <= row {
-                    0.0f32
-                } else {
-                    f32::NEG_INFINITY
-                }
-            })
-            .collect();
+        let causal_mask_data = causal_mask(max_seq_len);
         Ok(Self {
             norm1_out: GpuBuffer::new(ctx, max_seq_len * hidden_size)?,
             q: GpuBuffer::new(ctx, max_seq_len * q_dim)?,
@@ -664,17 +697,7 @@ impl CudaTransformerBlock {
         let w_down = GpuBuffer::from_host(&ctx, w_down)?;
 
         // C-CAUSAL-001: Precompute causal mask for NF4 path
-        let single_mask: Vec<f32> = (0..max_seq_len * max_seq_len)
-            .map(|idx| {
-                let row = idx / max_seq_len;
-                let col = idx % max_seq_len;
-                if col <= row {
-                    0.0f32
-                } else {
-                    f32::NEG_INFINITY
-                }
-            })
-            .collect();
+        let single_mask = causal_mask(max_seq_len);
         // Allocate scratch buffers — Q and attn_out need q_dim, not hidden_size
         let scratch = CudaBlockScratch {
             norm1_out: GpuBuffer::new(&ctx, max_seq_len * hidden_size)?,
@@ -2507,6 +2530,48 @@ fn cuda_mul(
     crate::autograd::cuda_forward::elementwise_mul_forward(a, b, output, saturating_u32(n), stream)
 }
 
+/// LoRA backward for one adapted projection `y = x·W + (x·A)·B` (R15a C1).
+///
+/// Every adapted target runs this one sequence. `x` is the projection's input `[s, h]` and `dy`
+/// the gradient of its output `[s, n]`; `a` is `[h, r]` and `b` is `[r, n]`. It writes
+/// `db = (x·A)ᵀ·dy` and `da = xᵀ·(dy·Bᵀ)`, and adds the adapter's share of the input gradient,
+/// `(dy·Bᵀ)·Aᵀ`, into `dx` (`[s, h]`). `inter` (`[s, r]`) and `temp` (`[s, h]`) are scratch.
+///
+/// `db` runs before `dInter` because `dInter` is written over the `x·A` recompute in `inter`.
+/// No step applies alpha/rank: `b` is the device copy, which the upload already multiplied by
+/// it, so `db` is the gradient of that pre-scaled tensor (K44).
+/// Contract: lora-gradient-flow-v1 (FALSIFY-LORA_GRADIENT_FLOW_V1_004).
+#[cfg(feature = "cuda")]
+#[allow(clippy::too_many_arguments)]
+fn lora_backward(
+    x: &GpuBuffer<f32>,
+    a: &GpuBuffer<f32>,
+    b: &GpuBuffer<f32>,
+    dy: &GpuBuffer<f32>,
+    da: &mut GpuBuffer<f32>,
+    db: &mut GpuBuffer<f32>,
+    dx: &mut GpuBuffer<f32>,
+    inter: &mut GpuBuffer<f32>,
+    temp: &mut GpuBuffer<f32>,
+    s: u32,
+    h: u32,
+    r: u32,
+    n: u32,
+    stream: &CudaStream,
+) -> Result<()> {
+    // Recompute inter = x·A  [s, r]
+    gemm_forward(x, a, inter, s, h, r, stream)?;
+    // db = interᵀ·dy  [r, n]
+    gemm_backward_b(inter, dy, db, s, r, n, stream)?;
+    // dInter = dy·Bᵀ  [s, r], written over inter
+    gemm_backward_a(dy, b, inter, s, n, r, stream)?;
+    // da = xᵀ·dInter  [h, r]
+    gemm_backward_b(x, inter, da, s, h, r, stream)?;
+    // dx += dInter·Aᵀ  [s, h]
+    gemm_backward_a(inter, a, temp, s, r, h, stream)?;
+    cuda_add_inplace(dx, temp, s as usize * h as usize, stream)
+}
+
 // CPU fallback stub
 #[cfg(not(feature = "cuda"))]
 pub struct CudaTransformerBlock;
@@ -3217,11 +3282,10 @@ impl CudaNf4TransformerBlock {
         )?;
         scratch.op_end(_t, OP_RMSNORM_ATTN);
 
-        if nan_scan_enabled() {
-            let l = self.layer_idx;
-            nan_scan_f32(&format!("L{l} input"), input, seq_len * hidden_size, stream);
-            nan_scan_f32(&format!("L{l} norm1"), &scratch.norm1_out, seq_len * hidden_size, stream);
-        }
+        nan_scan_layer(self.layer_idx, &[
+            ("input", input, seq_len * hidden_size),
+            ("norm1", &scratch.norm1_out, seq_len * hidden_size),
+        ], stream);
 
         // === Q, K, V Projections ===
         // Backend selection:
@@ -3239,10 +3303,7 @@ impl CudaNf4TransformerBlock {
         let act_n = (seq_len * hidden_size) as u32;
         if fp16_gemm && self.w_q_fp16.is_some() {
             // Lazy-allocate fp16 activation buffer
-            if scratch.norm1_out_f16.is_none() {
-                scratch.norm1_out_f16 = Some(GpuBuffer::new(&self.ctx, seq_len * hidden_size)?);
-            }
-            let f16_buf = scratch.norm1_out_f16.as_mut().unwrap();
+            let f16_buf = f16_scratch(&mut scratch.norm1_out_f16, &self.ctx, seq_len * hidden_size)?;
             cast_f32_to_f16_gpu(&scratch.norm1_out, f16_buf, act_n, stream)?;
         }
 
@@ -3337,30 +3398,23 @@ impl CudaNf4TransformerBlock {
             cuda_add_inplace(&mut scratch.v, &scratch.lora_temp, seq_len * kv_hidden_size, stream)?;
         }
 
-        if nan_scan_enabled() {
-            let l = self.layer_idx;
-            nan_scan_f32(&format!("L{l} q-proj"), &scratch.q, seq_len * q_dim, stream);
-            nan_scan_f32(&format!("L{l} k-proj"), &scratch.k, seq_len * kv_hidden_size, stream);
-            nan_scan_f32(&format!("L{l} v-proj"), &scratch.v, seq_len * kv_hidden_size, stream);
-        }
+        nan_scan_layer(self.layer_idx, &[
+            ("q-proj", &scratch.q, seq_len * q_dim),
+            ("k-proj", &scratch.k, seq_len * kv_hidden_size),
+            ("v-proj", &scratch.v, seq_len * kv_hidden_size),
+        ], stream);
 
         // === Multi-Head Attention (GPU-only, zero CPU transfers) ===
         let _t = scratch.op_begin();
         self.compute_attention_cuda(seq_len, stream, scratch)?;
         scratch.op_end(_t, OP_ATTENTION);
 
-        if nan_scan_enabled() {
-            let l = self.layer_idx;
-            nan_scan_f32(&format!("L{l} attn-out"), &scratch.attn_out, seq_len * q_dim, stream);
-        }
+        nan_scan_layer(self.layer_idx, &[("attn-out", &scratch.attn_out, seq_len * q_dim)], stream);
 
         // === Output Projection ===
         let _t = scratch.op_begin();
         if let Some(w_o_fp16) = self.w_o_fp16.as_ref().filter(|_| fp16_gemm) {
-            if scratch.attn_out_f16.is_none() {
-                scratch.attn_out_f16 = Some(GpuBuffer::new(&self.ctx, seq_len * q_dim)?);
-            }
-            let f16_buf = scratch.attn_out_f16.as_mut().unwrap();
+            let f16_buf = f16_scratch(&mut scratch.attn_out_f16, &self.ctx, seq_len * q_dim)?;
             cast_f32_to_f16_gpu(&scratch.attn_out, f16_buf, (seq_len * q_dim) as u32, stream)?;
             gemm_f16_to_f32_forward(f16_buf, w_o_fp16, &mut scratch.o_proj_out,
                 saturating_u32(seq_len), saturating_u32(q_dim), saturating_u32(hidden_size), stream)?;
@@ -3377,10 +3431,7 @@ impl CudaNf4TransformerBlock {
 
         scratch.op_end(_t, OP_O_PROJ);
 
-        if nan_scan_enabled() {
-            let l = self.layer_idx;
-            nan_scan_f32(&format!("L{l} o-proj"), &scratch.o_proj_out, seq_len * hidden_size, stream);
-        }
+        nan_scan_layer(self.layer_idx, &[("o-proj", &scratch.o_proj_out, seq_len * hidden_size)], stream);
 
         // === Fused Residual Add + RMSNorm (entrenar#321: eliminates NaN cascade) ===
         let _t = scratch.op_begin();
@@ -3401,19 +3452,15 @@ impl CudaNf4TransformerBlock {
 
         scratch.op_end(_t, OP_RMSNORM_FFN); // Fused residual + RMSNorm
 
-        if nan_scan_enabled() {
-            let l = self.layer_idx;
-            nan_scan_f32(&format!("L{l} residual1"), &scratch.residual1, seq_len * hidden_size, stream);
-            nan_scan_f32(&format!("L{l} norm2"), &scratch.norm2_out, seq_len * hidden_size, stream);
-        }
+        nan_scan_layer(self.layer_idx, &[
+            ("residual1", &scratch.residual1, seq_len * hidden_size),
+            ("norm2", &scratch.norm2_out, seq_len * hidden_size),
+        ], stream);
 
         // === FFN: Gate + Up + SwiGLU + Down ===
         let _t = scratch.op_begin(); // Gate+Up GEMM timing
         if let Some(w_gate_fp16) = self.w_gate_fp16.as_ref().filter(|_| fp16_gemm) {
-            if scratch.norm2_out_f16.is_none() {
-                scratch.norm2_out_f16 = Some(GpuBuffer::new(&self.ctx, seq_len * hidden_size)?);
-            }
-            let f16_buf = scratch.norm2_out_f16.as_mut().unwrap();
+            let f16_buf = f16_scratch(&mut scratch.norm2_out_f16, &self.ctx, seq_len * hidden_size)?;
             cast_f32_to_f16_gpu(&scratch.norm2_out, f16_buf, (seq_len * hidden_size) as u32, stream)?;
             gemm_f16_to_f32_forward(f16_buf, w_gate_fp16, &mut scratch.gate_out,
                 saturating_u32(seq_len), saturating_u32(hidden_size), saturating_u32(intermediate_size), stream)?;
@@ -3444,11 +3491,10 @@ impl CudaNf4TransformerBlock {
 
         scratch.op_end(_t, OP_GATE_UP_GEMM);
 
-        if nan_scan_enabled() {
-            let l = self.layer_idx;
-            nan_scan_f32(&format!("L{l} gate"), &scratch.gate_out, seq_len * intermediate_size, stream);
-            nan_scan_f32(&format!("L{l} up"), &scratch.up_out, seq_len * intermediate_size, stream);
-        }
+        nan_scan_layer(self.layer_idx, &[
+            ("gate", &scratch.gate_out, seq_len * intermediate_size),
+            ("up", &scratch.up_out, seq_len * intermediate_size),
+        ], stream);
 
         // === FFN: Fused SwiGLU ===
         let _t = scratch.op_begin();
@@ -3456,18 +3502,12 @@ impl CudaNf4TransformerBlock {
             saturating_u32(seq_len * intermediate_size), stream)?;
         scratch.op_end(_t, OP_SILU);
 
-        if nan_scan_enabled() {
-            let l = self.layer_idx;
-            nan_scan_f32(&format!("L{l} swiglu"), &scratch.swiglu_out, seq_len * intermediate_size, stream);
-        }
+        nan_scan_layer(self.layer_idx, &[("swiglu", &scratch.swiglu_out, seq_len * intermediate_size)], stream);
 
         // === FFN: Down Projection ===
         let _t = scratch.op_begin();
         if let Some(w_down_fp16) = self.w_down_fp16.as_ref().filter(|_| fp16_gemm) {
-            if scratch.swiglu_out_f16.is_none() {
-                scratch.swiglu_out_f16 = Some(GpuBuffer::new(&self.ctx, seq_len * intermediate_size)?);
-            }
-            let f16_buf = scratch.swiglu_out_f16.as_mut().unwrap();
+            let f16_buf = f16_scratch(&mut scratch.swiglu_out_f16, &self.ctx, seq_len * intermediate_size)?;
             cast_f32_to_f16_gpu(&scratch.swiglu_out, f16_buf, (seq_len * intermediate_size) as u32, stream)?;
             gemm_f16_to_f32_forward(f16_buf, w_down_fp16, &mut scratch.ffn_out,
                 saturating_u32(seq_len), saturating_u32(intermediate_size), saturating_u32(hidden_size), stream)?;
@@ -3484,18 +3524,12 @@ impl CudaNf4TransformerBlock {
 
         scratch.op_end(_t, OP_DOWN_GEMM);
 
-        if nan_scan_enabled() {
-            let l = self.layer_idx;
-            nan_scan_f32(&format!("L{l} down"), &scratch.ffn_out, seq_len * hidden_size, stream);
-        }
+        nan_scan_layer(self.layer_idx, &[("down", &scratch.ffn_out, seq_len * hidden_size)], stream);
 
         // === Final Residual Add ===
         cuda_add(&scratch.residual1, &scratch.ffn_out, output, seq_len * hidden_size, stream)?;
 
-        if nan_scan_enabled() {
-            let l = self.layer_idx;
-            nan_scan_f32(&format!("L{l} block-out"), output, seq_len * hidden_size, stream);
-        }
+        nan_scan_layer(self.layer_idx, &[("block-out", &*output, seq_len * hidden_size)], stream);
 
         Ok(())
     }
@@ -4302,8 +4336,6 @@ impl CudaNf4TransformerBlock {
         scratch: &mut CudaBlockScratch,
         grad_lora: &mut CudaLoraGradWorkspace,
     ) -> Result<()> {
-        use crate::autograd::cuda_forward::gemm_forward;
-
         let hidden_size = self.config.hidden_size;
         let q_dim = self.config.q_dim();
         let kv_hidden_size = self.config.num_kv_heads * self.config.head_dim();
@@ -4423,61 +4455,22 @@ impl CudaNf4TransformerBlock {
             )?;
         }
 
-        // LoRA Q backward: compute grad_A_q, grad_B_q, and add to grad_norm1
+        // LoRA Q backward: grad_A_q, grad_B_q, and the adapter's share of grad_norm1
         if let (Some(a_q), Some(b_q)) = (&self.lora_a_q, &self.lora_b_q) {
-            let r = saturating_u32(self.lora_rank);
-
-            // Recompute: lora_inter_q = norm1_out @ A_q  [S, rank]
-            gemm_forward(&scratch.norm1_out, a_q, &mut scratch.lora_inter, s, h, r, stream)?;
-
-            // grad_B_q = lora_inter_q^T @ grad_q  [rank, q_dim]
-            // (Note: B_q was pre-scaled, so grad_B_q includes the scale factor)
-            gemm_backward_b(
-                &scratch.lora_inter,
-                &scratch.q,
-                &mut grad_lora.grad_lora_b_q,
-                s,
-                r,
-                qd,
-                stream,
-            )?;
-
-            // grad_lora_inter = grad_q @ B_q^T  [S, rank]
-            gemm_backward_a(
-                &scratch.q,
-                b_q,
-                &mut scratch.lora_inter, // reuse for grad_lora_inter
-                s,
-                qd,
-                r,
-                stream,
-            )?;
-
-            // grad_A_q = norm1_out^T @ grad_lora_inter  [H, rank]
-            gemm_backward_b(
+            lora_backward(
                 &scratch.norm1_out,
-                &scratch.lora_inter,
-                &mut grad_lora.grad_lora_a_q,
-                s,
-                h,
-                r,
-                stream,
-            )?;
-
-            // Add LoRA's contribution to grad_norm1: += grad_lora_inter @ A_q^T  [S, H]
-            gemm_backward_a(
-                &scratch.lora_inter,
                 a_q,
-                &mut scratch.lora_temp, // [S, H]
-                s,
-                r,
-                h,
-                stream,
-            )?;
-            cuda_add_inplace(
+                b_q,
+                &scratch.q,
+                &mut grad_lora.grad_lora_a_q,
+                &mut grad_lora.grad_lora_b_q,
                 &mut scratch.o_proj_out,
-                &scratch.lora_temp,
-                seq_len * hidden_size,
+                &mut scratch.lora_inter,
+                &mut scratch.lora_temp,
+                s,
+                h,
+                saturating_u32(self.lora_rank),
+                qd,
                 stream,
             )?;
         }
@@ -4584,44 +4577,22 @@ impl CudaNf4TransformerBlock {
             )?;
         }
 
-        // LoRA V backward
+        // LoRA V backward: grad_A_v, grad_B_v, and the adapter's share of grad_norm1
         if let (Some(a_v), Some(b_v)) = (&self.lora_a_v, &self.lora_b_v) {
-            let r = saturating_u32(self.lora_rank);
-
-            // Recompute: lora_inter_v = norm1_out @ A_v  [S, rank]
-            gemm_forward(&scratch.norm1_out, a_v, &mut scratch.lora_inter, s, h, r, stream)?;
-
-            // grad_B_v = lora_inter_v^T @ grad_v  [rank, kv_hidden]
-            gemm_backward_b(
-                &scratch.lora_inter,
-                &scratch.v,
-                &mut grad_lora.grad_lora_b_v,
-                s,
-                r,
-                kvh,
-                stream,
-            )?;
-
-            // grad_lora_inter = grad_v @ B_v^T  [S, rank]
-            gemm_backward_a(&scratch.v, b_v, &mut scratch.lora_inter, s, kvh, r, stream)?;
-
-            // grad_A_v = norm1_out^T @ grad_lora_inter  [H, rank]
-            gemm_backward_b(
+            lora_backward(
                 &scratch.norm1_out,
-                &scratch.lora_inter,
+                a_v,
+                b_v,
+                &scratch.v,
                 &mut grad_lora.grad_lora_a_v,
+                &mut grad_lora.grad_lora_b_v,
+                &mut scratch.o_proj_out,
+                &mut scratch.lora_inter,
+                &mut scratch.lora_temp,
                 s,
                 h,
-                r,
-                stream,
-            )?;
-
-            // Add LoRA V's contribution to grad_norm1
-            gemm_backward_a(&scratch.lora_inter, a_v, &mut scratch.lora_temp, s, r, h, stream)?;
-            cuda_add_inplace(
-                &mut scratch.o_proj_out,
-                &scratch.lora_temp,
-                seq_len * hidden_size,
+                saturating_u32(self.lora_rank),
+                kvh,
                 stream,
             )?;
         }
@@ -5246,6 +5217,10 @@ impl CudaNf4TransformerBlock {
 #[cfg(all(test, feature = "cuda"))]
 #[path = "cuda_block_parity_probe.rs"]
 mod parity_probe;
+
+#[cfg(all(test, feature = "cuda"))]
+#[path = "cuda_block_lora_backward_tests.rs"]
+mod lora_backward_tests;
 
 #[cfg(test)]
 mod tests {
