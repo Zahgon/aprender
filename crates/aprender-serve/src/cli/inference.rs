@@ -410,3 +410,7 @@ pub fn run_gguf_inference(
 
 include!("gguf_inference_gpu.rs");
 include!("apr_inference.rs");
+
+#[cfg(test)]
+#[path = "inference_tests_sample_next.rs"]
+mod tests_sample_next;

@@ -284,3 +284,7 @@ pub struct GpuCompute {
 include!("gpu_compute.rs");
 include!("buffer_pool.rs");
 include!("metrics_inference.rs");
+
+#[cfg(test)]
+#[path = "metrics_tests.rs"]
+mod metrics_tests;

@@ -5,7 +5,7 @@
 
 #![allow(clippy::needless_pass_by_value)]
 
-use super::inference::*;
+use super::*;
 
 // ============================================================================
 // sample_next_token tests
@@ -140,17 +140,7 @@ fn test_print_inference_output_unknown_format() {
 
 #[test]
 fn test_print_inference_output_zero_tokens() {
-    print_inference_output(
-        "model.gguf",
-        "test",
-        "",
-        0,
-        0.0,
-        0.0,
-        0.0,
-        "json",
-        false,
-    );
+    print_inference_output("model.gguf", "test", "", 0, 0.0, 0.0, 0.0, "json", false);
 }
 
 // ============================================================================

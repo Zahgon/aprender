@@ -93,9 +93,7 @@ fn test_cpu_matmul_transpose_b_basic() {
 fn test_cpu_matmul_transpose_b_rectangular() {
     // A[2,3] @ B[4,3]^T = C[2,4]
     let a = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]; // 2x3
-    let b = vec![
-        1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0,
-    ]; // 4x3
+    let b = vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]; // 4x3
     let c = cpu_matmul_transpose_b(&a, &b, 2, 3, 4);
     assert_eq!(c.len(), 8);
     // c[0,0] = a[0,:] dot b[0,:] = [1,2,3] dot [1,0,0] = 1
@@ -209,11 +207,7 @@ fn test_cpu_matmul_transposed_simd_large_parallel() {
 fn test_gpu_compute_matmul_tensor_basic() {
     let mut compute = GpuCompute::new(ComputeBackend::Cpu).expect("CPU backend");
     let a = Tensor::from_vec(vec![2, 3], vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();
-    let b = Tensor::from_vec(
-        vec![3, 2],
-        vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
-    )
-    .unwrap();
+    let b = Tensor::from_vec(vec![3, 2], vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();
     let c = compute.matmul_tensor(&a, &b).expect("matmul_tensor");
     assert_eq!(c.shape(), &[2, 2]);
     // c[0,0] = 1*1 + 2*3 + 3*5 = 22
@@ -249,7 +243,7 @@ fn test_gpu_compute_matmul_a_size_mismatch() {
     let mut compute = GpuCompute::new(ComputeBackend::Cpu).expect("CPU backend");
     let a = vec![1.0, 2.0, 3.0]; // 3 elements
     let b = vec![1.0, 2.0, 3.0, 4.0]; // 4 elements
-    // Claim a is 2x2 (4 elements) but only 3
+                                      // Claim a is 2x2 (4 elements) but only 3
     let result = compute.matmul(&a, &b, 2, 2, 2);
     assert!(result.is_err());
 }
@@ -259,7 +253,7 @@ fn test_gpu_compute_matmul_b_size_mismatch() {
     let mut compute = GpuCompute::new(ComputeBackend::Cpu).expect("CPU backend");
     let a = vec![1.0, 2.0, 3.0, 4.0]; // 4 elements
     let b = vec![1.0, 2.0, 3.0]; // 3 elements
-    // Claim b is 2x2 (4 elements) but only 3
+                                 // Claim b is 2x2 (4 elements) but only 3
     let result = compute.matmul(&a, &b, 2, 2, 2);
     assert!(result.is_err());
 }
@@ -313,7 +307,9 @@ fn test_hybrid_scheduler_matmul_pooled() {
     let mut scheduler = HybridScheduler::new().expect("scheduler");
     let a = vec![1.0, 2.0, 3.0, 4.0];
     let b = vec![5.0, 6.0, 7.0, 8.0];
-    let result = scheduler.matmul_pooled(&a, &b, 2, 2, 2).expect("matmul_pooled");
+    let result = scheduler
+        .matmul_pooled(&a, &b, 2, 2, 2)
+        .expect("matmul_pooled");
     assert_eq!(result.len(), 4);
     assert!((result[0] - 19.0).abs() < 1e-5);
 
@@ -321,7 +317,9 @@ fn test_hybrid_scheduler_matmul_pooled() {
     scheduler.release_buffer(result);
 
     // Get another pooled buffer - should reuse
-    let result2 = scheduler.matmul_pooled(&a, &b, 2, 2, 2).expect("matmul_pooled 2");
+    let result2 = scheduler
+        .matmul_pooled(&a, &b, 2, 2, 2)
+        .expect("matmul_pooled 2");
     assert_eq!(result2.len(), 4);
 }
 
@@ -330,7 +328,9 @@ fn test_hybrid_scheduler_matmul_async() {
     let mut scheduler = HybridScheduler::new().expect("scheduler");
     let a = vec![1.0, 2.0, 3.0, 4.0];
     let b = vec![5.0, 6.0, 7.0, 8.0];
-    let async_result = scheduler.matmul_async(&a, &b, 2, 2, 2).expect("matmul_async");
+    let async_result = scheduler
+        .matmul_async(&a, &b, 2, 2, 2)
+        .expect("matmul_async");
 
     // CPU fallback is immediately ready
     assert!(async_result.is_ready());
@@ -364,7 +364,9 @@ fn test_hybrid_scheduler_matmul_transpose_b_cpu() {
     // Force CPU path with high threshold
     let a = vec![1.0, 2.0, 3.0, 4.0]; // 2x2
     let b = vec![1.0, 2.0, 3.0, 4.0]; // 2x2 (will be transposed)
-    let result = scheduler.matmul_transpose_b(&a, &b, 2, 2, 2).expect("transpose_b");
+    let result = scheduler
+        .matmul_transpose_b(&a, &b, 2, 2, 2)
+        .expect("transpose_b");
     assert_eq!(result.len(), 4);
 }
 
