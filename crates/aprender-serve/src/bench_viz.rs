@@ -169,3 +169,7 @@ pub struct BenchmarkGrid {
 include!("bench_viz_render_profiling_benchmark.rs");
 include!("bench_viz_runner.rs");
 include!("bench_viz_benchmark_grid.rs");
+
+#[cfg(test)]
+#[path = "bench_viz_tests_benchmark_runner.rs"]
+mod tests_benchmark_runner;

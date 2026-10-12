@@ -35,65 +35,62 @@ impl BenchmarkGrid {
         .expect("failed to write benchmark output");
         writeln!(out).expect("failed to write benchmark output");
 
-        // Performance Summary
-        writeln!(
-            out,
-            "───────────────────────────────────────────────────────────────────────"
-        )
-        .expect("failed to write benchmark output");
-        writeln!(out, "THROUGHPUT COMPARISON (tok/s)").expect("failed to write benchmark output");
-        writeln!(
-            out,
-            "───────────────────────────────────────────────────────────────────────"
-        )
-        .expect("failed to write benchmark output");
+        self.profiling_throughput(&mut out);
+        self.profiling_speedup(&mut out);
+        self.profiling_hotspots(&mut out);
+        self.profiling_gpu_metrics(&mut out);
+        self.profiling_recommendations(&mut out);
 
-        if let Some(ref m) = self.gguf_apr {
-            writeln!(
-                out,
-                "APR GGUF:      {:>8.1} tok/s  (TTFT: {:>6.1}ms)",
-                m.tokens_per_sec, m.ttft_ms
-            )
-            .expect("failed to write benchmark output");
-        }
-        if let Some(ref m) = self.apr_native {
-            writeln!(
-                out,
-                "APR .apr:      {:>8.1} tok/s  (TTFT: {:>6.1}ms)",
-                m.tokens_per_sec, m.ttft_ms
-            )
-            .expect("failed to write benchmark output");
-        }
-        if let Some(ref m) = self.gguf_ollama {
-            writeln!(
-                out,
-                "Ollama:        {:>8.1} tok/s  (TTFT: {:>6.1}ms)",
-                m.tokens_per_sec, m.ttft_ms
-            )
-            .expect("failed to write benchmark output");
-        }
-        if let Some(ref m) = self.gguf_llamacpp {
-            writeln!(
-                out,
-                "llama.cpp:     {:>8.1} tok/s  (TTFT: {:>6.1}ms)",
-                m.tokens_per_sec, m.ttft_ms
-            )
-            .expect("failed to write benchmark output");
+        writeln!(
+            out,
+            "═══════════════════════════════════════════════════════════════════════"
+        )
+        .expect("failed to write benchmark output");
+        writeln!(out, "```").expect("failed to write benchmark output");
+
+        out
+    }
+
+    /// Section heading of the profiling log: a rule, the title, a rule.
+    fn profiling_section(out: &mut String, title: &str) {
+        writeln!(
+            out,
+            "───────────────────────────────────────────────────────────────────────"
+        )
+        .expect("failed to write benchmark output");
+        writeln!(out, "{title}").expect("failed to write benchmark output");
+        writeln!(
+            out,
+            "───────────────────────────────────────────────────────────────────────"
+        )
+        .expect("failed to write benchmark output");
+    }
+
+    /// Performance Summary
+    fn profiling_throughput(&self, out: &mut String) {
+        Self::profiling_section(out, "THROUGHPUT COMPARISON (tok/s)");
+        let rows = [
+            ("APR GGUF:      ", &self.gguf_apr),
+            ("APR .apr:      ", &self.apr_native),
+            ("Ollama:        ", &self.gguf_ollama),
+            ("llama.cpp:     ", &self.gguf_llamacpp),
+        ];
+        for (label, m) in rows {
+            if let Some(m) = m {
+                writeln!(
+                    out,
+                    "{label}{:>8.1} tok/s  (TTFT: {:>6.1}ms)",
+                    m.tokens_per_sec, m.ttft_ms
+                )
+                .expect("failed to write benchmark output");
+            }
         }
         writeln!(out).expect("failed to write benchmark output");
+    }
 
-        // Speedup Analysis
-        writeln!(
-            out,
-            "───────────────────────────────────────────────────────────────────────"
-        )
-        .expect("failed to write benchmark output");
-        writeln!(out, "SPEEDUP ANALYSIS").expect("failed to write benchmark output");
-        writeln!(
-            out,
-            "───────────────────────────────────────────────────────────────────────"
-        )
-        .expect("failed to write benchmark output");
+    /// Speedup Analysis
+    fn profiling_speedup(&self, out: &mut String) {
+        Self::profiling_section(out, "SPEEDUP ANALYSIS");
 
         let ollama_tps = self
             .gguf_ollama
@@ -142,79 +139,42 @@ impl BenchmarkGrid {
             .expect("failed to write benchmark output");
         }
         writeln!(out).expect("failed to write benchmark output");
+    }
 
-        // Profiling Hotspots
-        if !self.hotspots.is_empty() {
-            writeln!(
-                out,
-                "───────────────────────────────────────────────────────────────────────"
-            )
-            .expect("failed to write benchmark output");
-            writeln!(out, "PROFILING HOTSPOTS (>5% of execution time)")
-                .expect("failed to write benchmark output");
-            writeln!(
-                out,
-                "───────────────────────────────────────────────────────────────────────"
-            )
-            .expect("failed to write benchmark output");
-
-            for hotspot in &self.hotspots {
-                writeln!(out, "{}", hotspot.to_line()).expect("failed to write benchmark output");
-                if !hotspot.explanation.is_empty() {
-                    writeln!(out, "   └─ {}", hotspot.explanation)
-                        .expect("failed to write benchmark output");
-                }
-            }
-            writeln!(out).expect("failed to write benchmark output");
+    /// Profiling Hotspots
+    fn profiling_hotspots(&self, out: &mut String) {
+        if self.hotspots.is_empty() {
+            return;
         }
+        Self::profiling_section(out, "PROFILING HOTSPOTS (>5% of execution time)");
 
-        // GPU Metrics
-        writeln!(
-            out,
-            "───────────────────────────────────────────────────────────────────────"
-        )
-        .expect("failed to write benchmark output");
-        writeln!(out, "GPU METRICS").expect("failed to write benchmark output");
-        writeln!(
-            out,
-            "───────────────────────────────────────────────────────────────────────"
-        )
-        .expect("failed to write benchmark output");
-
-        if let Some(ref m) = self.gguf_apr {
-            if let (Some(util), Some(mem)) = (m.gpu_util, m.gpu_mem_mb) {
-                writeln!(
-                    out,
-                    "APR GGUF:   GPU Util: {:>5.1}%  VRAM: {:>6.0}MB",
-                    util, mem
-                )
-                .expect("failed to write benchmark output");
-            }
-        }
-        if let Some(ref m) = self.apr_native {
-            if let (Some(util), Some(mem)) = (m.gpu_util, m.gpu_mem_mb) {
-                writeln!(
-                    out,
-                    "APR .apr:   GPU Util: {:>5.1}%  VRAM: {:>6.0}MB",
-                    util, mem
-                )
-                .expect("failed to write benchmark output");
+        for hotspot in &self.hotspots {
+            writeln!(out, "{}", hotspot.to_line()).expect("failed to write benchmark output");
+            if !hotspot.explanation.is_empty() {
+                writeln!(out, "   └─ {}", hotspot.explanation)
+                    .expect("failed to write benchmark output");
             }
         }
         writeln!(out).expect("failed to write benchmark output");
+    }
 
-        // Recommendations
-        writeln!(
-            out,
-            "───────────────────────────────────────────────────────────────────────"
-        )
-        .expect("failed to write benchmark output");
-        writeln!(out, "OPTIMIZATION RECOMMENDATIONS").expect("failed to write benchmark output");
-        writeln!(
-            out,
-            "───────────────────────────────────────────────────────────────────────"
-        )
-        .expect("failed to write benchmark output");
+    /// GPU Metrics
+    fn profiling_gpu_metrics(&self, out: &mut String) {
+        Self::profiling_section(out, "GPU METRICS");
+
+        let rows = [("APR GGUF:   ", &self.gguf_apr), ("APR .apr:   ", &self.apr_native)];
+        for (label, m) in rows {
+            if let Some((util, mem)) = m.as_ref().and_then(|m| m.gpu_util.zip(m.gpu_mem_mb)) {
+                writeln!(out, "{label}GPU Util: {:>5.1}%  VRAM: {:>6.0}MB", util, mem)
+                    .expect("failed to write benchmark output");
+            }
+        }
+        writeln!(out).expect("failed to write benchmark output");
+    }
+
+    /// Recommendations and Phase 2 status
+    fn profiling_recommendations(&self, out: &mut String) {
+        Self::profiling_section(out, "OPTIMIZATION RECOMMENDATIONS");
 
         let unexpected: Vec<_> = self.hotspots.iter().filter(|h| !h.is_expected).collect();
         if unexpected.is_empty() {
@@ -249,15 +209,6 @@ impl BenchmarkGrid {
             )
             .expect("failed to write benchmark output");
         }
-
-        writeln!(
-            out,
-            "═══════════════════════════════════════════════════════════════════════"
-        )
-        .expect("failed to write benchmark output");
-        writeln!(out, "```").expect("failed to write benchmark output");
-
-        out
     }
 
     /// Generate compact one-liner for quick comparison

@@ -4,7 +4,7 @@
 //! explain_inference_hotspot coverage for all match arms,
 //! render_bar edge cases, and ProfilingHotspot::to_line formatting.
 
-use crate::bench_viz::*;
+use super::*;
 use std::time::Duration;
 
 // ============================================================================
@@ -64,11 +64,7 @@ fn test_benchmark_runner_finalize_filters_small_components() {
     runner.finalize();
     // Only BigOp should appear (TinyOp < 5%)
     assert!(!runner.grid.hotspots.is_empty());
-    assert!(runner
-        .grid
-        .hotspots
-        .iter()
-        .any(|h| h.component == "BigOp"));
+    assert!(runner.grid.hotspots.iter().any(|h| h.component == "BigOp"));
 }
 
 #[test]

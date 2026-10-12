@@ -117,6 +117,15 @@ fn truncate(s: &str, max_len: usize) -> &str {
 }
 
 /// Explain inference hotspot
+/// Verdict for a component whose share is fine up to `limit` percent.
+fn threshold_verdict(percentage: f64, limit: f64, high: &str, normal: &str) -> (String, bool) {
+    if percentage > limit {
+        (high.to_string(), false)
+    } else {
+        (normal.to_string(), true)
+    }
+}
+
 fn explain_inference_hotspot(component: &str, percentage: f64) -> (String, bool) {
     match component {
         "Q4K_GEMV" | "MatMul" | "GEMM" => (
@@ -133,36 +142,24 @@ fn explain_inference_hotspot(component: &str, percentage: f64) -> (String, bool)
             ),
             true,
         ),
-        "KV_Cache" | "KVCache" => {
-            if percentage > 20.0 {
-                (
-                    "KV cache overhead high - consider FP16 cache or graph capture".to_string(),
-                    false,
-                )
-            } else {
-                ("KV cache within normal range".to_string(), true)
-            }
-        },
-        "Softmax" => {
-            if percentage > 10.0 {
-                (
-                    "Softmax unusually high - check for redundant computations".to_string(),
-                    false,
-                )
-            } else {
-                ("Softmax within normal range".to_string(), true)
-            }
-        },
-        "RMSNorm" | "LayerNorm" => {
-            if percentage > 15.0 {
-                (
-                    "Normalization overhead high - consider fused kernels".to_string(),
-                    false,
-                )
-            } else {
-                ("Normalization within normal range".to_string(), true)
-            }
-        },
+        "KV_Cache" | "KVCache" => threshold_verdict(
+            percentage,
+            20.0,
+            "KV cache overhead high - consider FP16 cache or graph capture",
+            "KV cache within normal range",
+        ),
+        "Softmax" => threshold_verdict(
+            percentage,
+            10.0,
+            "Softmax unusually high - check for redundant computations",
+            "Softmax within normal range",
+        ),
+        "RMSNorm" | "LayerNorm" => threshold_verdict(
+            percentage,
+            15.0,
+            "Normalization overhead high - consider fused kernels",
+            "Normalization within normal range",
+        ),
         "MemcpyH2D" | "MemcpyD2H" | "Transfer" => (
             "Memory transfer - consider persistent GPU buffers".to_string(),
             false,
@@ -179,15 +176,10 @@ fn explain_inference_hotspot(component: &str, percentage: f64) -> (String, bool)
             "Sampling overhead - expected for token generation".to_string(),
             true,
         ),
-        _ => {
-            if percentage > 20.0 {
-                (
-                    format!("Unknown component at {:.1}% - investigate", percentage),
-                    false,
-                )
-            } else {
-                (String::new(), true)
-            }
-        },
+        _ if percentage > 20.0 => (
+            format!("Unknown component at {:.1}% - investigate", percentage),
+            false,
+        ),
+        _ => (String::new(), true),
     }
 }
