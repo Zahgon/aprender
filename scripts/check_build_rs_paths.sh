@@ -50,6 +50,7 @@ self_test() {
     git init -q empty; : > empty/c/lib.rs; git -C empty add -A
     row "a checkout with no build.rs is RED, never OK: 0 checked (#2876)" "$(run empty)" 1
     row "a directory git cannot read is RED (the dubious-ownership run)" "$(run nogit)" 1
+    row "and it names the git failure, not an empty tree" "$(command grep -c 'git ls-files could not list' nogit.out)" 1
     git init -q good; printf 'fn main() {}\n' > good/c/build.rs; git -C good add -A
     row "a clean build.rs is OK" "$(run good)" 0
     row "the OK line counts what it read" "$(command grep -c '^OK: 1 build.rs' good.out)" 1
@@ -58,11 +59,12 @@ self_test() {
     git -C bad add -A
     row "a build.rs that joins .. and panics is RED" "$(run bad)" 1
     printf 'check_build_rs_paths self-test: %s ok, %s bad\n' "$ok" "$bad"
-    [ "$bad" -eq 0 ] && [ "$ok" -ge 5 ]
+    [ "$bad" -eq 0 ] && [ "$ok" -ge 6 ]
 }
 
 case "${1:-}" in
     --self-test) self_test; exit $? ;;
+    -h | --help) echo "usage: bash scripts/check_build_rs_paths.sh [--self-test]"; exit 0 ;;
     "") : ;;
     *) echo "check_build_rs_paths: unknown argument $1" >&2; exit 3 ;;
 esac

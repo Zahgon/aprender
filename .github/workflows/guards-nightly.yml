@@ -237,6 +237,8 @@ jobs:
           # 4. the satd class of the ratchet-semantics case table (rebuilds nothing)
           DR_ENV=()
           dr "$GITHUB_WORKSPACE" bash scripts/tests/ratchet_semantics_test.sh --class satd
+      - name: zero-input refusal mutants of the #2876 vacuity guards (LAB)
+        run: setsid --wait bash scripts/tests/vacuity_2876_mutants.sh
       - name: Summary
         if: always()
         run: |
