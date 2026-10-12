@@ -498,9 +498,91 @@ pub(crate) fn scan_set(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(set.into_iter().filter(|p| kind_of(p).is_some()).collect())
 }
 
+/// #3745, quorum q-3745 (option A): the model ladder owes cells to every command in the release cell
+/// universe, read from the surface, not to a typed subset. Returns the command keys the ladder's
+/// `cells.verbs` does not name. LAB only: the release path still judges the ladder as it did, and
+/// widening that is a gate change of its own.
+pub(crate) fn ladder_gap(
+    ladder_verbs: &BTreeSet<String>,
+    s: &crate::surface::Surface,
+) -> BTreeSet<String> {
+    s.commands
+        .iter()
+        .filter(|c| owes_model_cells(c))
+        .map(|c| c.key.clone())
+        .filter(|k| !ladder_verbs.contains(k))
+        .collect()
+}
+
+/// The ladder contract's `ladder.cells.verbs`.
+pub(crate) fn ladder_verbs(text: &str) -> Result<BTreeSet<String>, String> {
+    let doc: serde_yaml::Value =
+        serde_yaml::from_str(text).map_err(|e| format!("the ladder contract is not YAML: {e}"))?;
+    let seq = doc
+        .get("ladder")
+        .and_then(|l| l.get("cells"))
+        .and_then(|c| c.get("verbs"))
+        .and_then(serde_yaml::Value::as_sequence)
+        .ok_or("the ladder contract has no `ladder.cells.verbs` sequence")?;
+    Ok(seq
+        .iter()
+        .filter_map(|x| x.as_str().map(str::to_string))
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The ladder-gap requirement can turn RED and can go GREEN: a typed subset leaves a gap, and the
+    /// surface's own keys close it.
+    #[test]
+    fn ladder_gap_case_table() {
+        let s = crate::surface::emit();
+        let owed: BTreeSet<String> = s
+            .commands
+            .iter()
+            .filter(|c| owes_model_cells(c))
+            .map(|c| c.key.clone())
+            .collect();
+        assert!(
+            owed.len() >= 10,
+            "the surface owes only {} model-cell commands -- a vacuous universe proves nothing",
+            owed.len()
+        );
+        assert!(
+            ladder_gap(&owed, &s).is_empty(),
+            "the full universe left a gap"
+        );
+        let typed: BTreeSet<String> = ["run", "chat"].iter().map(|x| (*x).to_string()).collect();
+        assert!(
+            !ladder_gap(&typed, &s).is_empty(),
+            "a typed two-verb ladder left no gap"
+        );
+        assert_eq!(
+            ladder_verbs("ladder:\n  cells:\n    verbs: [a, b]\n").expect("parses"),
+            ["a", "b"].iter().map(|x| (*x).to_string()).collect()
+        );
+        assert!(ladder_verbs("ladder:\n  cells: {}\n").is_err());
+    }
+
+    /// The model ladder owes a cell to every command in the release cell universe (#3745, quorum
+    /// q-3745 option A). A LAB check, run beside the tree scan in guards-nightly.yml; the release path
+    /// still judges the ladder's own verb set and the anti-shrink floor as before.
+    #[test]
+    #[ignore = "LAB (#3745): the ladder-gap requirement runs in guards-nightly.yml, never on a PR path"]
+    fn the_ladder_owes_every_model_cell_command() {
+        let p = repo_root().join("contracts/model-capability-ladder-v1.yaml");
+        let text = std::fs::read_to_string(&p).expect("the ladder contract is readable");
+        let have = ladder_verbs(&text).expect("the ladder names its verbs");
+        let gap = ladder_gap(&have, &crate::surface::emit());
+        assert!(
+            gap.is_empty(),
+            "the model ladder owes no cell to {} command(s) of the release cell universe (#3745). Read from `apr surface --json`:\n  {}",
+            gap.len(),
+            gap.iter().cloned().collect::<Vec<_>>().join("\n  ")
+        );
+    }
 
     fn found(kind: Kind, text: &str, v: &Vocab) -> Vec<String> {
         scan(kind, text, v).expect("the fixture parses")
