@@ -436,7 +436,7 @@ mod ship_003_tests {
             return;
         };
 
-        let doc: serde_json::Value = serde_saphyr::from_str_with_options(contract_yaml.as_str(), serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false })
+        let doc: serde_json::Value = serde_saphyr::from_str_with_options(contract_yaml.as_str(), serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false })
             .expect("qwen2-e2e-verification-v1.yaml must parse as YAML");
 
         let falsifications = doc["falsification_tests"]

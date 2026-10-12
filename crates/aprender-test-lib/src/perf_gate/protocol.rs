@@ -324,7 +324,7 @@ pub fn witness_min_agree_tokens() -> u32 {
 
 /// Pull one top-level block out of the matrix, naming what is missing.
 fn matrix_block(source: &str, key: &str) -> Result<serde_json::Value, String> {
-    let doc: serde_json::Value = serde_saphyr::from_str_with_options(source, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false })
+    let doc: serde_json::Value = serde_saphyr::from_str_with_options(source, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false })
         .map_err(|e| format!("perf-matrix.yaml does not parse as YAML: {e}"))?;
     doc.get(key).cloned().ok_or_else(|| {
         format!(

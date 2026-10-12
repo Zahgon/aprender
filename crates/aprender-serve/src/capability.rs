@@ -690,7 +690,7 @@ mod gpu_support_doc {
         let text = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
         let doc: serde_json::Value =
-            serde_saphyr::from_str_with_options(&text, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false }).unwrap_or_else(|e| panic!("contract is not YAML: {e}"));
+            serde_saphyr::from_str_with_options(&text, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false }).unwrap_or_else(|e| panic!("contract is not YAML: {e}"));
         doc.get("quant_types")
             .and_then(|v| v.as_array())
             .expect("contract has no `quant_types`")
@@ -871,7 +871,7 @@ mod capability_contract {
             .join("../../contracts/apr-model-capability-v1.yaml");
         let text = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
-        serde_saphyr::from_str_with_options(&text, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false })
+        serde_saphyr::from_str_with_options(&text, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false })
             .unwrap_or_else(|e| panic!("{} is not valid YAML: {e}", path.display()))
     }
 

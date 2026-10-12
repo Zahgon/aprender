@@ -120,7 +120,7 @@ impl TuiSnapshot {
     pub fn load(path: &Path) -> ProbarResult<Self> {
         let yaml = fs::read_to_string(path)?;
         let snapshot: TuiSnapshot =
-            serde_saphyr::from_str_with_options(&yaml, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false }).map_err(|e| ProbarError::SnapshotSerializationError {
+            serde_saphyr::from_str_with_options(&yaml, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false }).map_err(|e| ProbarError::SnapshotSerializationError {
                 message: format!("Failed to deserialize snapshot: {e}"),
             })?;
         Ok(snapshot)
@@ -372,7 +372,7 @@ impl FrameSequence {
     pub fn load(path: &Path) -> ProbarResult<Self> {
         let yaml = fs::read_to_string(path)?;
         let sequence: FrameSequence =
-            serde_saphyr::from_str_with_options(&yaml, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false }).map_err(|e| ProbarError::SnapshotSerializationError {
+            serde_saphyr::from_str_with_options(&yaml, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false }).map_err(|e| ProbarError::SnapshotSerializationError {
                 message: format!("Failed to deserialize frame sequence: {e}"),
             })?;
         Ok(sequence)

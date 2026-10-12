@@ -744,7 +744,7 @@ impl Scene {
     pub fn from_yaml(yaml: &str) -> Result<Self, SceneError> {
         let scene: Self = serde_saphyr::from_str_with_options(
             yaml,
-            serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false },
+            serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false },
         )?;
         scene.validate()?;
         Ok(scene)
