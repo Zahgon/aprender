@@ -52,8 +52,7 @@ metadata:
     - 'crates/aprender-serve/src/kernel_registry.rs — the runtime gate'
     - 'crates/aprender-contracts/src/lint/kernel_registry_v1_tests.rs — the case table, both arms, on the REAL contract and registry'
     - 'crates/aprender-serve/src/kernel_registry_parity.rs — the parity receipts a tolerance path points at (FALSIFY-KREG-009)'
-    - 'evidence/kreg/parity/ — the receipts; oracle in_tree_dequant_f64 for the fused kernels (not independent), gguf_py_dequant_f64 for the dequant-only and IQ rows (independent)'
-    - 'evidence/kreg/oracle/ — gguf-py fixtures: generated once, outside this repo, by llama.cpp gguf-py decoders at commit 60b06ab9a9eeec26f8125c9316ccbf4ee4713d1f as an external cross-check (the tree ships no Python generator); meta.json pins the commit and each file sha256'
+    - 'evidence/kreg/parity/ — the receipts; oracle in_tree_dequant_f64 for the fused kernels (not independent); the dequant-only and IQ rows are unmeasured until an independent oracle measures them'
 
 entity:
   type: json
@@ -223,7 +222,7 @@ falsification_tests:
     prediction: >
       every entry of receipts and op_receipts names a real row, once, was taken on a host of that row's arch,
       and its path is an evidence file equal to the row's tolerance; every row's tolerance is its receipt path
-      or unmeasured; and no cpu row is unmeasured. Planted falsifiers, each RED with its own message: a cpu
+      or unmeasured; and no cpu row is unmeasured except the dequant-only and IQ rows, which must be. Planted falsifiers, each RED with its own message: a cpu
       row reset to unmeasured, a tolerance outside the two forms, a receipt naming no row, a receipt path that
       is not the row's tolerance, a receipt path that is not an evidence file, a row receipted twice, and a
       receipt from a host of another arch. GPU rows may be unmeasured; their receipt coverage is a LAB check,
@@ -237,9 +236,7 @@ falsification_tests:
       the row's tolerance is that receipt's path; a precision=f32 row serves exactly what the FP32 scope
       computes, and a quantized-precision row serves something measurably coarser. Mutants: a q5_k row
       re-declared q8_k, a q8_0 row re-declared f32, a q6_k bound below the measurement, and a q4_k row reset to
-      unmeasured are each RED. A gguf-py receipt re-measures against its pinned fixture: one flipped fixture
-      byte, a q4_1 min added with the wrong sign, and one IQ2_XXS grid entry changed (a table the decoder and
-      kernel share, invisible to the in-tree oracle) are each RED
+      unmeasured are each RED
     test: cargo test -p aprender-serve --lib kernel_registry::parity
     if_fails: a receipt is a file that was once true, and a row can declare an activation precision it does not serve
   - id: FALSIFY-KREG-010

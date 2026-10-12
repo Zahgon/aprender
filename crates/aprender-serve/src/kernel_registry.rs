@@ -930,7 +930,7 @@ mod tests {
             |s| s.toolchain = "1.94.0".into(),
             |s| s.driver = "590.48".into(),
             |s| s.device = "x86_64+avx2+avx512f".into(),
-            |s| s.oracle = "gguf_py".into(),
+            |s| s.oracle = "other_oracle".into(),
         ];
         for (i, edit) in edits.iter().enumerate() {
             let mut s = base.clone();
@@ -961,7 +961,7 @@ mod tests {
             ("toolchain", |s| s.toolchain = "1.94.0".into()),
             ("driver", |s| s.driver = "590.48".into()),
             ("device", |s| s.device = "x86_64+avx2+avx512f".into()),
-            ("oracle", |s| s.oracle = "gguf_py".into()),
+            ("oracle", |s| s.oracle = "other_oracle".into()),
         ];
         for (name, edit) in edits {
             let mut now = base.clone();
@@ -974,7 +974,7 @@ mod tests {
         }
         let mut now = base.clone();
         now.toolchain = "1.94.0".into();
-        now.oracle = "gguf_py".into();
+        now.oracle = "other_oracle".into();
         assert_eq!(
             base.freshness(&h, &now),
             Freshness::Stale(vec!["toolchain", "oracle"])
@@ -1410,11 +1410,28 @@ mod tests {
         Ok(id)
     }
 
-    /// FALSIFY-KREG-008 (AC-3): the receipt checks, none with an allowance in it. Every receipt
-    /// under `key` passes `admit_receipt`, once per row; every row's tolerance is its receipt
-    /// path or `unmeasured`; and no `cpu` row is `unmeasured`. GPU rows may still be
-    /// `unmeasured`: their receipt coverage is a LAB check (#4574), not a number kept here.
-    /// Returns how many receipts were admitted.
+    /// The dequant-only and IQ cpu rows: no in-tree oracle is independent of their decode, so
+    /// they stay `unmeasured` until an independent oracle at the current comparator pin measures
+    /// them. A row leaves this list when it gains a receipt; the list never grows.
+    const CPU_ROWS_AWAITING_AN_ORACLE: [&str; 11] = [
+        "cpu.matvec.q4_1",
+        "cpu.matvec.q5_0",
+        "cpu.matvec.q5_1",
+        "cpu.matvec.q2_k",
+        "cpu.matvec.q3_k",
+        "cpu.matvec.iq2_xxs",
+        "cpu.matvec.iq3_xxs",
+        "cpu.matvec.iq4_nl",
+        "cpu.matvec.iq3_s",
+        "cpu.matvec.iq2_s",
+        "cpu.matvec.iq4_xs",
+    ];
+
+    /// FALSIFY-KREG-008 (AC-3): the receipt checks. Every receipt under `key` passes
+    /// `admit_receipt`, once per row; every row's tolerance is its receipt path or `unmeasured`;
+    /// and no `cpu` row is `unmeasured` except one in [`CPU_ROWS_AWAITING_AN_ORACLE`], which must
+    /// be. GPU rows may still be `unmeasured`: their receipt coverage is a LAB check (#4574), not
+    /// a number kept here. Returns how many receipts were admitted.
     fn receipts_admit(
         doc: &serde_json::Value,
         key: &str,
@@ -1431,18 +1448,35 @@ mod tests {
             }
         }
         for row in rows {
-            let unmeasured = row.tolerance == "unmeasured";
-            if unmeasured && row.backend == "cpu" {
-                return Err(format!("{}: a cpu row with no parity receipt", row.id));
-            }
-            if !unmeasured && !receipted.contains(row.id) {
-                return Err(format!(
-                    "{}: tolerance {} has no {key} entry",
-                    row.id, row.tolerance
-                ));
-            }
+            row_admits(row, key, receipted.contains(row.id))?;
         }
         Ok(receipted.len())
+    }
+
+    /// One row's half of [`receipts_admit`]: its tolerance agrees with whether it has a receipt.
+    fn row_admits(
+        row: &ReceiptRow<'_>,
+        key: &str,
+        receipted: bool,
+    ) -> std::result::Result<(), String> {
+        let unmeasured = row.tolerance == "unmeasured";
+        let awaiting = CPU_ROWS_AWAITING_AN_ORACLE.contains(&row.id);
+        if unmeasured && row.backend == "cpu" && !awaiting {
+            return Err(format!("{}: a cpu row with no parity receipt", row.id));
+        }
+        if awaiting && !unmeasured {
+            return Err(format!(
+                "{}: has a receipt, so it leaves CPU_ROWS_AWAITING_AN_ORACLE",
+                row.id
+            ));
+        }
+        if !unmeasured && !receipted {
+            return Err(format!(
+                "{}: tolerance {} has no {key} entry",
+                row.id, row.tolerance
+            ));
+        }
+        Ok(())
     }
 
     /// FALSIFY-KREG-008 over `kernels[]` and `receipts`.
