@@ -310,7 +310,7 @@ fn emit_contract_bindings() {
 
     let bindings: BindingFile = match serde_saphyr::from_str_with_options(
         &yaml_content,
-        serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false },
+        serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false },
     ) {
         Ok(b) => b,
         Err(e) => {
@@ -531,7 +531,7 @@ fn generate_arch_requirements_file() {
 
     let req: ArchRequirements = match serde_saphyr::from_str_with_options(
         &yaml_content,
-        serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false },
+        serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false },
     ) {
         Ok(r) => r,
         Err(e) => {
@@ -634,7 +634,7 @@ fn generate_arch_constraints_file() {
 
     let contract: ArchConstraintsContract = match serde_saphyr::from_str_with_options(
         &yaml_content,
-        serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false },
+        serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false },
     ) {
         Ok(c) => c,
         Err(e) => {
@@ -866,7 +866,7 @@ fn emit_contract_assertions() {
         };
         let Ok(y): Result<ContractYaml, _> = serde_saphyr::from_str_with_options(
             &c,
-            serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false },
+            serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false },
         ) else {
             continue;
         };

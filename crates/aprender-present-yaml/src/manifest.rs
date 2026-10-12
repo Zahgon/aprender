@@ -200,7 +200,7 @@ impl Manifest {
     pub fn from_yaml(yaml: &str) -> Result<Self, serde_saphyr::Error> {
         serde_saphyr::from_str_with_options(
             yaml,
-            serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false },
+            serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false },
         )
     }
 
@@ -262,6 +262,22 @@ layout:
         assert_eq!(widget.widget_type, "text");
         assert_eq!(widget.content, Some("Hello World".to_string()));
         assert_eq!(widget.style, Some("heading-1".to_string()));
+    }
+
+    /// serde_yaml loaded `.inf`/`.nan` in the flattened `extra` map; serde-saphyr
+    /// refuses a non-finite float in a typeless slot unless
+    /// `reject_non_finite_typeless_float` is off (#5205). RED without it.
+    #[test]
+    fn test_widget_extra_keeps_non_finite() {
+        let yaml = EXAMPLE_YAML.replace(
+            "          style: \"heading-1\"\n",
+            "          style: \"heading-1\"\n          max: .inf\n          floor: -.inf\n          gap_value: .nan\n",
+        );
+        let manifest = Manifest::from_yaml(&yaml).expect("a non-finite float in extra parses");
+        let extra = &manifest.layout.sections[0].widgets[0].extra;
+        for key in ["max", "floor", "gap_value"] {
+            assert!(extra.contains_key(key), "extra lost {key}: {extra:?}");
+        }
     }
 
     #[test]
