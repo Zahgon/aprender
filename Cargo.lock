@@ -503,7 +503,6 @@ dependencies = [
  "clap",
  "colored 2.2.0",
  "regex",
- "serial_test",
  "tempfile",
  "walkdir",
 ]

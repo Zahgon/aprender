@@ -4,7 +4,6 @@ use crate::validate_examples::helpers::*;
 use crate::validate_examples::results::*;
 use crate::validate_examples::steps::*;
 use regex::Regex;
-use serial_test::serial;
 use std::fs;
 use std::io::Write;
 use tempfile::TempDir;
@@ -180,12 +179,12 @@ fn test_validation_results_with_failure() {
 }
 
 #[test]
-#[serial]
 fn test_get_project_root_current_dir() {
-    // This test assumes we're running in the project root or a subdirectory
-    let result = get_project_root();
-    assert!(result.is_ok());
-    let root = result.unwrap();
+    // A directory holding Cargo.toml is its own root. The directory is passed in, never read
+    // from the process cwd, which every test thread shares (#5234).
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = project_root_from(manifest_dir).unwrap();
+    assert_eq!(root, manifest_dir);
     assert!(root.join("Cargo.toml").exists());
 }
 

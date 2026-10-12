@@ -9,10 +9,15 @@ use walkdir::WalkDir;
 /// Get the project root directory
 pub(crate) fn get_project_root() -> Result<PathBuf> {
     let current = std::env::current_dir().context("Failed to get current directory")?;
+    project_root_from(&current)
+}
 
+/// The project root seen from `current`: `current` or its parent, whichever holds Cargo.toml.
+/// Takes the directory explicitly so tests never move the process cwd (#5234).
+pub(crate) fn project_root_from(current: &Path) -> Result<PathBuf> {
     // Look for Cargo.toml in current dir or parent
     if current.join("Cargo.toml").exists() {
-        return Ok(current);
+        return Ok(current.to_path_buf());
     }
 
     if let Some(parent) = current.parent() {

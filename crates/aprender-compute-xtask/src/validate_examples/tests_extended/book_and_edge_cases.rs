@@ -3,7 +3,6 @@
 use crate::validate_examples::helpers::*;
 use crate::validate_examples::results::*;
 use crate::validate_examples::steps::*;
-use serial_test::serial;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -73,12 +72,12 @@ fn test_step_check_book_references_invalid_reference() {
 }
 
 #[test]
-#[serial]
 fn test_get_project_root_with_cargo_toml() {
-    // Since we're running from the project, this should find Cargo.toml
-    let result = get_project_root();
-    assert!(result.is_ok());
-    let root = result.unwrap();
+    // A subdirectory without Cargo.toml resolves to its parent that has one. The directory is
+    // passed in, never read from the shared process cwd (#5234).
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = project_root_from(&manifest_dir.join("src")).unwrap();
+    assert_eq!(root, manifest_dir);
     assert!(root.join("Cargo.toml").exists());
 }
 

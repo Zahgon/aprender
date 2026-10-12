@@ -3,10 +3,9 @@
 use crate::validate_examples::helpers::*;
 use crate::validate_examples::results::*;
 use crate::validate_examples::steps::*;
-use serial_test::serial;
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 #[test]
@@ -44,7 +43,6 @@ fn test_step_check_book_references_empty_examples() {
 }
 
 #[test]
-#[serial]
 fn test_step_check_runnable_with_missing_main() {
     let temp = TempDir::new().unwrap();
     let examples_dir = temp.path().join("examples");
@@ -56,7 +54,7 @@ fn test_step_check_runnable_with_missing_main() {
     writeln!(f, "// No main function here").unwrap();
     writeln!(f, "fn helper() {{}}").unwrap();
 
-    let project_root = get_project_root().unwrap();
+    let project_root = project_root_from(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
     let examples = vec![file];
 
     let result = step_check_runnable(&examples, &project_root);
@@ -124,14 +122,13 @@ fn test_format_validation_summary_single_step() {
 }
 
 #[test]
-#[serial]
 fn test_step_check_runnable_error_formatting() {
     let temp = TempDir::new().unwrap();
     let file = temp.path().join("bad.rs");
     let mut f = fs::File::create(&file).unwrap();
     writeln!(f, "fn other() {{}}").unwrap(); // No main
 
-    let project_root = get_project_root().unwrap();
+    let project_root = project_root_from(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
     let result = step_check_runnable(&vec![file.clone()], &project_root);
 
     assert!(result.is_err());

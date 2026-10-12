@@ -3,26 +3,20 @@
 use crate::validate_examples::helpers::*;
 use crate::validate_examples::results::*;
 use regex::Regex;
-use serial_test::serial;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
 #[test]
-#[serial]
 fn test_get_project_root_error_path() {
-    // Test by temporarily changing directory to root (which has no Cargo.toml)
-    let original_dir = std::env::current_dir().unwrap();
-
-    // Try to change to a directory that definitely doesn't have Cargo.toml
-    // This test is challenging because we need to be in a place without Cargo.toml
-    // For now, just test that the current directory works
-    let result = get_project_root();
-    assert!(result.is_ok());
-
-    // Restore directory
-    std::env::set_current_dir(original_dir).ok();
+    // Neither the directory nor its parent holds Cargo.toml: no root. The directory is passed
+    // in, so the error path is tested without moving the shared process cwd (#5234).
+    let temp = TempDir::new().unwrap();
+    let child = temp.path().join("a");
+    fs::create_dir(&child).unwrap();
+    let err = project_root_from(&child).unwrap_err().to_string();
+    assert!(err.contains("no Cargo.toml"), "{err}");
 }
 
 #[test]

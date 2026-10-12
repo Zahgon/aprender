@@ -37,13 +37,19 @@ else
 fi
 "#;
 
-/// Install git hooks into .git/hooks/
+/// Install git hooks into .git/hooks/ of the current directory
 pub fn run() -> Result<()> {
+    run_in(Path::new("."))
+}
+
+/// Install git hooks into `root`/.git/hooks/. Takes the directory explicitly so tests never
+/// move the process cwd, which is shared by every test thread (#5234).
+fn run_in(root: &Path) -> Result<()> {
     println!("{}", "🔧 Installing git hooks...".blue().bold());
     println!();
 
     // Check if .git directory exists
-    if !Path::new(".git").exists() {
+    if !root.join(".git").exists() {
         anyhow::bail!(
             "{}",
             "❌ Error: .git directory not found\n   Please run this command from the repository root"
@@ -52,8 +58,8 @@ pub fn run() -> Result<()> {
     }
 
     // Create .git/hooks directory if it doesn't exist
-    let hooks_dir = Path::new(".git/hooks");
-    fs::create_dir_all(hooks_dir).context("Failed to create .git/hooks directory")?;
+    let hooks_dir = root.join(".git").join("hooks");
+    fs::create_dir_all(&hooks_dir).context("Failed to create .git/hooks directory")?;
 
     // Install pre-commit hook
     let pre_commit_path = hooks_dir.join("pre-commit");
@@ -103,7 +109,6 @@ pub fn run() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serial_test::serial;
     use std::io::Write;
     use tempfile::TempDir;
 
@@ -151,36 +156,24 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn test_run_without_git_directory() {
         // Create temp directory without .git
         let temp_dir = TempDir::new().unwrap();
-        let original_dir = std::env::current_dir().unwrap();
-
-        // Change to temp directory
-        std::env::set_current_dir(&temp_dir).unwrap();
 
         // Should fail because no .git directory
-        let result = run();
+        let result = run_in(temp_dir.path());
         assert!(result.is_err());
-
-        // Restore original directory
-        std::env::set_current_dir(original_dir).unwrap();
     }
 
     #[test]
-    #[serial]
     fn test_run_with_git_directory() {
         // Create temp directory with .git
         let temp_dir = TempDir::new().unwrap();
         let git_dir = temp_dir.path().join(".git");
         fs::create_dir(&git_dir).unwrap();
 
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(&temp_dir).unwrap();
-
         // Should succeed
-        let result = run();
+        let result = run_in(temp_dir.path());
         assert!(result.is_ok());
 
         // Verify hook was created
@@ -198,12 +191,9 @@ mod tests {
             let perms = fs::metadata(&hook_path).unwrap().permissions();
             assert_eq!(perms.mode() & 0o111, 0o111); // Check executable bits
         }
-
-        std::env::set_current_dir(original_dir).unwrap();
     }
 
     #[test]
-    #[serial]
     fn test_run_backs_up_existing_hook() {
         // Create temp directory with .git
         let temp_dir = TempDir::new().unwrap();
@@ -217,11 +207,8 @@ mod tests {
         file.write_all(b"old hook content").unwrap();
         drop(file);
 
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(&temp_dir).unwrap();
-
         // Run installer
-        let result = run();
+        let result = run_in(temp_dir.path());
         assert!(result.is_ok());
 
         // Verify backup was created
@@ -233,8 +220,6 @@ mod tests {
         // Verify new hook was installed
         let new_content = fs::read_to_string(&hook_path).unwrap();
         assert_eq!(new_content, PRE_COMMIT_HOOK);
-
-        std::env::set_current_dir(original_dir).unwrap();
     }
 
     #[test]
