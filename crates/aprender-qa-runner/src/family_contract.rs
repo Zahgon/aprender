@@ -268,7 +268,7 @@ impl FamilyContract {
     ///
     /// Returns an error if the YAML is invalid.
     pub fn from_yaml(yaml: &str) -> Result<Self> {
-        serde_yaml::from_str(yaml).map_err(|e| Error::Execution(format!("YAML parse error: {e}")))
+        serde_saphyr::from_str(yaml).map_err(|e| Error::Execution(format!("YAML parse error: {e}")))
     }
 
     /// Get size variant by key (e.g., "0.5b", "7b").

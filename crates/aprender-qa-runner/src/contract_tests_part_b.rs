@@ -114,7 +114,7 @@ fn test_invariant_def_default_implemented() {
         catches: []
         gate_id: "F-TEST-001"
     "#;
-    let inv: InvariantDef = serde_yaml::from_str(yaml).expect("should parse");
+    let inv: InvariantDef = serde_saphyr::from_str(yaml).expect("should parse");
     assert!(!inv.implemented, "Default implemented should be false");
 }
 

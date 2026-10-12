@@ -287,8 +287,8 @@ fn test_lock_file_serde_roundtrip() {
         },
     );
 
-    let yaml = serde_yaml::to_string(&lock).expect("serialize");
-    let parsed: PlaybookLockFile = serde_yaml::from_str(&yaml).expect("deserialize");
+    let yaml = serde_saphyr::to_string(&lock).expect("serialize");
+    let parsed: PlaybookLockFile = serde_saphyr::from_str(&yaml).expect("deserialize");
     assert_eq!(parsed.entries["test"].sha256, "deadbeef");
     assert_eq!(parsed.entries["test"].locked_fields.len(), 2);
 }

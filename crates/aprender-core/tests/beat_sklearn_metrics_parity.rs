@@ -35,7 +35,7 @@ fn load_beat() -> Option<BeatParams> {
         "beat_sklearn_metrics_parity",
         "contracts/apr-sklearn-metrics-parity-beat-v1.yaml"
     )?;
-    let contract: BeatContract = serde_yaml::from_str(&yaml)
+    let contract: BeatContract = serde_saphyr::from_str(&yaml)
         .expect("parse contracts/apr-sklearn-metrics-parity-beat-v1.yaml");
     Some(contract.beat)
 }

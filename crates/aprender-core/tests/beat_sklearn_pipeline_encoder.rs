@@ -38,7 +38,7 @@ fn load_beat() -> Option<BeatParams> {
         "beat_sklearn_pipeline_encoder",
         "contracts/apr-sklearn-pipeline-encoder-beat-v1.yaml"
     )?;
-    let contract: BeatContract = serde_yaml::from_str(&yaml)
+    let contract: BeatContract = serde_saphyr::from_str(&yaml)
         .expect("parse contracts/apr-sklearn-pipeline-encoder-beat-v1.yaml");
     Some(contract.beat)
 }
