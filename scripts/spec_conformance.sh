@@ -39,6 +39,7 @@
 #   bash scripts/spec_conformance.sh              # check
 #   bash scripts/spec_conformance.sh --selftest   # case table
 #   bash scripts/spec_conformance.sh --list-selftests
+#   bash scripts/spec_conformance.sh --expiring [--file-issues]   # D6-soon report
 #
 # SPEC_CONFORMANCE_SPEC overrides the spec path (used while the master is being
 # written, and by the case table below).
@@ -66,6 +67,95 @@ render_violations() {
 
 render_notes() {
     LC_ALL=C awk -F'\t' '$1 == "NOTE" { printf "  note %s\n", $2 }' "$1"
+}
+
+# ------------------------------------------------------------ D6-soon (#4652) --
+# §4's andon (D6) turns a §12 row RED the day AFTER its derived expiry. On
+# 2026-10-01 five rows did that to every PR at 00:00Z with no prior signal
+# (C197). `--expiring` is the advance notice: one line per undischarged row
+# whose derived expiry is SOON_DAYS days away or less, and with --file-issues
+# one issue per row, opened or updated. It is a REPORT, never a check: the
+# plain run -- the one a PR or a release reads -- is untouched, prints nothing
+# new and keeps its exit status, so no third state lands on a merge path
+# (C324). A row already past its expiry is D6's, not this report's.
+SOON_DAYS=7
+SOON_TITLE_PREFIX='spec_conformance D6-soon: PP-LLAMA-001 §12 row'
+
+soon_rows() { # soon_rows <scan tsv> <today> -> "WARN D6-soon row=<id> expires=<date> days=<n>"
+    LC_ALL=C awk -F'\t' -v today="$2" -v soon="$SOON_DAYS" '
+        # Days since 1970-01-01, proleptic Gregorian. Done here rather than by
+        # `date -d`, which BSD date does not have.
+        function days(d,   y, m, n) {
+            y = substr(d, 1, 4) + 0; m = substr(d, 6, 2) + 0
+            if (m <= 2) { y -= 1; m += 12 }
+            n = 365 * y + int(y / 4) - int(y / 100) + int(y / 400)
+            n += int((153 * (m - 3) + 2) / 5) + substr(d, 9, 2) - 719469
+            return n
+        }
+        BEGIN {
+            if (today !~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/) {
+                printf "today is not YYYY-MM-DD: [%s]\n", today > "/dev/stderr"; exit 2
+            }
+            t = days(today)
+        }
+        $1 == "DAG" && $3 ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/ {
+            n = days($3) - t
+            if (n >= 0 && n <= soon) printf "WARN D6-soon row=%s expires=%s days=%d\n", $2, $3, n
+        }' "$1"
+}
+
+file_soon_issues() { # file_soon_issues <soon file> <today> -- one open issue per row, opened or updated
+    local soon="$1" today="$2" open line rowf expf daysf id exp n num have title body
+    open=$(gh issue list --state open --search 'D6-soon in:title' --limit 100 \
+               --json number,title --jq '.[] | "\(.number)\t\(.title)"') || {
+        printf 'FAIL  gh issue list errored; no issue was opened or updated\n'
+        return 2
+    }
+    while IFS= read -r line; do
+        read -r _ _ rowf expf daysf <<< "$line"
+        id="${rowf#row=}"; exp="${expf#expires=}"; n="${daysf#days=}"
+        title="$SOON_TITLE_PREFIX $id expires $exp"
+        body="Row $id of PP-LLAMA-001 §12 is not discharged and its derived expiry is $exp: $n day(s) from $today. The day after, spec_conformance D6 turns every PR RED. Land the row (LANDED), or re-date its root by amendment. Filed by scripts/spec_conformance.sh --expiring --file-issues (#4652)."
+        # The title carries the row and its expiry, never the day count, so an
+        # unchanged row is an unchanged issue and an hourly run writes nothing.
+        num=$(printf '%s\n' "$open" | LC_ALL=C awk -F'\t' -v p="$SOON_TITLE_PREFIX $id expires " \
+                  'index($2, p) == 1 { print $1; exit }')
+        have=$(printf '%s\n' "$open" | LC_ALL=C awk -F'\t' -v k="$num" '$1 == k { print $2; exit }')
+        if [ -z "$num" ]; then
+            gh issue create --title "$title" --body "$body" > /dev/null || return 2
+            printf 'issue opened: %s\n' "$title"
+        elif [ "$have" = "$title" ]; then
+            printf 'issue #%s current: %s\n' "$num" "$title"
+        else
+            gh issue edit "$num" --title "$title" > /dev/null || return 2
+            gh issue comment "$num" --body "$body" > /dev/null || return 2
+            printf 'issue #%s updated: %s\n' "$num" "$title"
+        fi
+    done < "$soon"
+}
+
+expiring() { # expiring <root> <file issues: 0|1> [scan args...]
+    local root="$1" file="$2" tsv today rc=0
+    shift 2
+    today="${SPEC_CONFORMANCE_TODAY:-$(date +%F)}"
+    tsv="$(mktemp)" || { printf 'FAIL  mktemp failed\n'; return 2; }
+    if ! scan "$root" "$@" --no-out > "$tsv"; then
+        printf 'FAIL  the scanner errored; §12 is UNMEASURED, so nothing below is a "none expiring"\n'
+        rm -f "${tsv:?}"; return 2
+    fi
+    if [ "$(LC_ALL=C awk -F'\t' '$1 == "DAG"' "$tsv" | LC_ALL=C grep -c . || true)" -eq 0 ]; then
+        printf 'FAIL  §12 parsed zero rows; an empty DAG cannot say nothing is expiring\n'
+        rm -f "${tsv:?}"; return 2
+    fi
+    if ! soon_rows "$tsv" "$today" > "$tsv.soon"; then
+        rm -f "${tsv:?}" "${tsv:?}.soon"; return 2
+    fi
+    cat "$tsv.soon"
+    if [ "$file" = 1 ]; then
+        file_soon_issues "$tsv.soon" "$today" || rc=2
+    fi
+    rm -f "${tsv:?}" "${tsv:?}.soon"
+    return "$rc"
 }
 
 # ---------------------------------------------------------------- selftest --
@@ -96,6 +186,7 @@ selftest() {
     local LEDGER_NONNUMERIC_ID LEDGER_BACKTICK_TIER LEDGER_RESERVED_WORD
     local LEDGER_UNDERSCORED_TIER LEDGER_RESPEND_CONFORMANT LEDGER_RESPEND_EMPHASISED_KEY LEDGER_RESPEND_ZWSP_KEY
     local root_dag derived
+    local DAG_SOON root_soon root_leap root_landed
     td="$(mktemp -d)" || { printf 'FAIL  mktemp -d failed\n'; return 2; }
     case "$td" in
         /tmp/*|/var/folders/*) : ;;
@@ -169,6 +260,54 @@ selftest() {
         got=$(LC_ALL=C awk -F'\t' '$1 == "VIOLATION" { print $2 }' "$td/out.tsv" \
               | LC_ALL=C sort -u | tr '\n' ',' | sed 's/,$//')
         [ -n "$got" ] || got=CLEAN
+        if [ "$got" = "$want" ]; then
+            printf '  ok    %-38s %s\n' "$name" "$want"; pass=$((pass + 1))
+        else
+            printf '  BROKE %-38s expected %s got %s\n' "$name" "$want" "$got"
+            fail=$((fail + 1))
+        fi
+    }
+
+    row_soon() { # row_soon <name> <expected "row:days,..." or NONE> <root> -- the --expiring report
+        _reg "$1" || return 0
+        local name="$1" want="$2" root="$3" got
+        if ! expiring "$root" 0 > "$td/soon.txt" 2>"$td/err.txt"; then
+            printf '  BROKE %-38s --expiring errored: %s\n' "$name" "$(head -1 "$td/soon.txt")"
+            fail=$((fail + 1)); return 0
+        fi
+        got=$(LC_ALL=C awk '$1 == "WARN" && $2 == "D6-soon" {
+                  sub(/^row=/, "", $3); sub(/^days=/, "", $5); print $3 ":" $5 }' "$td/soon.txt" \
+              | LC_ALL=C sort -u | tr '\n' ',' | sed 's/,$//')
+        [ -n "$got" ] || got=NONE
+        if [ "$got" = "$want" ]; then
+            printf '  ok    %-38s %s\n' "$name" "$want"; pass=$((pass + 1))
+        else
+            printf '  BROKE %-38s expected %s got %s\n' "$name" "$want" "$got"
+            fail=$((fail + 1))
+        fi
+    }
+
+    # row_file <name> <expected gh writes, e.g. "create" or "edit,comment" or NONE> <root> <open issues TSV>
+    # --file-issues against a stub `gh` that answers `issue list` with the given
+    # open issues and logs every other call: what was WRITTEN is the assertion.
+    row_file() {
+        _reg "$1" || return 0
+        local name="$1" want="$2" root="$3" got
+        mkdir -p "$td/bin"
+        printf '%b' "$4" > "$td/gh-open.tsv"
+        : > "$td/gh.log"
+        {
+            printf '#!/usr/bin/env bash\n'
+            printf 'if [ "$1 $2" = "issue list" ]; then cat %s; exit 0; fi\n' "$td/gh-open.tsv"
+            printf 'printf "%%s\\n" "$2" >> %s\n' "$td/gh.log"
+        } > "$td/bin/gh"
+        chmod +x "$td/bin/gh"
+        if ! PATH="$td/bin:$PATH" expiring "$root" 1 > "$td/soon.txt" 2>"$td/err.txt"; then
+            printf '  BROKE %-38s --expiring --file-issues errored: %s\n' "$name" "$(tail -1 "$td/soon.txt")"
+            fail=$((fail + 1)); return 0
+        fi
+        got=$(tr '\n' ',' < "$td/gh.log" | sed 's/,$//')
+        [ -n "$got" ] || got=NONE
         if [ "$got" = "$want" ]; then
             printf '  ok    %-38s %s\n' "$name" "$want"; pass=$((pass + 1))
         else
@@ -382,6 +521,40 @@ selftest() {
         "$(mk_root expired "$ROW_ARMED" \
            "| r1 | a | o | — | Expires **2026-09-10** |\\n" "$LEDGER_ONE" "alpha beta")"
 
+    # D6-soon (#4652, C197): the advance notice, around one row expiring
+    # 2026-09-10. T-7 warns, T-8 does not, T-0 warns and is still not RED, and
+    # T+1 is D6's RED exactly as before -- the report never softens the andon.
+    DAG_SOON="| r1 | a | o | — | Expires **2026-09-10** |\\n| r2 | b | o | — | Expires **2026-12-01** |\\n"
+    root_soon="$(mk_root soon "$ROW_ARMED" "$DAG_SOON" "$LEDGER_ONE" "alpha beta")"
+    SPEC_CONFORMANCE_TODAY=2026-09-03 row_soon expiring_t_minus_7_warns r1:7 "$root_soon"
+    SPEC_CONFORMANCE_TODAY=2026-09-02 row_soon expiring_t_minus_8_is_silent NONE "$root_soon"
+    SPEC_CONFORMANCE_TODAY=2026-09-10 row_soon expiring_t_0_warns r1:0 "$root_soon"
+    SPEC_CONFORMANCE_TODAY=2026-09-10 row expiring_t_0_is_not_red CLEAN "$root_soon"
+    SPEC_CONFORMANCE_TODAY=2026-09-11 row expiring_t_plus_1_is_red D6 "$root_soon"
+    SPEC_CONFORMANCE_TODAY=2026-09-11 row_soon expiring_t_plus_1_is_not_a_warn NONE "$root_soon"
+    # A DERIVED expiry warns too: r3 waits on r1 and inherits its date.
+    SPEC_CONFORMANCE_TODAY=2026-09-05 row_soon expiring_derived_row_warns r1:5,r3:5 \
+        "$(mk_root soonderived "$ROW_ARMED" \
+           "${DAG_SOON}| r3 | c | o | r1 | derived |\\n" "$LEDGER_ONE" "alpha beta")"
+    # The day count crosses a month end by the calendar, not by 30-day months.
+    root_leap="$(mk_root soonleap "$ROW_ARMED" \
+        "| r1 | a | o | — | Expires **2028-03-01** |\\n" "$LEDGER_ONE" "alpha beta")"
+    SPEC_CONFORMANCE_TODAY=2028-02-23 row_soon expiring_counts_feb_29 r1:7 "$root_leap"
+    SPEC_CONFORMANCE_TODAY=2028-02-22 row_soon expiring_counts_feb_29_t_minus_8 NONE "$root_leap"
+    # A LANDED row has nothing left to expire.
+    root_landed="$(mk_root soonlanded "$ROW_ARMED" \
+        "| r1 | a | o | — | LANDED. Expires **2026-09-10** |\\n" "$LEDGER_ONE" "alpha beta")"
+    SPEC_CONFORMANCE_TODAY=2026-09-03 row_soon expiring_landed_row_is_silent NONE "$root_landed"
+    # --file-issues: one issue per row, opened once, then left alone until the
+    # expiry it names changes.
+    SPEC_CONFORMANCE_TODAY=2026-09-03 row_file expiring_files_one_issue create "$root_soon" ""
+    SPEC_CONFORMANCE_TODAY=2026-09-03 row_file expiring_current_issue_is_left_alone NONE "$root_soon" \
+        "41\\t$SOON_TITLE_PREFIX r1 expires 2026-09-10\\n"
+    SPEC_CONFORMANCE_TODAY=2026-09-03 row_file expiring_redated_issue_is_updated edit,comment "$root_soon" \
+        "41\\t$SOON_TITLE_PREFIX r1 expires 2026-08-30\\n"
+    SPEC_CONFORMANCE_TODAY=2026-09-03 row_file expiring_other_rows_issue_is_not_reused create "$root_soon" \
+        "41\\t$SOON_TITLE_PREFIX r10 expires 2026-09-10\\n"
+
     if [ "$LIST_ONLY" = 1 ]; then
         rm -rf "${td:?refusing to rm an empty path}"
         return 0
@@ -405,6 +578,13 @@ main() {
         # run COMPARES against the committed file (D5) and never writes.
         --write) scan "$REPO_ROOT" --write > /dev/null; return $? ;;
         --self-test) selftest; return $? ;;
+        --expiring)
+            local file=0 sargs=()
+            [ "${2:-}" = --file-issues ] && file=1
+            if [ -n "${SPEC_CONFORMANCE_SPEC:-}" ]; then
+                sargs+=(--spec "$SPEC_CONFORMANCE_SPEC")
+            fi
+            expiring "$REPO_ROOT" "$file" "${sargs[@]}"; return $? ;;
         --list-selftests)
             SPEC_CONFORMANCE_LIST_ONLY=1 LIST_ONLY=1 selftest >/dev/null 2>&1
             printf '%s\n' "${CASE_NAMES[@]}"
