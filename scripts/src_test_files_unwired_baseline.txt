@@ -37,4 +37,3 @@ crates/aprender-serve/src/infer/tests_12.rs
 crates/aprender-serve/src/layers/tests/tests_10.rs
 crates/aprender-serve/src/quantize/tests/tests_22.rs
 crates/aprender-serve/src/safetensors/transform.rs
-crates/aprender-train/src/finetune/training_plan_execute.rs
