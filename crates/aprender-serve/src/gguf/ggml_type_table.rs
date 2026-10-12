@@ -13,8 +13,13 @@
 //! any qtype it has no dequantizer for). This table answers one question only,
 //! the one the GGUF byte layout already fixes.
 //!
+//! #3418: the rows are no longer written here. They are read at compile time
+//! from `trueno_quant::TRAITS`, which is extracted from upstream ggml.
+//!
 //! Each row is `(id, name, blck_size, type_size)` where `type_size` is
 //! `sizeof(block_*)` for a block of `blck_size` elements, exactly as in ggml.
+
+use trueno_quant::TRAITS;
 
 /// Static layout traits of one ggml tensor type.
 ///
@@ -33,215 +38,52 @@ pub struct GgmlTypeTraits {
     pub type_size: usize,
 }
 
+/// How many ggml ids have a block layout: the live rows of [`TRAITS`].
+const SIZED_COUNT: usize = {
+    let mut n = 0;
+    let mut i = 0;
+    while i < TRAITS.len() {
+        if TRAITS[i].blck_size > 0 {
+            n += 1;
+        }
+        i += 1;
+    }
+    n
+};
+
+/// [`TRAITS`]'s live rows in id order, read at compile time (#3418).
+const SIZED_ROWS: [GgmlTypeTraits; SIZED_COUNT] = {
+    let mut rows = [GgmlTypeTraits {
+        id: 0,
+        name: "",
+        blck_size: 0,
+        type_size: 0,
+    }; SIZED_COUNT];
+    let mut n = 0;
+    let mut id: u32 = 0;
+    while (id as usize) < TRAITS.len() {
+        let t = &TRAITS[id as usize];
+        if t.blck_size > 0 {
+            rows[n] = GgmlTypeTraits {
+                id,
+                name: t.name,
+                blck_size: t.blck_size as usize,
+                type_size: t.type_size as usize,
+            };
+            n += 1;
+        }
+        id += 1;
+    }
+    rows
+};
+
 /// Every ggml type id with a defined block layout, in id order.
 ///
-/// Sizes are `sizeof(block_*)` from ggml's headers, e.g. `block_q4_K` is
-/// `{ half d; half dmin; uint8_t scales[12]; uint8_t qs[128]; }` = 144 bytes
-/// per 256 elements.
-pub const GGML_TYPES: &[GgmlTypeTraits] = &[
-    GgmlTypeTraits {
-        id: 0,
-        name: "F32",
-        blck_size: 1,
-        type_size: 4,
-    },
-    GgmlTypeTraits {
-        id: 1,
-        name: "F16",
-        blck_size: 1,
-        type_size: 2,
-    },
-    GgmlTypeTraits {
-        id: 2,
-        name: "Q4_0",
-        blck_size: 32,
-        type_size: 18,
-    },
-    GgmlTypeTraits {
-        id: 3,
-        name: "Q4_1",
-        blck_size: 32,
-        type_size: 20,
-    },
-    GgmlTypeTraits {
-        id: 6,
-        name: "Q5_0",
-        blck_size: 32,
-        type_size: 22,
-    },
-    GgmlTypeTraits {
-        id: 7,
-        name: "Q5_1",
-        blck_size: 32,
-        type_size: 24,
-    },
-    GgmlTypeTraits {
-        id: 8,
-        name: "Q8_0",
-        blck_size: 32,
-        type_size: 34,
-    },
-    GgmlTypeTraits {
-        id: 9,
-        name: "Q8_1",
-        blck_size: 32,
-        type_size: 36,
-    },
-    GgmlTypeTraits {
-        id: 10,
-        name: "Q2_K",
-        blck_size: 256,
-        type_size: 84,
-    },
-    GgmlTypeTraits {
-        id: 11,
-        name: "Q3_K",
-        blck_size: 256,
-        type_size: 110,
-    },
-    GgmlTypeTraits {
-        id: 12,
-        name: "Q4_K",
-        blck_size: 256,
-        type_size: 144,
-    },
-    GgmlTypeTraits {
-        id: 13,
-        name: "Q5_K",
-        blck_size: 256,
-        type_size: 176,
-    },
-    GgmlTypeTraits {
-        id: 14,
-        name: "Q6_K",
-        blck_size: 256,
-        type_size: 210,
-    },
-    GgmlTypeTraits {
-        id: 15,
-        name: "Q8_K",
-        blck_size: 256,
-        type_size: 292,
-    },
-    GgmlTypeTraits {
-        id: 16,
-        name: "IQ2_XXS",
-        blck_size: 256,
-        type_size: 66,
-    },
-    GgmlTypeTraits {
-        id: 17,
-        name: "IQ2_XS",
-        blck_size: 256,
-        type_size: 74,
-    },
-    GgmlTypeTraits {
-        id: 18,
-        name: "IQ3_XXS",
-        blck_size: 256,
-        type_size: 98,
-    },
-    GgmlTypeTraits {
-        id: 19,
-        name: "IQ1_S",
-        blck_size: 256,
-        type_size: 50,
-    },
-    GgmlTypeTraits {
-        id: 20,
-        name: "IQ4_NL",
-        blck_size: 32,
-        type_size: 18,
-    },
-    GgmlTypeTraits {
-        id: 21,
-        name: "IQ3_S",
-        blck_size: 256,
-        type_size: 110,
-    },
-    GgmlTypeTraits {
-        id: 22,
-        name: "IQ2_S",
-        blck_size: 256,
-        type_size: 82,
-    },
-    GgmlTypeTraits {
-        id: 23,
-        name: "IQ4_XS",
-        blck_size: 256,
-        type_size: 136,
-    },
-    GgmlTypeTraits {
-        id: 24,
-        name: "I8",
-        blck_size: 1,
-        type_size: 1,
-    },
-    GgmlTypeTraits {
-        id: 25,
-        name: "I16",
-        blck_size: 1,
-        type_size: 2,
-    },
-    GgmlTypeTraits {
-        id: 26,
-        name: "I32",
-        blck_size: 1,
-        type_size: 4,
-    },
-    GgmlTypeTraits {
-        id: 27,
-        name: "I64",
-        blck_size: 1,
-        type_size: 8,
-    },
-    GgmlTypeTraits {
-        id: 28,
-        name: "F64",
-        blck_size: 1,
-        type_size: 8,
-    },
-    GgmlTypeTraits {
-        id: 29,
-        name: "IQ1_M",
-        blck_size: 256,
-        type_size: 56,
-    },
-    GgmlTypeTraits {
-        id: 30,
-        name: "BF16",
-        blck_size: 1,
-        type_size: 2,
-    },
-    GgmlTypeTraits {
-        id: 34,
-        name: "TQ1_0",
-        blck_size: 256,
-        type_size: 54,
-    },
-    GgmlTypeTraits {
-        id: 35,
-        name: "TQ2_0",
-        blck_size: 256,
-        type_size: 66,
-    },
-];
-
-/// Ids ggml has *named* but whose layout this table deliberately does not carry:
-/// the removed/deprecated repack types, plus any type whose block layout we have
-/// not verified. Naming them turns "Unsupported quantization type: 32" into a
-/// message a reader can act on, while still refusing to invent a size.
-const NAMED_UNSIZED_TYPES: &[(u32, &str)] = &[
-    (4, "Q4_2 (removed from ggml)"),
-    (5, "Q4_3 (removed from ggml)"),
-    (31, "Q4_0_4_4 (removed from ggml: repacked at load time)"),
-    (32, "Q4_0_4_8 (removed from ggml: repacked at load time)"),
-    (33, "Q4_0_8_8 (removed from ggml: repacked at load time)"),
-    (36, "IQ4_NL_4_4 (removed from ggml: repacked at load time)"),
-    (37, "IQ4_NL_4_8 (removed from ggml: repacked at load time)"),
-    (38, "IQ4_NL_8_8 (removed from ggml: repacked at load time)"),
-    (39, "MXFP4 (layout not verified against ggml)"),
-];
+/// #3418: derived from `trueno_quant::TRAITS`, the one table that
+/// `contracts/ggml-type-v1.yaml` pins to upstream ggml's compiled
+/// `type_traits` at the comparator commit. This file carries no sizes of its
+/// own, so it cannot drift from upstream (FT-GGMLT-006).
+pub const GGML_TYPES: &[GgmlTypeTraits] = &SIZED_ROWS;
 
 /// Layout traits for a ggml type id, or `None` if this table has no size for it.
 #[must_use]
@@ -249,21 +91,20 @@ pub fn traits(id: u32) -> Option<&'static GgmlTypeTraits> {
     GGML_TYPES.iter().find(|t| t.id == id)
 }
 
-/// The ggml name of a type id, including ids that carry no size here.
+/// The ggml name of a type id, including the removed ids that carry no size.
 #[must_use]
 pub fn name(id: u32) -> Option<&'static str> {
-    traits(id).map(|t| t.name).or_else(|| {
-        NAMED_UNSIZED_TYPES
-            .iter()
-            .find(|(unsized_id, _)| *unsized_id == id)
-            .map(|(_, unsized_name)| *unsized_name)
-    })
+    usize::try_from(id)
+        .ok()
+        .and_then(|i| TRAITS.get(i))
+        .map(|t| t.name)
 }
 
-/// The refusal text for an id with no size in this table.
+/// The refusal text for an id with no size in this table. Every id that
+/// [`TRAITS`] names but does not size is one upstream removed.
 fn unsupported(id: u32) -> String {
     match name(id) {
-        Some(known) => format!("Unsupported quantization type: {id} ({known})"),
+        Some(known) => format!("Unsupported quantization type: {id} ({known}, removed from ggml)"),
         None => format!("Unsupported quantization type: {id}"),
     }
 }
@@ -414,7 +255,12 @@ mod ggml_type_table_tests {
         let err = byte_size(32, &[16]).expect_err("Q4_0_4_8 carries no size here");
         assert!(err.contains("Q4_0_4_8"), "got: {err}");
         assert!(traits(32).is_none(), "32 must not be sized");
-        assert_eq!(name(39), Some("MXFP4 (layout not verified against ggml)"));
+        assert!(err.contains("removed from ggml"), "got: {err}");
+        // #3418: TRAITS sizes MXFP4 from upstream, so serve does too.
+        assert_eq!(
+            traits(39).map(|t| (t.blck_size, t.type_size)),
+            Some((32, 17))
+        );
     }
 
     /// Checked arithmetic: a corrupt header must produce an error, not a small
