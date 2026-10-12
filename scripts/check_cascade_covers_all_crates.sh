@@ -61,6 +61,9 @@
 #   bash scripts/check_cascade_covers_all_crates.sh              # check
 #   bash scripts/check_cascade_covers_all_crates.sh --self-test  # case table
 #
+# scripts/lib/cascade_universe.py calls `cargo metadata`: guard_tree.sh files this
+# guard as cargo-using by the marker below (#5096).
+# guard-tree: cargo
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

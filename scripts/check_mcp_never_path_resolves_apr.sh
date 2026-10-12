@@ -18,6 +18,9 @@
 # copied to `apr-main` is REJECTED by the resolver and falls through to the $PATH
 # fallback -- so every tool looked broken when only two were. The shadow and the
 # positive control must both be named exactly `apr`.
+# scripts/apr_bin.sh calls `cargo metadata`: guard_tree.sh files this guard as
+# cargo-using by the marker below (#5096).
+# guard-tree: cargo
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 

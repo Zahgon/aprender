@@ -186,11 +186,24 @@ guard_code() {
     sed -E -e '/^[[:space:]]*#/d' -e 's/(^|[[:space:]])#.*$//' "$1"
 }
 
-# guard_uses_cargo FILE -- exit 0 when FILE's code holds a bare `cargo ` token.
+# guard_uses_cargo FILE -- exit 0 when FILE carries the line `# guard-tree: cargo`,
+# or when FILE's code holds a cargo invocation shape (CARGO_RE).
+#
+# THE MARKER is for cargo a guard reaches through a helper it runs or sources:
+# check_cascade_covers_all_crates.sh runs scripts/lib/cascade_universe.py and
+# check_mcp_never_path_resolves_apr.sh sources scripts/apr_bin.sh, and both
+# call `cargo metadata` there. Following helper paths by text does not work:
+# 52 guards name a cargo-reaching helper, most of them only to read its text,
+# and every one would leave --no-cargo. So the marker is explicit, one exact
+# line like `# guard-tree: serial`, and is set from a run with a logging
+# `cargo` stub in place of cargo (#5096).
+#
 # grep -c, never grep -q: -q exits at the first match and sed then dies of
 # SIGPIPE, which pipefail reports as the pipeline's status.
 guard_uses_cargo() {
     local n
+    n="$(grep -cx '# guard-tree: cargo' "$1")"
+    [ "${n:-0}" -gt 0 ] && return 0
     n="$(guard_code "$1" | grep -cE "$CARGO_RE")"
     [ "${n:-0}" -gt 0 ]
 }
