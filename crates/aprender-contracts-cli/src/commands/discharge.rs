@@ -83,7 +83,14 @@ pub fn run(action: DischargeAction) -> Res {
                 leanchecker_unscoped,
             ));
             finish_with(
-                Lake::new(lake_timeout),
+                Lake::new(
+                    lake_timeout,
+                    lake_scope(
+                        leanchecker_memory_max_gib,
+                        leanchecker_cpu_quota_pct,
+                        leanchecker_unscoped,
+                    ),
+                ),
                 r,
                 &lean_dir,
                 no_lake,
@@ -102,7 +109,14 @@ pub fn run(action: DischargeAction) -> Res {
             leanchecker_unscoped,
             lake_timeout,
         } => run_all(
-            Lake::new(lake_timeout),
+            Lake::new(
+                lake_timeout,
+                lake_scope(
+                    leanchecker_memory_max_gib,
+                    leanchecker_cpu_quota_pct,
+                    leanchecker_unscoped,
+                ),
+            ),
             "build.sh",
             &lean_dir,
             &contracts,
@@ -119,7 +133,7 @@ pub fn run(action: DischargeAction) -> Res {
             lean_dir,
             contracts,
         } => finish_with(
-            Lake::new(LAKE_TIMEOUT_S),
+            Lake::new(LAKE_TIMEOUT_S, None),
             discharge::ratchet_labels(&lean_dir, &contracts),
             &lean_dir,
             true,
@@ -182,10 +196,7 @@ impl Leanchecker {
             timeout_s,
             ulimit_v_kib,
             threads,
-            scope: (!unscoped).then_some(Scope {
-                memory_max_gib,
-                cpu_quota_pct,
-            }),
+            scope: lake_scope(memory_max_gib, cpu_quota_pct, unscoped),
         }
     }
 }
@@ -209,30 +220,54 @@ pub const LEANCHECKER_CPU_QUOTA_PCT: u32 = 800;
 /// without that slice systemd creates it as a plain transient slice.
 const AGENT_SLICE: &str = "agent.slice";
 
+/// The scope every `lake` arm runs in (#4638): the leanchecker flags' caps, so `--leanchecker-unscoped` is the one
+/// way to drop them. The comparator, `Axioms.lean` and the self-test elaborate Mathlib-sized environments too.
+fn lake_scope(memory_max_gib: u32, cpu_quota_pct: u32, unscoped: bool) -> Option<Scope> {
+    (!unscoped).then_some(Scope {
+        memory_max_gib,
+        cpu_quota_pct,
+    })
+}
+
+/// `systemd-run --user --scope --slice=agent.slice -q -p MemoryMax=<G>G -p CPUQuota=<Q>% --`. A `--scope` unit
+/// runs the command in systemd-run's own process, so its pid (and the process group it leads) is the command's.
+fn scope_prefix(s: Scope) -> Vec<String> {
+    vec![
+        "systemd-run".to_string(),
+        "--user".into(),
+        "--scope".into(),
+        format!("--slice={AGENT_SLICE}"),
+        "-q".into(),
+        "-p".into(),
+        format!("MemoryMax={}G", s.memory_max_gib),
+        "-p".into(),
+        format!("CPUQuota={}%", s.cpu_quota_pct),
+        "--".into(),
+    ]
+}
+
+/// A scope that cannot be created would otherwise read as the arm's own non-zero exit: probe it first.
+fn scope_creatable() -> bool {
+    let probe = Command::new("systemd-run")
+        .args([
+            "--user",
+            "--scope",
+            &format!("--slice={AGENT_SLICE}"),
+            "-q",
+            "--",
+            "true",
+        ])
+        .output();
+    matches!(&probe, Ok(o) if o.status.success())
+}
+
 /// The script `sh -c` runs; `$1` ulimit, `$2` timeout, `$3` lake.
 const RECHECK_SH: &str = r#"if [ -n "$1" ]; then ulimit -v "$1" || exit 125; fi; exec timeout -k 30 "$2" "$3" env leanchecker ProvableContracts"#;
 
 /// The argv of the leanchecker arm: `[systemd-run --user --scope -q -p MemoryMax=.. -p CPUQuota=.. --] sh -c ..`.
 /// `LEAN_NUM_THREADS` is set on the command, which a `--scope` unit inherits (it runs in the caller's process).
 fn recheck_argv(lake_bin: &str, lc: Leanchecker) -> Vec<String> {
-    let mut v: Vec<String> = Vec::new();
-    if let Some(s) = lc.scope {
-        v.extend(
-            [
-                "systemd-run".to_string(),
-                "--user".into(),
-                "--scope".into(),
-                format!("--slice={AGENT_SLICE}"),
-                "-q".into(),
-                "-p".into(),
-                format!("MemoryMax={}G", s.memory_max_gib),
-                "-p".into(),
-                format!("CPUQuota={}%", s.cpu_quota_pct),
-                "--".into(),
-            ]
-            .into_iter(),
-        );
-    }
+    let mut v: Vec<String> = lc.scope.map(scope_prefix).unwrap_or_default();
     let limit = lc.ulimit_v_kib.map(|k| k.to_string()).unwrap_or_default();
     v.extend([
         "sh".to_string(),
@@ -259,6 +294,15 @@ pub(crate) fn lean_steps(
     lc: Option<Leanchecker>,
 ) {
     let open = |r: &Report| !r.reject && r.decline.is_none();
+    let runs_lake = !no_lake || cmp || lc.is_some();
+    // #4638: a scoped arm that cannot get its scope declines; it never falls back to an uncapped `lake`.
+    if lake.scope.is_some() && runs_lake && open(r) && !scope_creatable() {
+        r.decline = Some(
+            "`systemd-run --user --scope` is unavailable here: no Lean arm ran (pass --leanchecker-unscoped only \
+             on a host where an uncapped run cannot starve other work, #4638)"
+                .to_string(),
+        );
+    }
     if open(r) && !no_lake {
         elaborate(lake, lean_dir, r);
     }
@@ -600,6 +644,8 @@ const TIMED_OUT: i32 = 124;
 pub(crate) struct Lake<'a> {
     pub bin: &'a str,
     pub timeout_s: u64,
+    /// `None` = `lake` runs bare (`--leanchecker-unscoped`, or a step that never runs `lake`).
+    pub scope: Option<Scope>,
 }
 
 /// How a bounded call ended. `TimedOut` carries the killed process group (the child's own PID).
@@ -609,15 +655,30 @@ enum Bounded {
 }
 
 impl Lake<'static> {
-    fn new(timeout_s: u64) -> Self {
+    fn new(timeout_s: u64, scope: Option<Scope>) -> Self {
         Lake {
             bin: "lake",
             timeout_s,
+            scope,
         }
     }
 }
 
 impl Lake<'_> {
+    /// The argv of `lake <args>`: behind [`scope_prefix`] when scoped (#4638), else `lake` itself.
+    fn argv<S: AsRef<OsStr>>(self, args: &[S]) -> Vec<std::ffi::OsString> {
+        let mut v: Vec<std::ffi::OsString> = self
+            .scope
+            .map(scope_prefix)
+            .unwrap_or_default()
+            .into_iter()
+            .map(Into::into)
+            .collect();
+        v.push(self.bin.into());
+        v.extend(args.iter().map(|a| a.as_ref().to_os_string()));
+        v
+    }
+
     /// `lake <args>` in `dir`, in its own process group, waited on for at most `timeout_s`. At the deadline the
     /// group is SIGKILLed by the child's own PID (pgid == pid) -- never by pattern -- so a `lean` under `lake env`
     /// dies with it. The deadline also bounds the output drain: a grandchild holding a pipe cannot stall it.
@@ -648,9 +709,10 @@ impl Lake<'_> {
     ) -> std::io::Result<std::process::Child> {
         use std::os::unix::process::CommandExt;
         use std::process::Stdio;
+        let argv = self.argv(args);
         let spawn = || {
-            Command::new(self.bin)
-                .args(args)
+            Command::new(&argv[0])
+                .args(&argv[1..])
                 .current_dir(dir)
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
@@ -798,17 +860,7 @@ fn recheck(lake: Lake<'_>, lean_dir: &Path, lc: Leanchecker, r: &mut Report) {
     }
     // A scope that cannot be created would otherwise read as leanchecker's own non-zero exit: probe it first.
     if lc.scope.is_some() {
-        let probe = Command::new("systemd-run")
-            .args([
-                "--user",
-                "--scope",
-                &format!("--slice={AGENT_SLICE}"),
-                "-q",
-                "--",
-                "true",
-            ])
-            .output();
-        if !matches!(&probe, Ok(o) if o.status.success()) {
+        if !scope_creatable() {
             r.decline = Some(
                 "`systemd-run --user --scope` is unavailable here: leanchecker did not run (pass \
                  --leanchecker-unscoped only on a host where an uncapped run cannot starve other work, #4348)"
@@ -1037,7 +1089,11 @@ mod tests {
 
     /// A `lake` under a 60 s bound: long enough for any fake, short enough that a hang fails the test.
     fn lk(bin: &str) -> Lake<'_> {
-        Lake { bin, timeout_s: 60 }
+        Lake {
+            bin,
+            timeout_s: 60,
+            scope: None,
+        }
     }
 
     /// A fake `lake`: exits `rc` after printing `out`.
@@ -1178,6 +1234,7 @@ mod tests {
         std::fs::write(&slow, body).expect("w");
         let t1 = Some(Leanchecker {
             timeout_s: 1,
+            scope: None,
             ulimit_v_kib: None,
             threads: 8,
             scope: None,
@@ -1274,6 +1331,47 @@ mod tests {
         let bare = recheck_argv("lake", LC.expect("LC"));
         assert_eq!(bare[..2], ["sh", "-c"]);
         assert_eq!(scoped[10..], bare[..]);
+    }
+
+    /// #4638: every `lake` arm -- `Axioms.lean`, the comparator self-test, the comparator, and the leanchecker's
+    /// toolchain lookup -- runs behind the same scope as leanchecker; unscoped it is `lake` itself.
+    #[test]
+    fn every_lake_arm_runs_in_the_scope() {
+        let caps = lake_scope(24, 800, false);
+        let scoped = Lake {
+            bin: "lake",
+            timeout_s: 60,
+            scope: caps,
+        };
+        let bare = Lake {
+            scope: None,
+            ..scoped
+        };
+        let prefix = scope_prefix(caps.expect("scoped"));
+        for arm in [
+            vec!["env", "lean", AXIOMS_FILE],
+            vec!["env", "lean", "--run", COMPARATOR, "--self-test"],
+            vec!["env", "lean", "--run", COMPARATOR, "Challenge/A.lean"],
+            vec!["env", "printenv", "LEAN_SYSROOT"],
+        ] {
+            let s = scoped.argv(&arm);
+            let b = bare.argv(&arm);
+            assert_eq!(
+                s[..prefix.len()],
+                prefix
+                    .iter()
+                    .map(Into::into)
+                    .collect::<Vec<std::ffi::OsString>>()[..]
+            );
+            assert_eq!(s[prefix.len()..], b[..], "{arm:?}");
+            assert_eq!(b[0], "lake", "{arm:?}");
+        }
+        assert!(prefix.contains(&"MemoryMax=24G".to_string()));
+        assert!(prefix.contains(&"CPUQuota=800%".to_string()));
+        assert_eq!(lake_scope(24, 800, true), None);
+        // The leanchecker arm and the lake arms share one prefix, so one flag caps both.
+        let lc = Leanchecker::from_flags(3600, None, 8, 24, 800, false);
+        assert_eq!(recheck_argv("lake", lc)[..prefix.len()], prefix[..]);
     }
 
     /// #4348: the DEFAULT `--leanchecker` is capped -- 8 threads inside a 24G/800% scope -- on `check` and `run`
@@ -1402,6 +1500,7 @@ mod tests {
         std::fs::write(&slow, body).expect("w");
         let t1 = Some(Leanchecker {
             timeout_s: 1,
+            scope: None,
             ulimit_v_kib: None,
             threads: 8,
             scope: None,
@@ -1818,6 +1917,7 @@ mod tests {
             Lake {
                 bin: &lake,
                 timeout_s: 1,
+                scope: None,
             },
             &mut r,
             &lean,
@@ -1871,6 +1971,7 @@ mod tests {
                 Lake {
                     bin: lake,
                     timeout_s: 1,
+                    scope: None,
                 },
                 &mut r,
                 &lean,
@@ -1972,6 +2073,7 @@ mod tests {
                 Lake {
                     bin: &p.to_string_lossy(),
                     timeout_s: 2,
+                    scope: None,
                 },
                 &mut r,
                 &lean,
