@@ -423,6 +423,11 @@ fn finalize_qa_report(
         ));
     }
     let mut passed = gates_pass(&gates);
+    // #5226: a run with no executed gate measured nothing. That is NOT MEASURED, which exits
+    // non-zero whatever --min-executed says (an unset bound used to let it read as a PASS).
+    if run_measured_nothing(gates_executed) {
+        passed = false;
+    }
     if !check_min_executed(config, gates_executed, &mut passed) && !config.json {
         println!(
             "  {} Only {} gates executed, minimum required: {}",
@@ -463,6 +468,12 @@ fn warn_excessive_skips(json: bool, executed: usize, skipped: usize) {
     }
 }
 
+/// #5226: true when no gate executed, so the run measured nothing. Callers treat that as
+/// NOT MEASURED, never as a pass: `gates_pass` is vacuously true over all-skipped gates.
+pub(crate) fn run_measured_nothing(gates_executed: usize) -> bool {
+    gates_executed == 0
+}
+
 /// Check --min-executed constraint. Returns true if constraint is satisfied.
 fn check_min_executed(config: &QaConfig, gates_executed: usize, passed: &mut bool) -> bool {
     let Some(min) = config.min_executed else {
@@ -496,7 +507,11 @@ fn build_qa_summary(
         .map(|g| g.name.as_str())
         .collect();
 
-    if names.is_empty() {
+    if names.is_empty() && run_measured_nothing(gates_executed) {
+        format!(
+            "NOT MEASURED: 0 gates executed, {gates_skipped} skipped -- this run measured nothing (#5226)"
+        )
+    } else if names.is_empty() {
         format!(
             "Insufficient gate execution: {} < {} minimum",
             gates_executed,
