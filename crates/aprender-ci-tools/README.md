@@ -7,7 +7,7 @@ CI helpers ported from `scripts/**/*.py` to Rust (C301: no Python in the build).
 |------------|-------------|
 | `publishable-crates` (reads `cargo metadata` JSON on stdin) | `scripts/lib/publishable_crates.py` |
 | `package-include-diff <LISTING> <INCLUDES>` | `scripts/lib/package_include_diff.py` (kept: its caller `scripts/check_package_includes.sh` is a gate, so it switches once a released `aprender-ci-tools` carries the port, N-1) |
-| `coverage-report-scope [--exclude NAME]...` | `scripts/coverage_report_scope.py` (kept: its callers, the Makefile coverage targets, `ci.sh` and `prepare-release.sh`, are gate paths, N-1; the parity harness reads it from git blob 106561a2) |
+| `coverage-report-scope [--exclude NAME]...` | `scripts/coverage_report_scope.py` (deleted, #4787: its callers, the Makefile coverage targets, `ci.sh` and `prepare-release.sh`, switched once v0.71.0 carried the port, N-1; the parity harness reads it from git blob 106561a2) |
 | `tarball-shrink-report <PACKAGE_LOG> <WS_DIR>` | `scripts/lib/tarball_shrink_report.py` (kept: its caller runs on a gate path, so it switches once a released `aprender-ci-tools` carries the port) |
 | `tarball-workspace DIR` · `--name DIR` · `--target-dir` (reads `cargo metadata` JSON on stdin) | `scripts/lib/tarball_workspace.py` (kept: its caller `scripts/package_tarball_build.sh` is on the publish gate path, N-1; the parity test reads it from a pinned git blob) |
 | `tarball-build-errors LOG` | `scripts/lib/tarball_build_errors.py` (kept: its caller `scripts/package_tarball_build.sh` is on the publish gate path, N-1) |
