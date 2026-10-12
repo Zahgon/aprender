@@ -174,7 +174,8 @@ self_test() {
     check cycle_member_alone_is_one_call  0 "$T/cycle.json" "p"                  p
     # the reason is printed, so a split is never silent
     rows=$((rows + 1))
-    if bash "$0" --metadata "$T/m.json" tcli tlib 2>&1 >/dev/null | grep -qx 'quick_tier_groups: raised: tlib	by tcli: browser'; then
+    err="$(bash "$0" --metadata "$T/m.json" tcli tlib 2>&1 >/dev/null)" || true
+    if grep -qx 'quick_tier_groups: raised: tlib	by tcli: browser' <<< "$err"; then
         echo "ok    raise_reason_names_crate_and_feature"
     else echo "BROKE raise_reason_names_crate_and_feature"; fails=$((fails + 1)); fi
     echo "quick_tier_groups self-test: $((rows - fails)) ok, $fails broke"
