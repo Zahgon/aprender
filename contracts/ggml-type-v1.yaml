@@ -1,5 +1,5 @@
 metadata:
-  version: 1.8.0
+  version: 1.9.0
   created: '2026-09-20'
   author: PAIML Engineering
   description: |
@@ -44,7 +44,7 @@ metadata:
   - 'GitHub #3418 (serve sizes from TRAITS, one table), #3430 (M1), #3431 (M2 reconciliation), #3421 (epic), #3563 (pin-derived artifacts, general case)'
 
 name: ggml-type
-version: 1.8.0
+version: 1.9.0
 scope: aprender-quant (trueno_quant) ggml tensor-type enum and TRAITS table
 
 description: |
@@ -325,6 +325,30 @@ falsification_tests:
     loaded too, as it should). GREEN after; removing the check turns it RED.
     Two existing Q5_K fixtures (tests_10 make_hf_tensors) were built from the
     144-byte Q4_K layout; the check refused them and they now use 176 bytes.
+- id: FT-GGMLT-014
+  rule: the APR loader decodes IQ tensors with the IQ decoders and refuses a block-quantized id it has no decoder for; no block type is read as F32 (#3418)
+  prediction: |
+    iq_tensors_reach_the_iq_decoders_3418 checks that dequant_by_dtype on a
+    whole IQ tensor equals crate::quantize::dequantize_iq_tensor for every id
+    iq_dispatch::iq_block_elems admits. apr_load_refuses_a_block_type_it_cannot_decode_3418
+    builds a minimal APR v2 file with a whole Q8_K (ggml 15) gate_proj and
+    expects from_apr_bytes to be Err. every_admitted_block_id_has_a_decoder_arm_3418
+    ties the loader's list of decoded ids to the match: each block id the
+    list admits decodes to something other than the F32 reading of its
+    bytes. GREEN once IQ ids have an arm and undecoded ids are refused;
+    removing the IQ arm, or the refusal, turns it RED.
+  test: cargo test -p aprender-serve --lib _3418
+  if_fails: 'an APR tensor of a block type the loader cannot decode is read as raw little-endian F32 bytes.'
+  evidence: |
+    Measured 2026-10-12 on la-74/3418 58c3accd5, before the change: RED on
+    both (IQ id 16 was not decoded by the IQ decoder; a whole Q8_K tensor
+    loaded).
+    After: GREEN, 3 of 3 _3418 tests in this row; apr_transformer:: 752 passed;
+    aprender-serve --lib (--skip qwen35) 16201 passed, 0 failed; clippy
+    --lib --tests -D warnings rc 0. Mutants: the IQ arm guard forced false
+    turns iq_tensors_reach_the_iq_decoders_3418 and
+    every_admitted_block_id_has_a_decoder_arm_3418 RED; the refusal forced
+    off turns apr_load_refuses_a_block_type_it_cannot_decode_3418 RED.
 
 kani_harnesses:
 - id: KANI-GGMLT-001

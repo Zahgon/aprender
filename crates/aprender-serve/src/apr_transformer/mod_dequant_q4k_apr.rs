@@ -55,21 +55,20 @@ fn dequant_q6k_tensor(tensor_data: &[u8], dims: &[usize]) -> Vec<f32> {
     }
 }
 
-/// #3418: a 256-element k-quant tensor whose super-block size comes from the
-/// one ggml table, with rows padded to 256 (GH-202) decoded row by row.
+/// #3418: a block tensor whose block size and bytes come from the one ggml
+/// table, with 2-D rows padded to whole blocks (GH-202) decoded row by row.
 fn dequant_superblock_tensor(
     tensor_data: &[u8],
     dims: &[usize],
     ggml_id: u32,
-    decode: fn(&[u8]) -> crate::error::Result<Vec<f32>>,
+    decode: impl Fn(&[u8]) -> crate::error::Result<Vec<f32>>,
 ) -> Vec<f32> {
     let num_elements: usize = dims.iter().product();
-    let Some(block_bytes) = crate::gguf::ggml_type_table::traits(ggml_id).map(|t| t.type_size)
-    else {
+    let Some(t) = crate::gguf::ggml_type_table::traits(ggml_id) else {
         return vec![0.0; num_elements];
     };
-    if dims.len() == 2 && !dims[1].is_multiple_of(256) {
-        dequant_perrow(tensor_data, dims, 256, block_bytes, |block, out| {
+    if dims.len() == 2 && !dims[1].is_multiple_of(t.blck_size) {
+        dequant_perrow(tensor_data, dims, t.blck_size, t.type_size, |block, out| {
             if let Ok(values) = decode(block) {
                 out.copy_from_slice(&values);
             }
@@ -79,6 +78,14 @@ fn dequant_superblock_tensor(
         values.resize(num_elements, 0.0);
         values
     }
+}
+
+/// #3418 (FT-GGMLT-014): the dtype bytes `dequant_by_dtype` has a decoder arm
+/// for. A block-quantized id outside this list is refused at load rather than
+/// read as F32; `every_admitted_block_id_has_a_decoder_arm_3418` ties the two.
+fn apr_decodes(dtype: u8) -> bool {
+    matches!(dtype, 0 | 1 | 2 | 3 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 30 | 128 | 129)
+        || crate::quantize::iq_dispatch::iq_block_elems(u32::from(dtype)).is_some()
 }
 
 /// #3418 (FT-GGMLT-013): refuse a block-quantized tensor whose byte size does
@@ -98,6 +105,11 @@ fn check_quant_tensor_sizes(
         else {
             continue;
         };
+        if !apr_decodes(*dtype) {
+            return Err(crate::error::RealizarError::FormatError {
+                reason: format!("tensor {name}: the APR loader has no decoder for {}", t.name),
+            });
+        }
         let elements: usize = dims.iter().product();
         let flat = elements.div_ceil(t.blck_size) * t.type_size;
         let padded = match dims.as_slice() {
@@ -173,6 +185,12 @@ fn dequant_by_dtype(tensor_data: &[u8], dims: &[usize], dtype: u8) -> Vec<f32> {
                 f32::from_bits((bits as u32) << 16)
             })
             .collect(),
+        // #3418: IQ types decode with the IQ decoders, not the F32 arm.
+        id if crate::quantize::iq_dispatch::iq_block_elems(u32::from(id)).is_some() => {
+            dequant_superblock_tensor(tensor_data, dims, u32::from(id), |d| {
+                crate::quantize::dequantize_iq_tensor(u32::from(id), d)
+            })
+        },
         _ => tensor_data
             .as_chunks::<4>()
             .0
@@ -756,5 +774,64 @@ mod apr_writer_bytes_tests_3418 {
         let want_q3 = crate::quantize::dequantize_q3_k(&q3).expect("one Q3_K super-block");
         assert_eq!(want_q3.len(), 256);
         assert_eq!(dequant_by_dtype(&q3, &[256], 11), want_q3, "Q3_K (11) was not decoded as Q3_K");
+    }
+}
+
+/// FT-GGMLT-014 (#3418): an IQ tensor reaches the IQ decoders, and no
+/// block-quantized id falls to the F32 arm.
+#[cfg(test)]
+mod iq_and_undecoded_tests_3418 {
+    use super::dequant_by_dtype;
+
+    fn whole(id: u32, elements: usize) -> Vec<u8> {
+        let t = crate::gguf::ggml_type_table::traits(id).expect("id is in the one ggml table");
+        let mut data: Vec<u8> = (0..elements / t.blck_size * t.type_size)
+            .map(|i| ((i * 37 + 11) % 256) as u8)
+            .collect();
+        for b in data.chunks_exact_mut(t.type_size) {
+            b[..2].copy_from_slice(&[0x00, 0x3C]);
+        }
+        data
+    }
+
+    #[test]
+    fn iq_tensors_reach_the_iq_decoders_3418() {
+        for id in 0u8..=42 {
+            if crate::quantize::iq_dispatch::iq_block_elems(u32::from(id)).is_none() {
+                continue;
+            }
+            let data = whole(u32::from(id), 512);
+            let want = crate::quantize::dequantize_iq_tensor(u32::from(id), &data)
+                .expect("a whole IQ tensor");
+            assert_eq!(
+                dequant_by_dtype(&data, &[512], id),
+                want,
+                "IQ id {id} was not decoded by the IQ decoder"
+            );
+        }
+    }
+
+    #[test]
+    fn every_admitted_block_id_has_a_decoder_arm_3418() {
+        for id in 0u8..=255 {
+            if !super::apr_decodes(id) || matches!(id, 8 | 9) {
+                continue;
+            }
+            let Some(t) = crate::gguf::ggml_type_table::traits(u32::from(id))
+                .filter(|t| t.blck_size > 1)
+            else {
+                continue;
+            };
+            let data = whole(u32::from(id), 512);
+            let f32_reading: Vec<f32> = data
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|c| f32::from_le_bytes(*c))
+                .collect();
+            let got = dequant_by_dtype(&data, &[512], id);
+            assert_eq!(got.len(), 512, "{} ({id}) decoded to the wrong length", t.name);
+            assert_ne!(got, f32_reading, "{} ({id}) is admitted but falls to the F32 arm", t.name);
+        }
     }
 }

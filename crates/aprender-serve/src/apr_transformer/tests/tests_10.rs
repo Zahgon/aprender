@@ -503,3 +503,36 @@ fn apr_load_refuses_a_tensor_whose_bytes_do_not_fit_its_dims_3418() {
         "a Q4_0 tensor one byte short was loaded (its weights zero-filled) instead of refused"
     );
 }
+
+// #3418 (FT-GGMLT-014): a block-quantized id the APR loader has no decoder
+// for is refused at load, even when its bytes fit; it used to be read as F32.
+#[test]
+fn apr_load_refuses_a_block_type_it_cannot_decode_3418() {
+    let hidden = 256;
+    let intermediate = 256;
+    let vocab = 4;
+    let meta = minimal_metadata(hidden, 1, 4, 4, vocab, intermediate);
+    let mut tensors = make_hf_tensors(
+        hidden,
+        intermediate,
+        4,
+        4,
+        vocab,
+        DTYPE_F32,
+        DTYPE_F32,
+        DTYPE_F32,
+    );
+    for t in &mut tensors {
+        if t.name.contains("gate_proj") {
+            let num_elements: usize = t.dims.iter().map(|d| *d as usize).product();
+            // Q8_K (ggml 15): 292 bytes per 256 values; no APR decoder.
+            t.dtype = 15;
+            t.data = vec![0u8; num_elements / 256 * 292];
+        }
+    }
+    let loaded = AprTransformer::from_apr_bytes(&build_apr_v2(&meta, &tensors));
+    assert!(
+        loaded.is_err(),
+        "a whole Q8_K tensor loaded and was read as F32 instead of refused"
+    );
+}
