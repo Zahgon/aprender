@@ -748,7 +748,10 @@ mod tests {
     #[test]
     fn dumps_keeps_order_and_escapes() {
         let v = load(r#"{"b": 1, "a": [true, null, 1.5, "é😀"], "b": 2}"#);
-        assert_eq!(dumps(&v), r#"{"b": 2, "a": [true, null, 1.5, "é😀"]}"#);
+        assert_eq!(
+            dumps(&v),
+            r#"{"b": 2, "a": [true, null, 1.5, "\u00e9\ud83d\ude00"]}"#
+        );
         assert_eq!(
             dumps_indent1(&load(r#"[{"a": [], "b": {}}]"#)),
             "[\n {\n  \"a\": [],\n  \"b\": {}\n }\n]"
