@@ -380,18 +380,18 @@ fn extract_apr_tokenizer_for_gguf(
 
     // Tokenizer model type: "gpt2" for byte-level BPE (Qwen, GPT-2), "llama" for SentencePiece
     // GH-253-3: APR stores raw model_type from GGUF which may be "bpe" — map to "gpt2"
-    let raw_model_type = custom
-        .get("tokenizer.model")
-        .and_then(|v| v.as_str())
-        .unwrap_or("gpt2");
-    let model_type = match raw_model_type {
-        "bpe" => "gpt2",
-        other => other,
-    };
-    entries.push((
-        "tokenizer.ggml.model".to_string(),
-        GgufValue::String(model_type.to_string()),
-    ));
+    // #4419: when it was never recorded, the merges decide; nothing is guessed.
+    let has_merges = custom
+        .get("tokenizer.merges")
+        .and_then(|v| v.as_array())
+        .is_some_and(|a| !a.is_empty());
+    let recorded = custom.get("tokenizer.model").and_then(|v| v.as_str());
+    if let Some(model_type) = tokenizer_ggml_model(recorded, has_merges) {
+        entries.push((
+            "tokenizer.ggml.model".to_string(),
+            GgufValue::String(model_type),
+        ));
+    }
     // GH-277: Use pre-tokenizer type mapping, preferring round-trip preserved value
     let model_name = apr_metadata.name.as_deref().unwrap_or("");
     let pre_type = custom
@@ -738,4 +738,26 @@ fn export_apr_to_gguf_raw(input: &Path, output: &Path) -> Result<ExportReport> {
 fn hf_to_gguf_name(name: &str) -> String {
     let mapper = build_legacy_mapper();
     mapper.map_name(name).unwrap_or_else(|| name.to_string())
+}
+
+/// The GGUF `tokenizer.ggml.model` for an exported tokenizer, from evidence (#4419).
+///
+/// A recorded type wins (lowercased; `bpe` is GGUF's `gpt2`). Unrecorded, the
+/// merges decide: a merge list is byte-level BPE, which GGUF calls `gpt2`.
+/// With neither there is no evidence, so `None`: the key is left out and a
+/// loader refuses the file by that key's name. It used to be `gpt2`, which is
+/// wrong for every SentencePiece model.
+fn tokenizer_ggml_model(recorded: Option<&str>, has_merges: bool) -> Option<String> {
+    match recorded.map(str::to_lowercase) {
+        Some(t) if t == "bpe" => Some("gpt2".to_string()),
+        Some(t) if !t.is_empty() => Some(t),
+        _ if has_merges => Some("gpt2".to_string()),
+        _ => {
+            eprintln!(
+                "warning: the tokenizer records no model type and has no merges; \
+                 tokenizer.ggml.model is left out rather than guessed (#4419)"
+            );
+            None
+        }
+    }
 }

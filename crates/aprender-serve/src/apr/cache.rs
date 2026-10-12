@@ -192,12 +192,11 @@ impl AprV2ModelCuda {
 
         // PMAT-222: Check if weight is quantized (GGUF-sourced APR) or F32 (SafeTensors APR)
         if self.executor.has_quantized_weights(weight_name) {
-            // R-03 (Meyer DbC): Q4_K (GGML type 12) is the default for quantized APR files.
-            const GGML_TYPE_Q4_K: u32 = 12;
-            let qtype = self
-                .executor
-                .get_quantized_weight_type(weight_name)
-                .unwrap_or(GGML_TYPE_Q4_K);
+            // #4419: a quantized weight with no recorded type is refused, never read as Q4_K.
+            let qtype = super::dequant::recorded_quant_type(
+                weight_name,
+                self.executor.get_quantized_weight_type(weight_name),
+            )?;
             let mut c = vec![0.0f32; m * n];
             self.dispatch_quantized_gemv(weight_name, a, &mut c, m, k, n, qtype)?;
             Ok(c)

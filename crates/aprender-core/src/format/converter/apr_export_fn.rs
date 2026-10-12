@@ -68,7 +68,7 @@ pub fn apr_export<P: AsRef<Path>>(
     // BF16 tensors must be written back as BF16, not widened to F32.
     let original_dtypes = extract_source_dtypes(input_path);
 
-    let tensors = prepare_tensors_for_export(tensors, input_path, &options);
+    let tensors = prepare_tensors_for_export(tensors, input_path, &options)?;
     enforce_contract_violations(&tensors)?;
     // PMAT-297: Architecture completeness gate — refuse to export incomplete models
     if !options.skip_completeness_check {
@@ -242,18 +242,18 @@ fn prepare_tensors_for_export(
     tensors: BTreeMap<String, (Vec<f32>, Vec<usize>)>,
     input_path: &Path,
     options: &ExportOptions,
-) -> BTreeMap<String, (Vec<f32>, Vec<usize>)> {
+) -> Result<BTreeMap<String, (Vec<f32>, Vec<usize>)>> {
     // GH-200: Map GGUF names to HF canonical format
     let tensors = if input_path.extension().and_then(|e| e.to_str()) == Some("gguf") {
-        map_tensor_names(&tensors, detect_gguf_architecture(input_path))
+        map_tensor_names(&tensors, detect_gguf_architecture(input_path)?)
     } else {
         tensors
     };
     let tensors = unfuse_qkv_tensors(tensors, input_path);
     if options.format == ExportFormat::SafeTensors {
-        remove_tied_lm_head(tensors, input_path)
+        Ok(remove_tied_lm_head(tensors, input_path))
     } else {
-        tensors
+        Ok(tensors)
     }
 }
 

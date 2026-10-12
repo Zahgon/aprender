@@ -83,8 +83,34 @@ fn test_bug_211_extract_apr_tokenizer_for_gguf_empty() {
     use crate::format::v2::AprV2Metadata;
     let meta = AprV2Metadata::default();
     let entries = extract_apr_tokenizer_for_gguf(&meta, 0);
-    // Should still have model and pre even without vocab
-    assert!(entries.len() >= 2);
+    let keys: Vec<&str> = entries.iter().map(|(k, _)| k.as_str()).collect();
+    // The pre-tokenizer is still written without a vocab.
+    assert!(keys.contains(&"tokenizer.ggml.pre"), "{keys:?}");
+    // #4419: no recorded model type and no merges is no evidence, so no
+    // tokenizer.ggml.model; it used to be a guessed "gpt2".
+    assert!(!keys.contains(&"tokenizer.ggml.model"), "{keys:?}");
+}
+
+/// #4419: `tokenizer.ggml.model` comes from a recorded type or the merges, never a default.
+#[test]
+fn tokenizer_ggml_model_is_recorded_or_evidenced_never_guessed() {
+    for (recorded, has_merges, want) in [
+        (Some("llama"), false, Some("llama")),
+        (Some("llama"), true, Some("llama")),
+        (Some("bpe"), true, Some("gpt2")),
+        (Some("BPE"), false, Some("gpt2")),
+        (Some("gpt2"), false, Some("gpt2")),
+        (None, true, Some("gpt2")),
+        (Some(""), true, Some("gpt2")),
+        (None, false, None),
+        (Some(""), false, None),
+    ] {
+        assert_eq!(
+            tokenizer_ggml_model(recorded, has_merges).as_deref(),
+            want,
+            "recorded={recorded:?} has_merges={has_merges}"
+        );
+    }
 }
 
 #[test]

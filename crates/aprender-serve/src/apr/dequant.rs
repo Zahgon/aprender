@@ -260,6 +260,24 @@ pub fn is_quantized_dtype(dtype: &str) -> bool {
     dtype_to_ggml_qtype(dtype).is_some()
 }
 
+/// The GGML type a quantized weight was stored with, or a refusal (#4419).
+///
+/// A quantized weight whose type was never recorded used to be decoded as
+/// Q4_K, a plausible value standing in for a missing one. Its bytes may be any
+/// layout, so a guess turns a load error into wrong numbers. Refuse by name.
+pub(crate) fn recorded_quant_type(
+    weight_name: &str,
+    recorded: Option<u32>,
+) -> crate::error::Result<u32> {
+    recorded.ok_or_else(|| crate::error::RealizarError::UnsupportedOperation {
+        operation: "quantized weight type".to_string(),
+        reason: format!(
+            "quantized weight '{weight_name}' has no recorded GGML type; \
+             refusing to decode it as Q4_K (#4419)"
+        ),
+    })
+}
+
 // ============================================================================
 // APR-native quantization formats (different from GGML!)
 // ============================================================================
@@ -476,5 +494,21 @@ mod tests {
         assert_eq!(dtype_to_ggml_qtype("Q8_0"), Some(8));
         assert_eq!(dtype_to_ggml_qtype("Q4_K"), Some(12));
         assert_eq!(dtype_to_ggml_qtype("Q6_K"), Some(14));
+    }
+
+    /// #4419: a missing type is refused by name, never read as Q4_K.
+    #[test]
+    fn an_unrecorded_quant_type_is_refused_not_q4k() {
+        let err = recorded_quant_type("blk.0.attn_q.weight", None)
+            .expect_err("a quantized weight with no recorded type must be refused");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("blk.0.attn_q.weight"),
+            "names the weight: {msg}"
+        );
+        assert!(msg.contains("no recorded GGML type"), "says why: {msg}");
+        // A recorded type passes through untouched, Q6_K included.
+        assert_eq!(recorded_quant_type("w", Some(14)).expect("recorded"), 14);
+        assert_eq!(recorded_quant_type("w", Some(12)).expect("recorded"), 12);
     }
 }

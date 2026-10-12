@@ -211,7 +211,7 @@ fn test_build_tokenizer_gguf_metadata_without_optional_fields() {
     let tok = GgufTokenizer {
         vocabulary: vec![],
         merges: vec![],
-        model_type: None, // Should default to "gpt2"
+        model_type: None, // #4419: no type and no merges: no evidence, no key
         bos_token_id: None,
         eos_token_id: None,
         architecture: None,
@@ -226,9 +226,9 @@ fn test_build_tokenizer_gguf_metadata_without_optional_fields() {
 
     let metadata = build_tokenizer_gguf_metadata(&tok, "llama", "model", 0);
 
-    // Should have model and pre, but no bos/eos/tokens/merges
+    // Should have pre, but no bos/eos/tokens/merges. #4419: and no guessed model.
     let keys: Vec<&str> = metadata.iter().map(|(k, _)| k.as_str()).collect();
-    assert!(keys.contains(&"tokenizer.ggml.model"));
+    assert!(!keys.contains(&"tokenizer.ggml.model"), "{keys:?}");
     assert!(keys.contains(&"tokenizer.ggml.pre"));
     assert!(!keys.contains(&"tokenizer.ggml.bos_token_id"));
     assert!(!keys.contains(&"tokenizer.ggml.eos_token_id"));

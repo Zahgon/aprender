@@ -243,11 +243,12 @@ pub(crate) fn write_apr_file_raw(
         custom.insert("tied_embeddings".to_string(), serde_json::Value::Bool(true));
     }
 
+    // #4419: a GGUF with no architecture is refused, never written down as qwen2.
+    let model_type = super::gguf_model_type(model_config.and_then(|c| c.architecture.as_deref()))?;
+
     // Build metadata using correct AprV2Metadata structure
     let metadata = AprV2Metadata {
-        model_type: model_config
-            .and_then(|c| c.architecture.clone())
-            .unwrap_or_else(|| "qwen2".to_string()),
+        model_type,
         name: model_config.and_then(|c| c.architecture.clone()),
         description: Some("GGUF Q4_K model imported with native quantization".to_string()),
         author: None,

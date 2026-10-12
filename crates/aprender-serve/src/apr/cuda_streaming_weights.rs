@@ -17,63 +17,8 @@ impl AprV2ModelCuda {
             return Ok(()); // Non-transformer model
         }
 
-        let mut total_bytes = 0usize;
-
-        // Cache output norm (always needed)
-        let output_norm_patterns = [
-            "model.norm.weight",
-            "norm.weight",
-            "transformer.ln_f.weight",
-            "output_norm.weight",
-        ];
-        if let Ok(src_name) = self.model.find_tensor_name(&output_norm_patterns) {
-            if let Ok(gamma) = self.model.get_tensor_f32(&src_name) {
-                if let Ok(bytes) = self
-                    .executor
-                    .cache_rmsnorm_gamma("output_norm.gamma", &gamma)
-                {
-                    total_bytes += bytes;
-                }
-            }
-        }
-
-        // Cache LM head (always needed - may be quantized or F32)
-        let lm_head_patterns = [
-            "lm_head.weight",
-            "output.weight",
-            "token_embd.weight", // GGUF (tied embeddings)
-        ];
-        if let Ok(src_name) = self.model.find_tensor_name(&lm_head_patterns) {
-            if let Some(entry) = self.model.get_tensor(&src_name) {
-                if let Some(qtype) = dtype_to_ggml_qtype(&entry.dtype) {
-                    // Quantized LM head
-                    if let Ok(bytes) = self.model.get_tensor_bytes(&src_name) {
-                        if let Ok(size) = self.executor.load_quantized_weights_with_type(
-                            "output.weight",
-                            bytes,
-                            qtype,
-                        ) {
-                            total_bytes += size;
-                        }
-                    }
-                } else if let Ok(w) = self.model.get_tensor_f32(&src_name) {
-                    // F32 LM head
-                    // SAFETY: f32 slice to u8 view - valid because f32 has no padding
-                    let w_bytes: &[u8] = unsafe {
-                        std::slice::from_raw_parts(
-                            w.as_ptr().cast::<u8>(),
-                            w.len() * std::mem::size_of::<f32>(),
-                        )
-                    };
-                    if let Ok(size) =
-                        self.executor
-                            .load_quantized_weights_with_type("output.weight", w_bytes, 0)
-                    {
-                        total_bytes += size;
-                    }
-                }
-            }
-        }
+        // Output norm and LM head are always needed.
+        let total_bytes = self.cache_output_norm_streaming() + self.cache_lm_head_streaming();
 
         let lm_head_mb = vocab_size * hidden_dim * 4 / (1024 * 1024);
         eprintln!(
@@ -84,6 +29,64 @@ impl AprV2ModelCuda {
         eprintln!("[AprV2ModelCuda] GH-201: Layer weights will be streamed on-demand");
 
         Ok(())
+    }
+
+    /// GH-201: Cache the output norm gamma; returns the bytes cached (0 if absent).
+    fn cache_output_norm_streaming(&mut self) -> usize {
+        let output_norm_patterns = [
+            "model.norm.weight",
+            "norm.weight",
+            "transformer.ln_f.weight",
+            "output_norm.weight",
+        ];
+        let Ok(src_name) = self.model.find_tensor_name(&output_norm_patterns) else {
+            return 0;
+        };
+        let Ok(gamma) = self.model.get_tensor_f32(&src_name) else {
+            return 0;
+        };
+        self.executor
+            .cache_rmsnorm_gamma("output_norm.gamma", &gamma)
+            .unwrap_or(0)
+    }
+
+    /// GH-201: Cache the LM head, quantized or F32; returns the bytes cached (0 if absent).
+    fn cache_lm_head_streaming(&mut self) -> usize {
+        let lm_head_patterns = [
+            "lm_head.weight",
+            "output.weight",
+            "token_embd.weight", // GGUF (tied embeddings)
+        ];
+        let Ok(src_name) = self.model.find_tensor_name(&lm_head_patterns) else {
+            return 0;
+        };
+        let Some(entry) = self.model.get_tensor(&src_name) else {
+            return 0;
+        };
+        if let Some(qtype) = dtype_to_ggml_qtype(&entry.dtype) {
+            // Quantized LM head
+            let Ok(bytes) = self.model.get_tensor_bytes(&src_name) else {
+                return 0;
+            };
+            return self
+                .executor
+                .load_quantized_weights_with_type("output.weight", bytes, qtype)
+                .unwrap_or(0);
+        }
+        let Ok(w) = self.model.get_tensor_f32(&src_name) else {
+            return 0;
+        };
+        // F32 LM head
+        // SAFETY: f32 slice to u8 view - valid because f32 has no padding
+        let w_bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(
+                w.as_ptr().cast::<u8>(),
+                w.len() * std::mem::size_of::<f32>(),
+            )
+        };
+        self.executor
+            .load_quantized_weights_with_type("output.weight", w_bytes, 0)
+            .unwrap_or(0)
     }
 
     /// GH-201: Ensure a specific layer's weights are loaded on GPU.
@@ -122,48 +125,6 @@ impl AprV2ModelCuda {
 
         // Clear previous layer's weights from GPU cache
         // (The executor will reuse the memory)
-
-        // Helper to upload a weight tensor
-        let upload_weight = |executor: &mut crate::cuda::CudaExecutor,
-                             model: &AprV2Model,
-                             src_name: &str,
-                             cache_name: &str|
-         -> usize {
-            if let Some(entry) = model.get_tensor(src_name) {
-                if let Some(qtype) = dtype_to_ggml_qtype(&entry.dtype) {
-                    // Quantized weight
-                    if let Ok(bytes) = model.get_tensor_bytes(src_name) {
-                        executor
-                            .load_quantized_weights_with_type(cache_name, bytes, qtype)
-                            .unwrap_or(0)
-                    } else {
-                        0
-                    }
-                } else if let Ok(weights) = model.get_tensor_f32(src_name) {
-                    // F32 weight - transpose for GPU GEMM
-                    let final_weights = if entry.shape.len() == 2 {
-                        let rows = entry.shape[0];
-                        let cols = entry.shape[1];
-                        let mut transposed = vec![0.0f32; weights.len()];
-                        for i in 0..rows {
-                            for j in 0..cols {
-                                transposed[j * rows + i] = weights[i * cols + j];
-                            }
-                        }
-                        transposed
-                    } else {
-                        weights
-                    };
-                    executor
-                        .load_weights(cache_name, &final_weights)
-                        .unwrap_or(0)
-                } else {
-                    0
-                }
-            } else {
-                0
-            }
-        };
 
         // Upload attention weights
         let weight_mappings = [
@@ -223,53 +184,84 @@ impl AprV2ModelCuda {
             if let Ok(src_name) = self.model.find_tensor_name(&patterns_ref) {
                 let cache_name = format!("{prefix}.{suffix}");
                 total_bytes +=
-                    upload_weight(&mut self.executor, &self.model, &src_name, &cache_name);
+                    upload_streamed_weight(&mut self.executor, &self.model, &src_name, &cache_name);
             }
         }
 
         // Handle fused QKV if present
+        total_bytes += self.upload_fused_qkv_streaming(layer_idx, hidden_dim, kv_dim);
+
+        // Upload RMSNorm gamma weights
+        total_bytes += self.upload_layer_norms_streaming(layer_idx);
+
+        self.cached_streaming_layer = Some(layer_idx);
+
+        // Only log for first few layers to avoid spam
+        if layer_idx < 3 {
+            eprintln!(
+                "[AprV2ModelCuda] GH-201: Streamed layer {} weights ({} KB)",
+                layer_idx,
+                total_bytes / 1024
+            );
+        }
+
+        Ok(())
+    }
+
+    /// GH-201: Split a fused QKV weight into Q, K and V and upload them
+    /// transposed; returns the bytes uploaded (0 if absent or short).
+    fn upload_fused_qkv_streaming(
+        &mut self,
+        layer_idx: usize,
+        hidden_dim: usize,
+        kv_dim: usize,
+    ) -> usize {
         let fused_qkv_patterns = vec![format!(
             "model.layers.{layer_idx}.self_attn.qkv_proj.weight"
         )];
         let fused_patterns_ref: Vec<&str> = fused_qkv_patterns.iter().map(String::as_str).collect();
-        if let Ok(src_name) = self.model.find_tensor_name(&fused_patterns_ref) {
-            if let Ok(qkv_weight) = self.model.get_tensor_f32(&src_name) {
-                let q_size = hidden_dim * hidden_dim;
-                let k_size = kv_dim * hidden_dim;
-                let v_size = kv_dim * hidden_dim;
-
-                if qkv_weight.len() >= q_size + k_size + v_size {
-                    let q_weight: Vec<f32> = qkv_weight[0..q_size].to_vec();
-                    let k_weight: Vec<f32> = qkv_weight[q_size..q_size + k_size].to_vec();
-                    let v_weight: Vec<f32> =
-                        qkv_weight[q_size + k_size..q_size + k_size + v_size].to_vec();
-
-                    // Transpose for GPU GEMM
-                    let q_weight_t = transpose_matrix(&q_weight, hidden_dim, hidden_dim);
-                    let k_weight_t = transpose_matrix(&k_weight, kv_dim, hidden_dim);
-                    let v_weight_t = transpose_matrix(&v_weight, kv_dim, hidden_dim);
-
-                    let q_cache_name = format!("blk.{layer_idx}.attn_q.weight");
-                    let k_cache_name = format!("blk.{layer_idx}.attn_k.weight");
-                    let v_cache_name = format!("blk.{layer_idx}.attn_v.weight");
-
-                    total_bytes += self
-                        .executor
-                        .load_weights(&q_cache_name, &q_weight_t)
-                        .unwrap_or(0);
-                    total_bytes += self
-                        .executor
-                        .load_weights(&k_cache_name, &k_weight_t)
-                        .unwrap_or(0);
-                    total_bytes += self
-                        .executor
-                        .load_weights(&v_cache_name, &v_weight_t)
-                        .unwrap_or(0);
-                }
-            }
+        let Ok(src_name) = self.model.find_tensor_name(&fused_patterns_ref) else {
+            return 0;
+        };
+        let Ok(qkv_weight) = self.model.get_tensor_f32(&src_name) else {
+            return 0;
+        };
+        let q_size = hidden_dim * hidden_dim;
+        let k_size = kv_dim * hidden_dim;
+        let v_size = kv_dim * hidden_dim;
+        if qkv_weight.len() < q_size + k_size + v_size {
+            return 0;
         }
+        let q_weight: Vec<f32> = qkv_weight[0..q_size].to_vec();
+        let k_weight: Vec<f32> = qkv_weight[q_size..q_size + k_size].to_vec();
+        let v_weight: Vec<f32> = qkv_weight[q_size + k_size..q_size + k_size + v_size].to_vec();
 
-        // Upload RMSNorm gamma weights
+        // Transpose for GPU GEMM
+        let q_weight_t = transpose_matrix(&q_weight, hidden_dim, hidden_dim);
+        let k_weight_t = transpose_matrix(&k_weight, kv_dim, hidden_dim);
+        let v_weight_t = transpose_matrix(&v_weight, kv_dim, hidden_dim);
+
+        let q_cache_name = format!("blk.{layer_idx}.attn_q.weight");
+        let k_cache_name = format!("blk.{layer_idx}.attn_k.weight");
+        let v_cache_name = format!("blk.{layer_idx}.attn_v.weight");
+
+        self.executor
+            .load_weights(&q_cache_name, &q_weight_t)
+            .unwrap_or(0)
+            + self
+                .executor
+                .load_weights(&k_cache_name, &k_weight_t)
+                .unwrap_or(0)
+            + self
+                .executor
+                .load_weights(&v_cache_name, &v_weight_t)
+                .unwrap_or(0)
+    }
+
+    /// GH-201: Upload one layer's RMSNorm gammas; returns the bytes cached.
+    fn upload_layer_norms_streaming(&mut self, layer_idx: usize) -> usize {
+        let prefix = format!("blk.{layer_idx}");
+        let mut total_bytes = 0usize;
         let norm_mappings = [
             (
                 vec![
@@ -314,19 +306,7 @@ impl AprV2ModelCuda {
                 }
             }
         }
-
-        self.cached_streaming_layer = Some(layer_idx);
-
-        // Only log for first few layers to avoid spam
-        if layer_idx < 3 {
-            eprintln!(
-                "[AprV2ModelCuda] GH-201: Streamed layer {} weights ({} KB)",
-                layer_idx,
-                total_bytes / 1024
-            );
-        }
-
-        Ok(())
+        total_bytes
     }
 
     /// GH-201: Check if model is in streaming mode.
@@ -378,4 +358,46 @@ impl AprV2ModelCuda {
     pub fn cached_weight_mb(&self) -> usize {
         self.executor.cached_weight_bytes() / (1024 * 1024)
     }
+}
+
+/// GH-201: Upload one layer weight, quantized as stored or F32 transposed for
+/// GPU GEMM; returns the bytes uploaded (0 if absent or unreadable).
+fn upload_streamed_weight(
+    executor: &mut crate::cuda::CudaExecutor,
+    model: &AprV2Model,
+    src_name: &str,
+    cache_name: &str,
+) -> usize {
+    let Some(entry) = model.get_tensor(src_name) else {
+        return 0;
+    };
+    if let Some(qtype) = dtype_to_ggml_qtype(&entry.dtype) {
+        // Quantized weight
+        let Ok(bytes) = model.get_tensor_bytes(src_name) else {
+            return 0;
+        };
+        return executor
+            .load_quantized_weights_with_type(cache_name, bytes, qtype)
+            .unwrap_or(0);
+    }
+    let Ok(weights) = model.get_tensor_f32(src_name) else {
+        return 0;
+    };
+    // F32 weight - transpose for GPU GEMM
+    let final_weights = if entry.shape.len() == 2 {
+        let rows = entry.shape[0];
+        let cols = entry.shape[1];
+        let mut transposed = vec![0.0f32; weights.len()];
+        for i in 0..rows {
+            for j in 0..cols {
+                transposed[j * rows + i] = weights[i * cols + j];
+            }
+        }
+        transposed
+    } else {
+        weights
+    };
+    executor
+        .load_weights(cache_name, &final_weights)
+        .unwrap_or(0)
 }

@@ -13,12 +13,12 @@ fn save_model_tensors_with_gguf_config_and_tokenizer(
 ) -> Result<()> {
     contract_pre_apr_tokenizer_embedding!();
     // Build AprV2Metadata with GGUF config (not inferred from tensor shapes)
-    let mut metadata = AprV2Metadata::new(gguf_config.architecture.as_deref().unwrap_or("qwen2"));
+    // #4419: model_type drives the chat template and rope defaults, so a GGUF
+    // with no architecture is refused, never written down as qwen2.
+    let model_type = gguf_model_type(gguf_config.architecture.as_deref())?;
+    let mut metadata = AprV2Metadata::new(&model_type);
     metadata.original_format = Some("gguf".to_string());
-    metadata.model_type = gguf_config
-        .architecture
-        .clone()
-        .unwrap_or_else(|| "qwen2".to_string());
+    metadata.model_type = model_type;
     // PMAT-113 FIX: Set architecture for chat template detection
     metadata.architecture = gguf_config.architecture.clone();
     // PMAT-690 P0-K: propagate HF identity through the `apr convert` path
@@ -151,4 +151,20 @@ fn infer_q4k_config(tensors: &BTreeMap<String, (Vec<f32>, Vec<usize>)>) -> Infer
     }
 
     cfg
+}
+
+/// The APR `model_type` for a GGUF `general.architecture`, or a refusal (#4419).
+///
+/// `model_type` is written into the APR file permanently and drives the chat
+/// template and rope defaults. A missing architecture used to be written as
+/// `qwen2`, a plausible value that a reader cannot tell from a real one.
+pub(crate) fn gguf_model_type(architecture: Option<&str>) -> Result<String> {
+    architecture
+        .filter(|a| !a.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| AprenderError::FormatError {
+            message: "GGUF has no general.architecture; refusing to write model_type \
+                      qwen2 into the APR file (#4419)"
+                .to_string(),
+        })
 }

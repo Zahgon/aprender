@@ -309,12 +309,14 @@ fn build_tokenizer_gguf_metadata(
 ) -> Vec<(String, crate::format::gguf::GgufValue)> {
     use crate::format::gguf::GgufValue;
     let mut metadata = Vec::new();
-    let model_type = tokenizer.model_type.as_deref().unwrap_or("gpt2");
-
-    metadata.push((
-        "tokenizer.ggml.model".to_string(),
-        GgufValue::String(model_type.to_lowercase()),
-    ));
+    // #4419: an unrecorded model type is decided by the merges, never guessed.
+    let recorded = tokenizer.model_type.as_deref();
+    if let Some(model_type) = tokenizer_ggml_model(recorded, !tokenizer.merges.is_empty()) {
+        metadata.push((
+            "tokenizer.ggml.model".to_string(),
+            GgufValue::String(model_type),
+        ));
+    }
     // GH-277: Use pre-tokenizer type mapping, preferring round-trip preserved value
     let pre_type = tokenizer
         .pre_type
