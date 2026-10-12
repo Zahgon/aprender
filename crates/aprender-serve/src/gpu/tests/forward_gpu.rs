@@ -329,8 +329,8 @@ fn test_kv_cache_large_context() {
     let expected = config.num_layers * max_positions * config.num_kv_heads * config.head_dim() * 2 * 4;
     assert_eq!(cache.memory_bytes(), expected);
 
-    // Should be less than 1MB for this config
-    assert!(cache.memory_mb() < 1.0);
+    // 2 layers * 2048 * 4 heads * 16 dims * (K+V) * 4 bytes = 2 MiB exactly
+    assert!((cache.memory_mb() - 2.0).abs() < f64::EPSILON);
 }
 
 #[test]

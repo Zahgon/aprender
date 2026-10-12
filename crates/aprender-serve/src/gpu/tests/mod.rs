@@ -6,5 +6,6 @@ mod argmax_empty;
 mod tests_06;
 mod tests_07;
 mod tests_08;
+mod tests_09;
 mod tests_10;
 mod tests_11;

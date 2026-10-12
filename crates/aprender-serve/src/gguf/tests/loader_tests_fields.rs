@@ -15,6 +15,8 @@ fn test_loader_part02_owned_model_with_biases() {
         eps: 1e-5,
         rope_type: 2,
         bos_token_id: None,
+            explicit_head_dim: None,
+            query_pre_attn_scalar: None,
             eos_token_id: None,
     };
 
@@ -54,6 +56,8 @@ fn test_loader_part02_owned_model_with_biases() {
         ffn_gate_bias: None,
         ffn_norm_weight: None,
         ffn_norm_bias: None,
+        post_attn_norm_weight: None,
+        post_ffw_norm_weight: None,
         attn_q_norm_weight: None,
         attn_k_norm_weight: None,
     }];
@@ -99,6 +103,8 @@ fn test_loader_part02_owned_qkv_separate() {
         eps: 1e-5,
         rope_type: 0,
         bos_token_id: None,
+            explicit_head_dim: None,
+            query_pre_attn_scalar: None,
             eos_token_id: None,
     };
 
@@ -158,6 +164,8 @@ fn test_loader_part02_owned_qkv_separate() {
         ffn_gate_bias: None,
         ffn_norm_weight: Some(vec![1.0f32; 32]),
         ffn_norm_bias: None,
+        post_attn_norm_weight: None,
+        post_ffw_norm_weight: None,
         attn_q_norm_weight: None,
         attn_k_norm_weight: None,
     }];

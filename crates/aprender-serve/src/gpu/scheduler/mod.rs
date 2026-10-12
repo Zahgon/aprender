@@ -13,6 +13,11 @@ pub mod moe_dispatch;
 mod ops;
 mod types;
 
+#[cfg(test)]
+mod kv_tests;
+#[cfg(test)]
+mod model_tests;
+
 #[cfg(feature = "cuda")]
 pub use core::CudaScheduler;
 pub use model::GpuModel;

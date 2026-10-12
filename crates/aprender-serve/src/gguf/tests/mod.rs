@@ -37,6 +37,7 @@ mod bytes_02; // T-COV-95 Synthetic Falsification (loader.rs via Pygmy GGUF mode
 mod config;
 mod imp_115a;
 mod imp_121a;
+mod loader_tests_02;
 mod loader_tests_build_minimal;
 mod parity005a_contiguous;
 mod parity011a_bench;

@@ -60,20 +60,23 @@ fn test_loader_part02_transformer_from_minimal_phi2() {
 
 #[test]
 fn test_loader_part02_transformer_missing_embedding() {
-    // Build GGUF without token embedding
+    // Build GGUF without token embedding. vocab_size is read off token_embd.weight
+    // (config.rs C-13), so with it absent the config is rejected as vocab_size 0.
     let data = GGUFBuilder::new()
         .architecture("llama")
         .hidden_dim("llama", 64)
-        .num_layers("llama", 0)
+        .num_layers("llama", 1)
+        .num_heads("llama", 4)
+        .num_kv_heads("llama", 4)
         .build();
 
     let model = GGUFModel::from_bytes(&data).expect("Should parse GGUF");
     let result = GGUFTransformer::from_gguf(&model, &data);
 
     assert!(result.is_err(), "Missing embedding should fail");
-    let err = result.unwrap_err().to_string();
+    let err = result.err().expect("checked is_err above").to_string();
     assert!(
-        err.contains("token_embd") || err.contains("not found"),
+        err.contains("token_embd") || err.contains("vocab_size"),
         "Error should mention token_embd: {}",
         err
     );
@@ -233,10 +236,14 @@ fn test_loader_part02_transformer_tied_embeddings() {
         .build();
 
     let model = GGUFModel::from_bytes(&data).expect("Should parse");
-    let transformer = GGUFTransformer::from_gguf(&model, &data).expect("Should load with tied embeddings");
+    let transformer =
+        GGUFTransformer::from_gguf(&model, &data).expect("Should load with tied embeddings");
 
     // lm_head_weight should be same as token_embedding (tied)
-    assert_eq!(transformer.lm_head_weight.len(), transformer.token_embedding.len());
+    assert_eq!(
+        transformer.lm_head_weight.len(),
+        transformer.token_embedding.len()
+    );
 }
 
 // =============================================================================
@@ -356,12 +363,26 @@ fn test_loader_part02_config_qwen2_0_5b_dimensions() {
     assert_eq!(config.architecture, "qwen2");
     assert_eq!(config.hidden_dim, 896);
     assert_eq!(config.num_heads, 14);
-    assert_eq!(config.num_kv_heads, 2, "GH-39: Must read GQA ratio from metadata, not default to MHA");
-    assert_eq!(config.num_heads / config.num_kv_heads, 7, "GH-39: 7:1 GQA ratio");
-    assert_eq!(config.hidden_dim / config.num_heads, 64, "GH-39: head_dim=64 for 0.5B");
+    assert_eq!(
+        config.num_kv_heads, 2,
+        "GH-39: Must read GQA ratio from metadata, not default to MHA"
+    );
+    assert_eq!(
+        config.num_heads / config.num_kv_heads,
+        7,
+        "GH-39: 7:1 GQA ratio"
+    );
+    assert_eq!(
+        config.hidden_dim / config.num_heads,
+        64,
+        "GH-39: head_dim=64 for 0.5B"
+    );
     assert_eq!(config.num_layers, 24);
     assert_eq!(config.intermediate_dim, 4864);
-    assert_eq!(config.rope_type, 2, "GH-39: qwen2 must use NEOX RoPE (type 2)");
+    assert_eq!(
+        config.rope_type, 2,
+        "GH-39: qwen2 must use NEOX RoPE (type 2)"
+    );
     assert!((config.rope_theta - 1_000_000.0).abs() < 100.0);
     assert!((config.eps - 1e-6).abs() < 1e-8);
 }
@@ -386,7 +407,9 @@ fn test_loader_part02_owned_model_new_for_test() {
         eps: 1e-5,
         rope_type: 0,
         bos_token_id: None,
-            eos_token_id: None,
+        explicit_head_dim: None,
+        query_pre_attn_scalar: None,
+        eos_token_id: None,
     };
 
     let token_embedding = vec![0.1f32; 50 * 32];
@@ -425,6 +448,8 @@ fn test_loader_part02_owned_model_new_for_test() {
         ffn_gate_bias: None,
         ffn_norm_weight: Some(vec![1.0f32; 32]),
         ffn_norm_bias: None,
+        post_attn_norm_weight: None,
+        post_ffw_norm_weight: None,
         attn_q_norm_weight: None,
         attn_k_norm_weight: None,
     }];

@@ -37,6 +37,7 @@ fn create_kv_test_config() -> GpuModelConfig {
             linear_num_value_heads: None,
             linear_conv_kernel_dim: None,
             constraints: None,
+            explicit_head_dim: None,
     num_experts: None,
     num_experts_per_tok: None,
     expert_intermediate_size: None,
@@ -61,6 +62,7 @@ fn create_kv_gqa_config() -> GpuModelConfig {
             linear_num_value_heads: None,
             linear_conv_kernel_dim: None,
             constraints: None,
+            explicit_head_dim: None,
     num_experts: None,
     num_experts_per_tok: None,
     expert_intermediate_size: None,
@@ -85,6 +87,7 @@ fn create_kv_single_layer_config() -> GpuModelConfig {
             linear_num_value_heads: None,
             linear_conv_kernel_dim: None,
             constraints: None,
+            explicit_head_dim: None,
     num_experts: None,
     num_experts_per_tok: None,
     expert_intermediate_size: None,
@@ -109,6 +112,7 @@ fn create_kv_deep_config() -> GpuModelConfig {
             linear_num_value_heads: None,
             linear_conv_kernel_dim: None,
             constraints: None,
+            explicit_head_dim: None,
     num_experts: None,
     num_experts_per_tok: None,
     expert_intermediate_size: None,
@@ -286,7 +290,7 @@ fn test_kv_cache_get_range() {
     // First element should be from position 2
     assert!((keys[0] - 2.0).abs() < 1e-6);
     // Last element should be from position 4
-    assert!((keys[(2 * kv_dim)] - 4.0).abs() < 1e-6);
+    assert!((keys[2 * kv_dim] - 4.0).abs() < 1e-6);
 }
 
 #[test]
