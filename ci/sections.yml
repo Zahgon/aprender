@@ -1016,13 +1016,16 @@ jobs:
         # Static Poka-Yoke: flags build.rs files that panic on files outside
         # CARGO_MANIFEST_DIR, which break `cargo install` from crates.io.
         # See scripts/check_build_rs_paths.sh for the full rationale.
+        # safe.directory: root in the container over a host-owned /workspace makes git refuse it,
+        # and the scan then read 0 build.rs files and printed OK (#2876). It now fails on 0.
         run: |
           docker run --rm --init \
+          -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/workspace \
           -e CI -e GITHUB_ACTIONS -e GITHUB_REF -e GITHUB_SHA -e GITHUB_REPOSITORY -e GITHUB_RUN_ID -e GITHUB_EVENT_NAME -e GITHUB_WORKFLOW \
             -v "${GITHUB_WORKSPACE}:/workspace" \
             -w /workspace \
             "$IMAGE" \
-            setsid --wait bash scripts/check_build_rs_paths.sh
+            setsid --wait bash -c 'bash scripts/check_build_rs_paths.sh --self-test && bash scripts/check_build_rs_paths.sh'
       - name: apr-format leaf sovereignty guard (#2231)
         if: matrix.shard == 1
         # Poka-Yoke: prove the extracted `apr-format` leaf pulls no ML/GPU/
