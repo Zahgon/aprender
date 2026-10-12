@@ -15,11 +15,11 @@ use aprender::primitives::{Matrix, Vector};
 use aprender::tree::{RandomForestClassifier, RandomForestRegressor};
 use std::time::Instant;
 
-const N_ROWS: usize = 20_000;
+const N_ROWS: usize = 4_000;
 const N_FEATURES: usize = 10;
-const N_TREES: usize = 50;
+const N_TREES: usize = 20;
 const MAX_DEPTH: usize = 10;
-const N_PREDICT: usize = 2_000;
+const N_PREDICT: usize = 1_000;
 
 /// Deterministic xorshift data, so every run fits the same forest.
 fn dataset() -> (Vec<f32>, Vec<f32>) {
