@@ -120,14 +120,14 @@ self_test() {
     pkg() { printf '{"name":"%s","features":%s,"dependencies":%s}' "$1" "$2" "$3"; }
     dep() { printf '{"name":"%s","rename":%s,"features":%s,"kind":%s}' "$1" "$2" "$3" "${4:-null}"; }
     # The #5188 shape, verbatim from the workspace: cli -> lib under the key jugar-probar.
-    local lib cli serve apr other
+    local lib cli serve app other
     lib="$(pkg tlib '{"default":["tui"],"tui":[],"browser":["dep:chromiumoxide"]}' '[]')"
     cli="$(pkg tcli '{"default":["browser"],"browser":["jugar-probar/browser"],"llm":["jugar-probar/llm"]}' \
         "[$(dep tlib '"jugar-probar"' '[]')]")"
     serve="$(pkg serve '{"default":["inference"],"inference":[],"cuda":[]}' '[]')"
-    apr="$(pkg apr '{"default":["inf"],"inf":["serve/inference"],"gpu":["serve/cuda"]}' "[$(dep serve null '[]')]")"
+    app="$(pkg tapp '{"default":["inf"],"inf":["serve/inference"],"gpu":["serve/cuda"]}' "[$(dep serve null '[]')]")"
     other="$(pkg other '{"default":[]}' "[$(dep tlib null '["browser"]' '"build"')]")"
-    printf '{"packages":[%s,%s,%s,%s,%s]}' "$lib" "$cli" "$serve" "$apr" "$other" > "$T/m.json"
+    printf '{"packages":[%s,%s,%s,%s,%s]}' "$lib" "$cli" "$serve" "$app" "$other" > "$T/m.json"
     # deep closure: default -> a -> b -> "tlib?/browser"
     printf '{"packages":[%s,%s]}' "$lib" \
         "$(pkg deep '{"default":["a"],"a":["b"],"b":["tlib?/browser"]}' "[$(dep tlib null '[]')]")" > "$T/deep.json"
@@ -156,10 +156,10 @@ self_test() {
         if [ "$got" = "$want" ] && [ "$(tr '\n' '|' <<< "$out" | sed 's/|$//')" = "$wantout" ]; then echo "ok    $name"
         else echo "BROKE $name (rc $got want $want; got '$(tr '\n' '|' <<< "$out")' want '$wantout')"; fails=$((fails + 1)); fi
     }
-    check the_5188_selection_splits_tlib  0 "$T/m.json"    "apr serve tcli|tlib" apr serve tcli tlib
+    check the_5188_selection_splits_tlib  0 "$T/m.json"    "tapp serve tcli|tlib" tapp serve tcli tlib
     check tlib_alone_is_one_call          0 "$T/m.json"    "tlib"                tlib
     check tcli_alone_is_one_call          0 "$T/m.json"    "tcli"                tcli
-    check default_feature_is_not_a_raise  0 "$T/m.json"    "apr serve"           apr serve
+    check default_feature_is_not_a_raise  0 "$T/m.json"    "tapp serve"          tapp serve
     check build_dep_is_not_a_raise        0 "$T/m.json"    "other tlib"          other tlib
     check deep_default_closure_raises     0 "$T/deep.json" "deep|tlib"           deep tlib
     check dep_entry_features_raise        0 "$T/spec.json" "spec|tlib"           spec tlib
