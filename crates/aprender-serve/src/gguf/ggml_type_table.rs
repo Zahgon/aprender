@@ -284,7 +284,7 @@ mod ggml_type_table_tests {
             let sized = q.blck_size > 0;
             match traits(id) {
                 Some(t) if !sized => {
-                    diffs.push(format!("{id} {}: serve sizes a removed id", t.name))
+                    diffs.push(format!("{id} {}: serve sizes a removed id", t.name));
                 },
                 Some(t) => {
                     if t.name != q.name
