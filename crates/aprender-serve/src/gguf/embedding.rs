@@ -29,21 +29,25 @@ fn quant_block_layout(qtype: u32) -> Option<(usize, &'static [usize])> {
         GGUF_TYPE_Q2_K, GGUF_TYPE_Q3_K, GGUF_TYPE_Q4_0, GGUF_TYPE_Q4_1, GGUF_TYPE_Q4_K,
         GGUF_TYPE_Q5_0, GGUF_TYPE_Q5_1, GGUF_TYPE_Q5_K, GGUF_TYPE_Q6_K, GGUF_TYPE_Q8_0,
     };
-    match qtype {
+    // Where the f16 scales sit inside one block. The block size itself is read
+    // from the one ggml table (#3418, FT-GGMLT-009), never written here.
+    let scale_offsets: &'static [usize] = match qtype {
         // 32-element blocks (one or two leading f16 scales).
-        t if t == GGUF_TYPE_Q4_0 => Some((18, &[0])),
-        t if t == GGUF_TYPE_Q8_0 => Some((34, &[0])),
-        t if t == GGUF_TYPE_Q4_1 => Some((20, &[0, 2])),
-        t if t == GGUF_TYPE_Q5_0 => Some((22, &[0])),
-        t if t == GGUF_TYPE_Q5_1 => Some((24, &[0, 2])),
+        t if t == GGUF_TYPE_Q4_0 => &[0],
+        t if t == GGUF_TYPE_Q8_0 => &[0],
+        t if t == GGUF_TYPE_Q4_1 => &[0, 2],
+        t if t == GGUF_TYPE_Q5_0 => &[0],
+        t if t == GGUF_TYPE_Q5_1 => &[0, 2],
         // 256-element K-quant super-blocks.
-        t if t == GGUF_TYPE_Q4_K => Some((144, &[0, 2])),  // d, dmin
-        t if t == GGUF_TYPE_Q5_K => Some((176, &[0, 2])),  // d, dmin
-        t if t == GGUF_TYPE_Q6_K => Some((210, &[208])),   // d (trailing)
-        t if t == GGUF_TYPE_Q2_K => Some((84, &[80, 82])), // d, dmin (trailing)
-        t if t == GGUF_TYPE_Q3_K => Some((110, &[108])),   // d_all (trailing)
-        _ => None,
-    }
+        t if t == GGUF_TYPE_Q4_K => &[0, 2],   // d, dmin
+        t if t == GGUF_TYPE_Q5_K => &[0, 2],   // d, dmin
+        t if t == GGUF_TYPE_Q6_K => &[208],    // d (trailing)
+        t if t == GGUF_TYPE_Q2_K => &[80, 82], // d, dmin (trailing)
+        t if t == GGUF_TYPE_Q3_K => &[108],    // d_all (trailing)
+        _ => return None,
+    };
+    let block_bytes = crate::gguf::ggml_type_table::traits(qtype)?.type_size;
+    Some((block_bytes, scale_offsets))
 }
 
 fn quant_scale_first_nonfinite(data: &[u8], qtype: u32) -> Option<f32> {
@@ -370,6 +374,26 @@ mod quant_block_layout_tests {
         assert_eq!(quant_block_layout(GGUF_TYPE_Q6_K), Some((210, &[208][..])));
     }
 
+
+    /// FT-GGMLT-009 (#3418): the block size comes from the one ggml table, and
+    /// the scanner admits exactly the ten scaled-block types it has offsets for.
+    #[test]
+    fn scale_scanner_sizes_from_the_one_ggml_table_3418() {
+        use crate::gguf::ggml_type_table::traits;
+        const ADMITTED: [u32; 10] = [2, 3, 6, 7, 8, 10, 11, 12, 13, 14];
+        for id in 0..64u32 {
+            let Some((block_bytes, offsets)) = quant_block_layout(id) else {
+                assert!(!ADMITTED.contains(&id), "ggml id {id} lost its layout");
+                continue;
+            };
+            assert!(ADMITTED.contains(&id), "ggml id {id} newly admitted");
+            let t = traits(id).expect("an admitted id is in the table");
+            assert_eq!(block_bytes, t.type_size, "ggml id {id} block size");
+            for &off in offsets {
+                assert!(off + 2 <= block_bytes, "ggml id {id} scale at {off}");
+            }
+        }
+    }
     #[test]
     fn unscaled_and_unknown_types_have_no_block_layout() {
         // F32(0), F16(1), BF16(30) are not scaled-block layouts; 99 is not a

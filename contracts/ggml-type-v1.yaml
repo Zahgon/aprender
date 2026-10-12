@@ -1,5 +1,5 @@
 metadata:
-  version: 1.3.0
+  version: 1.4.0
   created: '2026-09-20'
   author: PAIML Engineering
   description: |
@@ -44,7 +44,7 @@ metadata:
   - 'GitHub #3418 (serve sizes from TRAITS, one table), #3430 (M1), #3431 (M2 reconciliation), #3421 (epic), #3563 (pin-derived artifacts, general case)'
 
 name: ggml-type
-version: 1.3.0
+version: 1.4.0
 scope: aprender-quant (trueno_quant) ggml tensor-type enum and TRAITS table
 
 description: |
@@ -238,6 +238,23 @@ falsification_tests:
     The 18 hand-written rows in bytes_per_superblock, bytes_per_block,
     from_ggml_type and from_size already equalled TRAITS; the derivation deletes
     them.
+
+- id: FT-GGMLT-009
+  rule: the GGUF scale scanner sizes every block it admits from TRAITS (#3418)
+  prediction: |
+    scale_scanner_sizes_from_the_one_ggml_table_3418 (aprender-serve lib) walks
+    ids 0..64; quant_block_layout admits exactly Q4_0, Q4_1, Q5_0, Q5_1, Q8_0,
+    Q2_K, Q3_K, Q4_K, Q5_K and Q6_K, every admitted block size equals that
+    type's type_size in the one ggml table, and every f16 scale offset lies
+    inside its block. GREEN once the block size is read from the table and only
+    the scale offsets stay local; a hand-written size or an admitted extra type
+    turns it RED with the id in the message.
+  test: cargo test -p aprender-serve --lib scale_scanner_sizes_from_the_one_ggml_table_3418
+  if_fails: 'the NaN/Inf scale scanner reads blocks of a size the upstream-extracted TRAITS table does not give.'
+  evidence: |
+    Measured 2026-10-12 on la-74/3418 e307f52ce, before the derivation: GREEN.
+    The ten hand-written block sizes in gguf/embedding.rs quant_block_layout
+    already equalled TRAITS; the derivation deletes them.
 
 kani_harnesses:
 - id: KANI-GGMLT-001
