@@ -44,6 +44,7 @@ SIZE_CAP=1048576
 REPO=""
 BASE="origin/main"
 HEAD_REF="HEAD"
+RANGE=""   # set by run_rules: base...head, or base..head for a shallow merge head
 RED=0
 
 usage() {
@@ -59,8 +60,8 @@ line() {
     if [ "$2" = "RED" ]; then RED=1; fi
 }
 
-changed_names() { g diff --name-only "$BASE...$HEAD_REF"; }
-added_names() { g diff --name-only --diff-filter=A "$BASE...$HEAD_REF"; }
+changed_names() { g diff --name-only "$RANGE"; }
+added_names() { g diff --name-only --diff-filter=A "$RANGE"; }
 
 # Paths whose added lines count as "a Makefile, a justfile, a script or a workflow".
 runner_paths() {
@@ -72,7 +73,7 @@ added_runner_lines() {
     local p
     while IFS= read -r p; do
         [ -n "$p" ] || continue
-        g diff -U0 "$BASE...$HEAD_REF" -- "$p" \
+        g diff -U0 "$RANGE" -- "$p" \
             | awk -v p="$p" '/^\+\+\+/ {next} /^\+/ {print p ":" substr($0, 2)}'
     done < <(runner_paths)
 }
@@ -109,7 +110,7 @@ rule_h4() {
     local exempt
     touches=$(changed_names | awk -v p="$LT1_PROBE" '/^crates\// && $0 != p' | wc -l)
     exempt=$(changed_names | awk -v p="$LT1_PROBE" '$0 == p' | wc -l)
-    local arm="$LT1_RECEIPT base=$on_base head=$on_head; crates/ paths=$touches; exempt $LT1_PROBE=$exempt"
+    local arm="$LT1_RECEIPT base=$on_base head=$on_head; crates/ paths=$touches; exempt=$exempt ($LT1_PROBE)"
     if [ "$touches" -gt 0 ] && [ "$on_base" = absent ] && [ "$on_head" = absent ]; then
         line H4 RED "touches crates/ before LT-1's receipt" "$arm"
     else
@@ -144,7 +145,7 @@ rule_h5() {
             grep -Eq 'aprender_train::autograd|entrenar::autograd' <<<"$body" && n_ok=$((n_ok + 1))
         fi
     done <<<"$files"
-    second_tensor=$(g diff -U0 "$BASE...$HEAD_REF" -- '*.rs' | awk '
+    second_tensor=$(g diff -U0 "$RANGE" -- '*.rs' | awk '
         /^\+\+\+ / {f=$2; next}
         /^\+[[:space:]]*(pub(\([a-z]+\))?[[:space:]]+)?struct[[:space:]]+Tensor([^A-Za-z0-9_]|$)/ {t[f]=1}
         /^\+.*fn[[:space:]]+backward[[:space:]]*\(/ {b[f]=1}
@@ -193,7 +194,7 @@ rule_h11() {
     local cli pub new_crates n_new wf bad_wf="" p
     cli=$(changed_names | awk '$0 == "contracts/apr-cli-commands-v1.yaml"')
     pub=$(changed_names | awk '/(^|\/)Cargo\.toml$/' | while IFS= read -r p; do
-        g diff -U0 "$BASE...$HEAD_REF" -- "$p" | awk -v p="$p" '/^[+-][[:space:]]*publish[[:space:]]*=/ {print p; exit}'
+        g diff -U0 "$RANGE" -- "$p" | awk -v p="$p" '/^[+-][[:space:]]*publish[[:space:]]*=/ {print p; exit}'
     done | paste -sd ';' -)
     new_crates=$(added_names | awk '/^crates\/[^\/]+\/Cargo\.toml$/' | paste -sd ';' -)
     n_new=$(printf '%s' "$new_crates" | awk -F';' 'NF {print NF; exit} END {if (!NR) print 0}')
@@ -248,8 +249,25 @@ rule_h15() {
 run_rules() {
     g rev-parse -q --verify "$BASE^{commit}" >/dev/null || { echo "base $BASE not found" >&2; exit 2; }
     g rev-parse -q --verify "$HEAD_REF^{commit}" >/dev/null || { echo "head $HEAD_REF not found" >&2; exit 2; }
-    printf 'laya-train rules | base %s | head %s\n' \
-        "$(g rev-parse --short "$BASE")" "$(g rev-parse --short "$HEAD_REF")"
+    # A pull request's CI clone is shallow: HEAD is the merge commit and the base is its
+    # first parent, fetched alone, so `base...head` has no merge base. Then, and only
+    # when the base IS head's first parent (read from the raw commit, which a shallow
+    # graft does not hide), the tree diff base..head is the pull request's diff.
+    # Anything else has no defined diff and stops (exit 2).
+    local how=merge-base p1
+    RANGE="$BASE...$HEAD_REF"
+    if ! g merge-base "$BASE" "$HEAD_REF" >/dev/null 2>&1; then
+        p1=$(g cat-file -p "$(g rev-parse "$HEAD_REF")" | awk '/^parent /{n++; if (n == 1) p = $2} /^$/{exit} END{if (n >= 2) print p}')
+        if [ -n "$p1" ] && [ "$p1" = "$(g rev-parse "$BASE^{commit}")" ]; then
+            RANGE="$BASE..$HEAD_REF"
+            how=first-parent
+        else
+            echo "no merge base for $BASE...$HEAD_REF and $BASE is not the first parent of a merge head" >&2
+            exit 2
+        fi
+    fi
+    printf 'laya-train rules | base %s | head %s | diff %s\n' \
+        "$(g rev-parse --short "$BASE")" "$(g rev-parse --short "$HEAD_REF")" "$how"
     rule_h1; rule_h2; rule_h4; rule_h5; rule_h10; rule_h11; rule_h12; rule_h15
     if [ "$RED" -eq 0 ]; then echo "RESULT PASS"; else echo "RESULT RED"; fi
     return "$RED"
@@ -278,6 +296,32 @@ st_case() {
     fi
 }
 
+st_shallow() {
+    # st_shallow <name> <expect> <pr-setup>: main moves on (adding a .py the PR does not
+    # own), the PR runs <pr-setup>, and the check runs on a shallow clone of the merge.
+    local name=$1 expect=$2 setup=$3 out rc=0 got p1 sc
+    git -C "$ST" checkout -q -B "$name-pr" base
+    (cd "$ST" && sh -c "$setup")
+    git -C "$ST" add -A; st_commit "$name pr"
+    git -C "$ST" checkout -q -B "$name-main" base
+    echo "y = 1" >"$ST/main_only.py"
+    git -C "$ST" add -A; st_commit "$name main"
+    git -C "$ST" -c user.name=t -c user.email=t@t merge -q --no-ff --no-edit "$name-pr" >/dev/null
+    sc="$ST/shallow-$name"
+    git clone -q --no-local --depth 1 --branch "$name-main" "$ST" "$sc" 2>/dev/null
+    p1=$(git -C "$sc" cat-file -p HEAD | awk '/^parent /{print $2; exit}')
+    git -C "$sc" fetch -q --depth 1 origin "$p1" 2>/dev/null
+    out=$("$SELF" --repo "$sc" --base "$p1" --head HEAD) || rc=$?
+    got=$(printf '%s\n' "$out" | awk '$1 == "H1" {print $2; exit}')
+    if [ "$got" = "$expect" ] && printf '%s\n' "$out" | awk '/diff first-parent/ {f=1} END {exit !f}'; then
+        printf 'ok   %-22s %s %s\n' "$name" H1 "$got"
+    else
+        printf 'FAIL %-22s %s want %s got %s rc=%s\n%s\n' "$name" H1 "$expect" "${got:-none}" "$rc" "$out"
+        ST_FAIL=1
+    fi
+    git -C "$ST" checkout -q base
+}
+
 self_test() {
     SELF=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
     ST=$(mktemp -d)
@@ -287,6 +331,7 @@ self_test() {
     GIT_CEILING_DIRECTORIES=$(dirname "$ST")
     ST_FAIL=0
     git -C "$ST" init -q
+    mkdir -p "$ST/.git/info" && echo "shallow-*/" >>"$ST/.git/info/exclude"
     mkdir -p "$ST/crates/aprender-decide/src" "$ST/scripts" "$ST/.github/workflows"
     echo 'fn verify() {}' >"$ST/crates/aprender-decide/src/verify.rs"
     echo 'echo hi' >"$ST/scripts/a.sh"
@@ -323,6 +368,11 @@ self_test() {
     st_case plant-ssh-abspath RED H15 sh -c "echo '/usr/bin/${SSH_WORD}host true' >> scripts/a.sh"
     st_case h15-self-path PASS H15 sh -c "echo '# ${SSH_WORD}is a needle here' >> $H15_SELF"
     st_case plant-ssh-self-lookalike RED H15 sh -c "echo '${SSH_WORD}host true' >> scripts/check_laya_train_rules2.sh"
+
+    # A pull request's CI clone: a depth-1 merge head plus its first parent fetched
+    # alone, so there is no merge base. Only the pull request's side is judged.
+    st_shallow plant-py-shallow RED 'echo "x = 1" > x.py'
+    st_shallow clean-shallow PASS 'echo "# docs" > notes.md'
 
     # H5 and H10 need LT-1's receipt and LT-9's declaration on the base.
     git -C "$ST" checkout -q base
