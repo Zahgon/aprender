@@ -24,11 +24,12 @@
 //!   value = d × scale[s] × (ql + 16 × qh) − dmin × min[s]
 //!
 //! ## Invariants
-//! - Lane l of every warp handles value l of each of the 8 sub-blocks, so the
-//!   sub-block of each of a lane's 8 values is a compile-time constant and the
-//!   scale/min decode happens once per super-block, not once per value.
-//! - The 32 lanes of a warp read 32 consecutive bytes of `qh` and of each `qs`
-//!   chunk (coalesced), where `Q5KGemvKernel` recomputes every address per value.
+//! - Lane l of every warp owns qs word l (one coalesced u32 load: 128 bytes
+//!   per warp), i.e. chunk c = l / 8 (sub-blocks 2c and 2c+1) at positions
+//!   p..p+3 with p = 4 * (l % 8), plus the matching qh word at p (one u32). The
+//!   fifth bits are merged into all four bytes at once with byte-lane masks.
+//! - The 12 scale bytes are three u32 loads (lanes 0-2) broadcast by shuffle;
+//!   each lane selects its two (scale, min) pairs once per super-block.
 //! - Each warp processes super-blocks [warp_id, warp_id + num_warps, ...]
 //!   (disjoint partition — no write conflicts).
 //! - Cross-warp reduction via shared memory with bar.sync 0 (PARITY-114: all
@@ -40,7 +41,7 @@
 
 use crate::kernels::quantize::{Kernel, Q5K_SUPER_BLOCK_BYTES, Q5K_SUPER_BLOCK_SIZE};
 use crate::ptx::builder::{PtxArithmetic, PtxComparison, PtxControl, PtxMemory};
-use crate::ptx::{PtxKernel, PtxReg, PtxType};
+use crate::ptx::{PtxKernel, PtxReg, PtxType, VirtualReg};
 
 /// Byte offset of the 12 packed scale/min bytes in a Q5_K super-block.
 const SCALES_OFFSET: u64 = 4;
@@ -126,12 +127,29 @@ impl Kernel for MultiWarpQ5KGemvKernel {
                 let row_offset = ctx.mul_wide_u32_reg(block_id, row_bytes);
                 let row_base = ctx.add_u64(w_ptr, row_offset);
 
-                // Per-lane byte offsets, fixed for the whole row
-                let lane_64 = ctx.cvt_u64_u32(lane_id);
-                let lane_mod_12 = ctx.rem_u32(lane_id, 12);
-                let lane_mod_12_64 = ctx.cvt_u64_u32(lane_mod_12);
-                let twelve = ctx.mov_u32_imm(12);
-                let is_scale_lane = ctx.setp_lt_u32(lane_id, twelve);
+                // Per-lane constants, fixed for the whole row. Lane l owns the
+                // u32 qs word 4l, i.e. chunk c = l / 8 (sub-blocks 2c, 2c+1) and
+                // positions p..p+3 with p = 4 * (l % 8); its qh word is the one at p.
+                let four_u32 = ctx.mov_u32_imm(4);
+                let three_u32 = ctx.mov_u32_imm(3);
+                let seven_u32 = ctx.mov_u32_imm(7);
+                let chunk = ctx.shr_u32(lane_id, three_u32);
+                let lane_in_chunk = ctx.and_u32(lane_id, seven_u32);
+                let two_u32 = ctx.mov_u32_imm(2);
+                let pos = ctx.shl_u32(lane_in_chunk, two_u32);
+                let pos_64 = ctx.cvt_u64_u32(pos);
+                let lane_x4 = ctx.mul_u32_reg(lane_id, four_u32);
+                let lane_x4_64 = ctx.cvt_u64_u32(lane_x4);
+                let chunk_x2 = ctx.add_u32_reg(chunk, chunk);
+                let chunk_x64 = ctx.mul_u32(chunk, 64);
+                let x_lane_off = ctx.add_u32_reg(chunk_x64, pos);
+                let three_c = ctx.mov_u32_imm(3);
+                let is_scale_lane = ctx.setp_lt_u32(lane_id, three_c);
+                let one_c = ctx.mov_u32_imm(1);
+                let two_c = ctx.mov_u32_imm(2);
+                let is_c1 = ctx.setp_eq_u32(chunk, one_c);
+                let is_c2 = ctx.setp_eq_u32(chunk, two_c);
+                let is_c3 = ctx.setp_eq_u32(chunk, three_c);
 
                 // Invariant: each warp starts at warp_id, strides by num_warps
                 let sb_idx_z = ctx.mov_u32_imm(0);
@@ -145,6 +163,17 @@ impl Kernel for MultiWarpQ5KGemvKernel {
                 let sb_off = ctx.mul_wide_u32(sb_idx, Q5K_SUPER_BLOCK_BYTES);
                 let sb_addr = ctx.add_u64(row_base, sb_off);
 
+                // Issue the per-lane quant loads first (coalesced u32: 128 B of qs
+                // and 32 B of qh per warp), so they overlap the scale decode.
+                let qs_off = ctx.mov_u64_imm(QS_OFFSET);
+                let qs_base = ctx.add_u64(sb_addr, qs_off);
+                let qs_addr = ctx.add_u64(qs_base, lane_x4_64);
+                let qs_word = ctx.ld_global_u32(qs_addr);
+                let qh_off = ctx.mov_u64_imm(QH_OFFSET);
+                let qh_base = ctx.add_u64(sb_addr, qh_off);
+                let qh_addr = ctx.add_u64(qh_base, pos_64);
+                let qh_word = ctx.ld_global_u32(qh_addr);
+
                 // d and dmin (f16 at offsets 0 and 2)
                 let d_f16 = ctx.ld_global_f16(sb_addr);
                 let d = ctx.cvt_f32_f16(d_f16);
@@ -154,22 +183,33 @@ impl Kernel for MultiWarpQ5KGemvKernel {
                 let dmin = ctx.cvt_f32_f16(dmin_f16);
 
                 // ============================================================
-                // Scales: lanes 0-11 each load one of the 12 packed bytes,
-                // broadcast to all lanes via warp shuffle (PAR-066 pattern).
+                // Scales: lanes 0-2 each load one u32 of the 12 packed bytes,
+                // broadcast to all lanes via warp shuffle.
                 // ============================================================
                 let scales_off = ctx.mov_u64_imm(SCALES_OFFSET);
                 let scales_base = ctx.add_u64(sb_addr, scales_off);
-                let scale_addr = ctx.add_u64(scales_base, lane_mod_12_64);
-                let my_scale_byte = ctx.mov_u32_imm(0);
+                let scale_addr = ctx.add_u64(scales_base, lane_x4_64);
+                let my_scale_word = ctx.mov_u32_imm(0);
                 ctx.branch_if_not(is_scale_lane, "mwv_q5k_skip_scale_load");
-                let scale_u8 = ctx.ld_global_u8(scale_addr);
-                let scale_u32 = ctx.cvt_u32_u8(scale_u8);
-                ctx.mov_u32_reg(my_scale_byte, scale_u32);
+                ctx.ld_global_u32_into(my_scale_word, scale_addr);
                 ctx.label("mwv_q5k_skip_scale_load");
 
+                let mut words = Vec::with_capacity(3);
+                for i in 0..3u32 {
+                    words.push(ctx.shfl_idx_u32(my_scale_word, i, 0xFFFF_FFFF));
+                }
+                let mask_8bit = ctx.mov_u32_imm(0xFF);
                 let mut s = Vec::with_capacity(12);
-                for i in 0..12u32 {
-                    s.push(ctx.shfl_idx_u32(my_scale_byte, i, 0xFFFF_FFFF));
+                for i in 0..12usize {
+                    let w = words[i / 4];
+                    let byte = if i % 4 == 0 {
+                        ctx.and_u32(w, mask_8bit)
+                    } else {
+                        let sh = ctx.mov_u32_imm(8 * (i as u32 % 4));
+                        let t = ctx.shr_u32(w, sh);
+                        ctx.and_u32(t, mask_8bit)
+                    };
+                    s.push(byte);
                 }
 
                 // llama.cpp get_scale_min_k4, with every index a compile-time constant:
@@ -178,7 +218,6 @@ impl Kernel for MultiWarpQ5KGemvKernel {
                 //           min   = (s[j+4] >> 4)  | ((s[j]   >> 6) << 4)
                 let mask_6bit = ctx.mov_u32_imm(0x3F);
                 let mask_4bit = ctx.mov_u32_imm(0x0F);
-                let four_u32 = ctx.mov_u32_imm(4);
                 let six_u32 = ctx.mov_u32_imm(6);
                 let mut d_scale = Vec::with_capacity(8);
                 let mut dmin_min = Vec::with_capacity(8);
@@ -203,55 +242,59 @@ impl Kernel for MultiWarpQ5KGemvKernel {
                     dmin_min.push(ctx.mul_f32(dmin, mn_f32));
                 }
 
-                // ============================================================
-                // Quant bits: one qh byte per lane (bit j = sub-block j), and
-                // one qs byte per lane per 64-value chunk (low nibble = even
-                // sub-block, high nibble = odd sub-block).
-                // ============================================================
-                let qh_off = ctx.mov_u64_imm(QH_OFFSET);
-                let qh_base = ctx.add_u64(sb_addr, qh_off);
-                let qh_addr = ctx.add_u64(qh_base, lane_64);
-                let qh_u8 = ctx.ld_global_u8(qh_addr);
-                let qh_byte = ctx.cvt_u32_u8(qh_u8);
+                // This lane's sub-blocks are 2c (low nibbles) and 2c+1 (high).
+                let mut pick = |v: &[VirtualReg], odd: usize| {
+                    let r = ctx.selp_f32(is_c1, v[2 + odd], v[odd]);
+                    let r = ctx.selp_f32(is_c2, v[4 + odd], r);
+                    ctx.selp_f32(is_c3, v[6 + odd], r)
+                };
+                let ds_lo = pick(&d_scale, 0);
+                let dm_lo = pick(&dmin_min, 0);
+                let ds_hi = pick(&d_scale, 1);
+                let dm_hi = pick(&dmin_min, 1);
 
-                let qs_off = ctx.mov_u64_imm(QS_OFFSET);
-                let qs_base = ctx.add_u64(sb_addr, qs_off);
-                let qs_lane = ctx.add_u64(qs_base, lane_64);
+                // ============================================================
+                // Quant bytes: per byte b, low = (qs nibble) | (qh bit 2c) << 4,
+                // high = (qs high nibble) | (qh bit 2c+1) << 4, all 4 bytes at once.
+                // ============================================================
+                let nib_mask = ctx.mov_u32_imm(0x0F0F_0F0F);
+                let bit_mask = ctx.mov_u32_imm(0x0101_0101);
+                let qh_s = ctx.shr_u32(qh_word, chunk_x2);
+                let lo4 = ctx.and_u32(qs_word, nib_mask);
+                let hi4 = ctx.shr_u32(qs_word, four_u32);
+                let hi4 = ctx.and_u32(hi4, nib_mask);
+                let hb_lo = ctx.and_u32(qh_s, bit_mask);
+                let hb_lo = ctx.shl_u32(hb_lo, four_u32);
+                let qh_s1 = ctx.shr_u32(qh_s, one_c);
+                let hb_hi = ctx.and_u32(qh_s1, bit_mask);
+                let hb_hi = ctx.shl_u32(hb_hi, four_u32);
+                let q_lo = ctx.or_u32(lo4, hb_lo);
+                let q_hi = ctx.or_u32(hi4, hb_hi);
 
                 let sb_k_base = ctx.mul_u32(sb_idx, Q5K_SUPER_BLOCK_SIZE);
-                let x_lane_idx = ctx.add_u32_reg(sb_k_base, lane_id);
+                let x_lo = ctx.add_u32_reg(sb_k_base, x_lane_off);
 
                 let thread_partial = ctx.mov_f32_imm(0.0);
-                let one_u32 = ctx.mov_u32_imm(1);
-                let sixteen_u32 = ctx.mov_u32_imm(16);
-
-                for chunk in 0..4u32 {
-                    let chunk_off = ctx.mov_u64_imm(u64::from(chunk * 32));
-                    let qs_addr = ctx.add_u64(qs_lane, chunk_off);
-                    let qs_u8 = ctx.ld_global_u8(qs_addr);
-                    let qs_byte = ctx.cvt_u32_u8(qs_u8);
-
-                    for half in 0..2u32 {
-                        let j = chunk * 2 + half;
-                        let ql = if half == 0 {
-                            ctx.and_u32(qs_byte, mask_4bit)
+                for (half, (q, ds, dm)) in [(q_lo, ds_lo, dm_lo), (q_hi, ds_hi, dm_hi)]
+                    .into_iter()
+                    .enumerate()
+                {
+                    for b in 0..4u32 {
+                        let byte = if b == 0 {
+                            ctx.and_u32(q, mask_8bit)
                         } else {
-                            ctx.shr_u32(qs_byte, four_u32)
+                            let sh = ctx.mov_u32_imm(8 * b);
+                            let t = ctx.shr_u32(q, sh);
+                            ctx.and_u32(t, mask_8bit)
                         };
-                        let j_reg = ctx.mov_u32_imm(j);
-                        let qh_shifted = ctx.shr_u32(qh_byte, j_reg);
-                        let qh_bit = ctx.and_u32(qh_shifted, one_u32);
-                        let qh_scaled = ctx.mul_u32_reg(qh_bit, sixteen_u32);
-                        let quant = ctx.add_u32_reg(ql, qh_scaled);
-                        let quant_f32 = ctx.cvt_f32_u32(quant);
+                        let quant_f32 = ctx.cvt_f32_u32(byte);
+                        // value = d*scale*quant - dmin*min
+                        let scaled = ctx.mul_f32(ds, quant_f32);
+                        let dequant = ctx.sub_f32(scaled, dm);
 
-                        // value = d*scale[j]*quant - dmin*min[j]
-                        let scaled = ctx.mul_f32(d_scale[j as usize], quant_f32);
-                        let dequant = ctx.sub_f32(scaled, dmin_min[j as usize]);
-
-                        // x[sb*256 + 32*j + lane], bounds-checked (GH-215)
-                        let j_off = ctx.mov_u32_imm(j * 32);
-                        let x_idx = ctx.add_u32_reg(x_lane_idx, j_off);
+                        // x[sb*256 + 64c + 32*half + p + b], bounds-checked (GH-215)
+                        let off = ctx.mov_u32_imm(32 * half as u32 + b);
+                        let x_idx = ctx.add_u32_reg(x_lo, off);
                         let x_idx_64 = ctx.cvt_u64_u32(x_idx);
                         let x_bytes = ctx.mul_u64(x_idx_64, 4);
                         let x_addr = ctx.add_u64(x_ptr, x_bytes);
