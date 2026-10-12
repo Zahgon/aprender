@@ -83,6 +83,6 @@ falsification_tests:
 
   - id: "FALSIFY-CGS-004"
     rule: "Consistent graph capture guard condition"
-    prediction: "graphed_capture.rs and forward_graphed_decode.rs both check CUDA_GRAPH_ENABLE"
+    prediction: "graphed_capture.rs is the one compiled decode graph path; it reads CUDA_GRAPH_ENABLE in one place, the override passed to resolve_decode_graph"
     test: grep_cuda_graph_enable_consistency
     if_fails: "Guard condition diverged between two graph capture code paths"

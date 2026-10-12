@@ -2,7 +2,7 @@
 
 > **Status**: Implemented (C-GDP-001)
 >
-> See: `src/cuda/executor/layers/forward_graphed_decode.rs` — eager path bypass
+> See: `src/cuda/executor/layers/graphed_capture.rs` — eager path bypass
 > See: `src/gguf/cuda/uses.rs` — profiling-aware graph dispatch
 
 ## Overview
@@ -38,22 +38,19 @@ valid_profiling => NOT has_decode_graph
 
 ### Implementation
 
-In `forward_graphed_decode.rs`, the `should_use_eager_decode()` method checks:
+In `graphed_capture.rs`, `graphed_fast_path` gates the graphed decode on `graphed_decode_runs()`:
 
 ```rust
-fn should_use_eager_decode(&self) -> bool {
-    static GRAPH_DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    let graph_disabled = *GRAPH_DISABLED.get_or_init(|| {
-        std::env::var("CUDA_GRAPH_DISABLE")
-            .map(|v| v == "1")
-            .unwrap_or(false)
-    });
-    let skip_graph = std::env::var("SKIP_CUDA_GRAPH")
-        .map(|v| v == "1")
-        .unwrap_or(false);
-    graph_disabled || skip_graph || self.profiler.is_enabled()
+let graph_enabled =
+    Self::graphed_decode_runs(self.decode_graph_enabled(), self.profiler.is_enabled());
+
+pub(crate) fn graphed_decode_runs(graph_enabled: bool, profiling: bool) -> bool {
+    graph_enabled && !profiling
 }
 ```
+
+`decode_graph_enabled()` holds the graph decision (the per-GPU default, with
+`CUDA_GRAPH_ENABLE=1` / `SKIP_CUDA_GRAPH=1` as overrides); the profiler check sits on top of it.
 
 When `profiler.is_enabled()` returns true, the entire graphed path is bypassed — both capture and replay. Every decode token goes through the eager path where each brick is individually instrumented.
 

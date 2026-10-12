@@ -281,7 +281,11 @@ impl CudaExecutor {
         // graphed path unchanged. CUDA_GRAPH_ENABLE=1 still force-opts-in for A/B
         // testing the deeper manual-graph root-cause fix on Blackwell.
         // Contract: contracts/apr-cpu-vs-gpu-output-parity-v1.yaml (FALSIFY-CPU-GPU-009).
-        let graph_enabled = self.decode_graph_enabled();
+        // C-GDP-001 (gpu-decode-profiling-v1 FALSIFY-GDP-001): profiling needs
+        // the eager path, because a graph replay runs every brick in one opaque
+        // launch. This covers replay of an already-captured graph too.
+        let graph_enabled =
+            Self::graphed_decode_runs(self.decode_graph_enabled(), self.profiler.is_enabled());
         if !graph_enabled {
             return Ok(Some(self.forward_all_layers_gpu_to_logits(
                 input, logits, position, num_layers, hidden_dim,
@@ -457,6 +461,14 @@ impl CudaExecutor {
     pub(crate) fn resolve_decode_graph(env_override: Option<bool>, cc: u32) -> bool {
         env_override.unwrap_or_else(|| Self::graph_cc_default(cc))
     }
+
+    /// C-GDP-001: the graphed decode runs only when graphs are on AND the
+    /// BrickProfiler is off. Ported from `should_use_eager_decode` in the
+    /// never-compiled `forward_graphed_decode.rs` (#4700).
+    #[must_use]
+    pub(crate) fn graphed_decode_runs(graph_enabled: bool, profiling: bool) -> bool {
+        graph_enabled && !profiling
+    }
 }
 
 #[cfg(test)]
@@ -490,6 +502,19 @@ mod pmat810_blackwell_graph_default_tests {
             CudaExecutor::resolve_decode_graph(None, 86),
             "an override that changes nothing is not an override"
         );
+    }
+
+    /// gpu-decode-profiling-v1 FALSIFY-GDP-001: an enabled BrickProfiler
+    /// forces the eager decode, whatever the graph decision says.
+    #[test]
+    fn profiling_forces_eager_decode() {
+        assert!(CudaExecutor::graphed_decode_runs(true, false));
+        assert!(
+            !CudaExecutor::graphed_decode_runs(true, true),
+            "a graph replay hides every brick from the profiler"
+        );
+        assert!(!CudaExecutor::graphed_decode_runs(false, false));
+        assert!(!CudaExecutor::graphed_decode_runs(false, true));
     }
 
     /// PMAT-886a: Blackwell (cc>=120, e.g. GB10 sm_121=121) now defaults the

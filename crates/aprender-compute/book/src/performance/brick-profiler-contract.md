@@ -59,10 +59,12 @@ CUDA graphs capture kernel sequences for replay. When a graph is replayed, brick
 The contract (`C-GDP-001`) requires that consumers disable graph replay when profiling is enabled. This is enforced in realizar's `CudaExecutor`:
 
 ```rust
-// forward_graphed_decode.rs
-if self.should_use_eager_decode() {
+// graphed_capture.rs, graphed_fast_path
+let graph_enabled =
+    Self::graphed_decode_runs(self.decode_graph_enabled(), self.profiler.is_enabled());
+if !graph_enabled {
     // profiler.is_enabled() → true → eager path
-    return self.forward_all_layers_gpu_to_logits(...);
+    return Ok(Some(self.forward_all_layers_gpu_to_logits(...)));
 }
 ```
 
