@@ -11,6 +11,7 @@ impl CudaKernels {
             .or_else(|| Self::norm_rope_kernel_name(kernel_type))
             .or_else(|| Self::activation_misc_kernel_name(kernel_type))
             .or_else(|| Self::gdn_kernel_name(kernel_type))
+            .or_else(|| Self::prefill_dequant_kernel_name(kernel_type))
             .unwrap_or("unknown")
     }
 

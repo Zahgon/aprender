@@ -566,10 +566,11 @@ pub enum ExtendedCommands {
     ///   replay  the runner itself — recording, state machines, reporting
     ///           (record, playbook, coverage, report)
     ///
-    /// Routed today: `tensor` (PMAT-481 visual regression) and `llm bench`
-    /// (GH-876 Milestone 2). The rest land as they are delegated to the
-    /// probador library. Renaming now costs one path — after those land it is
-    /// a breaking change across the whole testing surface.
+    /// Routed today: `tensor` (PMAT-481 visual regression), `llm bench`
+    /// (GH-876 Milestone 2) and `llm ttft-verdict` (#4954). The rest land as
+    /// they are delegated to the probador library. Renaming now costs one path
+    /// — after those land it is a breaking change across the whole testing
+    /// surface.
     ///
     /// `apr probar` stays as a hidden alias so existing scripts keep working.
     #[command(alias = "probar")]
@@ -1765,6 +1766,26 @@ pub enum LlmSubcommand {
         /// refused.
         #[arg(long)]
         prompts: Option<InputFile>,
+        /// Write the V2 serve receipt here (#4953): load_ms and TTFT beside
+        /// pp512 and tg128, from ONE server this run started (`--start`).
+        ///
+        /// Refused, never written, unless the run can carry the claim: the
+        /// server was started here, alive at the end, and its own /health
+        /// uptime covers the whole run (no restart), every request
+        /// streamed and succeeded, completions are 128 tokens, the median
+        /// prompt is 512 ± 5%, and every TTFT is below load_ms. Use with
+        /// `--stream --prompts prompts-w1.jsonl`. Needs `--start`, `--stream`
+        /// and `--model-file`. `--model-file` is what gets hashed; it is NOT
+        /// read from `--start`, so it must name the file that command serves.
+        #[arg(long, requires_all = ["model_file", "start", "stream"])]
+        serve_receipt: Option<OutputPath>,
+        /// The model file the started server loads; its sha256 goes in the
+        /// serve receipt.
+        #[arg(long)]
+        model_file: Option<InputFile>,
+        /// Host label recorded in the serve receipt.
+        #[arg(long, default_value = "unlabelled")]
+        host_label: FreeText,
 
         // ------------------------------------------------------------------
         // PERF-025 — the APR-PERF-GATE-001 v2.2 §4.4 conformant mode.
@@ -1986,6 +2007,19 @@ pub enum LlmSubcommand {
         /// `$APR_PERF_RECEIPT_KEYRING` inside the signing script.
         #[arg(long)]
         keyring: Option<ConfigPath>,
+    },
+    /// #4954: decide the TTFT ratio row from each GPU host's receipts.
+    ///
+    /// TTFT ratio = reference TTFT / apr TTFT. Exits 0 GREEN when every host
+    /// in `arms.L3.v1.hosts` of `scripts/perf-matrix.yaml` has at least
+    /// `protocol.replicates_min` receipts and each one's `ratios.ttft.lcb95` is
+    /// at or above `arms.L3.v1.ttft_floor`; 1 RED when all of them read and a
+    /// host's minimum is below it; 2 NOT MEASURED when anything is missing.
+    TtftVerdict {
+        /// A host's run directory, as `scripts/v1_ttft_baseline.sh` writes it:
+        /// `v1-provenance.json` and `receipt.r<N>.json`. Once per host.
+        #[arg(long = "run", required = true)]
+        runs: Vec<DirPath>,
     },
 }
 

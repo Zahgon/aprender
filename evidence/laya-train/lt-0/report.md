@@ -1,6 +1,6 @@
 # LT-0: first reads (APR-LAYA-TRAIN-001)
 
-Measured 2026-10-10, 10:50Z to 11:00Z, on `noah-Lambda-Vector` (48 threads, 125 GiB), by the
+Measured 2026-10-10, 10:50Z to 11:00Z, on a 48-thread, 125 GiB workstation, by the
 worker `laya-train` (claude-opus-5-5). Nothing was built or run except the rule checker's
 self-test. `main` = `e39f91a65e` (committed 2026-10-10T08:04:52Z). PR heads were read from
 `refs/pull/4941/head` = `e7730a3a4c` and `refs/pull/4634/head` = `dad7f6a5e0`, read-only.
@@ -11,15 +11,19 @@ self-test. `main` = `e39f91a65e` (committed 2026-10-10T08:04:52Z). PR heads were
 |---|---|---|---|
 | G1 | `6e7ea0133` | `e39f91a65e`, 2026-10-10T08:04:52Z. `main` moved; the spec's facts below still hold | `git rev-parse origin/main`; `git log -1 --format=%cI` |
 | G2 | #4941 is a draft from a fork, one commit `e7730a3` | still OPEN, draft, head `e7730a3a4c`, not merged | `gh pr view 4941 --json state,isDraft,headRefOid,mergedAt` |
-| G8 | gate contract 5.0.0, 13 equations, 6 binding rows, the seven unbound | holds on `e7730a3`: 5.0.0, 13 equations; `contracts/aprender/binding.yaml` has 6 rows (gate_pass, ece_top_label, split_disjointness, seed_selection_median, shift_probe_reported, synthetic_not_deployable), none of the seven. 54 lines of the gate contract and 6 of the parity contract name the `just laya-train-selftest` recipe or a `.py` file | `git show refs/laya/pr4941:<path>` |
+| G8 | gate contract 5.0.0, 13 equations, 6 binding rows, the seven unbound | holds on `e7730a3`: 5.0.0, 13 equations; `contracts/aprender/binding.yaml` has 6 rows (gate_pass, ece_top_label, split_disjointness, seed_selection_median, shift_probe_reported, synthetic_not_deployable), none of the seven. 55 lines of the gate contract and 6 of the parity contract name the `just laya-train-selftest` recipe or a `.py` file (command in the G8 note below the table) | `git show refs/laya/pr4941:<path>` |
 | G10 | 18 `deny_unknown_fields` in `pack.rs`; `torch_version` required; `device_is_cpu` check | holds: 18; `torch_version` is a required `String` with no value check (`pack.rs:340`); `verify.rs:1805` | same |
 | G11 | doors public, take a policy | holds: `verify.rs:3397`, `:3429`; `VerifyPolicy` all 18 fields `pub`, no `Default`, one constructor `from_contract_views(&GateContractView, &ParityContractView)` (`:378`); `pack::load_checkpoint_for_scoring` `pack.rs:802`, and `scorer_from_parts` `:819` | same |
 | G16, G17 | core and train engines; absent ops | holds, with detail in (c) | file reads on `main` |
 | G18 | three encoders on `main`, modernbert absent | holds: `models/bert/` (7 files), `setfit/encoder.rs`, `aprender-train/src/transformer/encoder.rs`; `models/modernbert` absent | `git ls-tree` |
 | G19 | `aprender-train` depends on `aprender-core` | holds: `crates/aprender-train/Cargo.toml:85`, a path dependency | file |
 | G20 | `safetensors_is_read_only_by_pack` | holds: `lib.rs:341-398` scans every `.rs` under `src/` for `safetensors::` and `SafeTensors`; only `src/pack.rs` and `src/test_support.rs` allowed; `tests/` and `examples/` are not scanned | file |
-| G22 | 170 `.py` | 170 | `git ls-tree -r --name-only origin/main \| grep -c '\.py$'` |
+| G22 | 170 `.py` | 170 | command in the G22 note below the table |
 | G27 | no `benchmarks/tweeteval-stance/`, no CLI command | holds: 0 paths, 0 matches | `git ls-tree`; `grep -c tweet-eval-stance contracts/apr-cli-commands-v1.yaml` |
+
+G8 note: the 55 and 6 are `git show e7730a3a4c:contracts/laya-finetune-gate-v1.yaml | grep -cE 'laya-train-selftest|\.py\b'` and the same for `contracts/laya-parity-v1.yaml`.
+
+G22 note: the 170 is `git ls-tree -r --name-only origin/main | grep -c '\.py$'`.
 
 ## (b) The carry of #4941
 
@@ -71,7 +75,7 @@ found where its grad struct is attached to the output.
 
 Counts: core absent 9 (slice, chunk, concat, clamp, max, local-window mask, marker gather,
 tensor grad clipping, AdamW groups); core present-without 1 (RoPE, wrong layout). Train
-absent 16, present-without 5. Core's `TransformerEncoderLayer` is pre-norm with a tanh GELU
+absent 14, present-without 4. Core's `TransformerEncoderLayer` is pre-norm with a tanh GELU
 and biased projections (`nn/transformer/mod.rs:589-613`, `:243-246`), as F6 says.
 Provisional reading, for LT-1 to decide: core needs fewer additions; train's encoder parts
 (norm, feed-forward, embedding, bias add) have no backward.
@@ -132,8 +136,8 @@ So LT-7 feeds the judge the plants of `device_recorded`, and the partial ones of
 ## (e) How a command runs on a CPU pool host today
 
 Nothing fits. No document defines "CPU pool host" or names one. Every dispatchable
-self-hosted workflow runs on a `clean-room` runner, `intel,perf-solo` (the clean-room-16
-box) or a GPU runner; no make target dispatches remote work (the nearest pattern is
+self-hosted workflow runs on a clean-room runner, a performance
+runner or a GPU runner; no make target dispatches remote work (the nearest pattern is
 `nightly-train-run`, a local `systemctl --user` unit). Per the spec, LT-1's PR adds one
 workflow that starts on `workflow_dispatch` only, and its runner label is question Q2.
 
@@ -155,11 +159,11 @@ RED. `--self-test` plants 35 cases in a throwaway repository (each rule's mutant
 named RED, each clean case PASS) and runs in `workspace-test` through
 `ci/explicit-test-commands.d/795-laya-train-rules-self-test.cmd`. Two readings of the spec,
 stated so they can be overruled:
-- H4: a head that adds LT-1's own receipt may touch `crates/`. One path is exempt by the Q5
-  ruling (handoff/quorum-a3-laya-q5-lt1-order.md): `crates/aprender-train/examples/laya_engine_probe.rs`,
+- H4: a head that adds LT-1's own receipt may touch `crates/`. One path is exempt:
+  `crates/aprender-train/examples/laya_engine_probe.rs`,
   the proxy probe, which must merge before its receipt can exist; the arm prints the exempt count.
 - H15: the needles are plain substrings, so every form of an ssh call is a hit. Exactly one
-  path is skipped (C314, handoff/c314-a3-laya-lt0-lt1a.md): `scripts/check_laya_train_rules.sh`,
+  path is skipped: `scripts/check_laya_train_rules.sh`,
   which must name the needles to plant them; the arm prints the skipped path.
 - H5: the chosen engine is read from `"engine"` in LT-1's receipt on the base.
 
