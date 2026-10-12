@@ -156,11 +156,17 @@ fn table(build_rs: &str, label: &str) -> Vec<String> {
         ),
         "release123",
     );
-    // a dev checkout: no vcs file, its own repo -> `git rev-parse --short HEAD` (worktree freshness)
+    // a dev checkout: no vcs file, its own repo -> `git rev-parse --short=9 HEAD` (worktree freshness)
     let dev = package(&pkgs, "dev", None);
     git(&dev, &["init", "-q"]);
     git(&dev, &["commit", "-q", "--allow-empty", "-m", "dev"]);
-    let head = git(&dev, &["rev-parse", "--short", "HEAD"]);
+    // HEAD -> alias -> the branch: git follows the chain, the `.git` reader (#4254) does not. So
+    // `foreign-owner` lands right only through the safe.directory retry; the reader's answer
+    // used to differ by length alone, and #5196 made both nine digits.
+    let branch = git(&dev, &["symbolic-ref", "HEAD"]);
+    git(&dev, &["symbolic-ref", "refs/heads/alias", &branch]);
+    git(&dev, &["symbolic-ref", "HEAD", "refs/heads/alias"]);
+    let head = git(&dev, &["rev-parse", "--short=9", "HEAD"]);
     expect("dev-checkout", run(&bin, &dev, None, &[]), &head);
     // the release lane: root in a container over the runner-owned checkout. git's own test knob
     // makes it see another owner; the precondition proves plain git really refuses the repo here
@@ -198,7 +204,7 @@ fn planted_regressions_turn_red() {
     let no_rung = shipped.replace(VCS_CALL, "    if let Some(sha) = None::<String> {");
     let git_first = shipped.replace(
         VCS_CALL,
-        "    if let Some(sha) = run_git(&[\"rev-parse\", \"--short\", \"HEAD\"]).or_else(vcs_info_sha) {",
+        "    if let Some(sha) = run_git(&[\"rev-parse\", \"--short=9\", \"HEAD\"]).or_else(vcs_info_sha) {",
     );
     let w1 = table(&no_rung, "plant_no_rung");
     assert!(
