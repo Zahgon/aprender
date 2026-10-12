@@ -12,7 +12,7 @@
 #   aprender-core|entrenar          19 sites -> tests/contracts/classification_finetune_xcrate_contract.rs
 #   aprender-test-showcase|jugar-probar  3 sites -> tests/probar_tests.rs
 #
-# The three rows below are NOT B2 exposure. Measured with the gate's own
+# The two rows below are NOT B2 exposure. Measured with the gate's own
 # gates-lib.sh A0 strip + A1 overlay over the whole workspace:
 #   aprender-core|renacer        src/showcase/profiling.rs is LIB code, not a
 #     test module, behind `showcase-profile`. A dev-dep is never linked into the
@@ -20,14 +20,10 @@
 #     showcase-profile` fails with the same E0433 IN-WORKSPACE, published or not
 #     (measured 2026-09-17). A separate defect; the feature is documented
 #     "disabled: renacer->aprender circular dep".
-#   aprender-gpu|simular         src/testing/integration_tests/mod.rs is declared
-#     by no `mod` statement anywhere in the crate -- a dark file that is never
-#     compiled. aprender-gpu is also excluded from B2 (GPU toolchain).
 #   aprender-orchestrate|jugar-probar  src/agent/tool/browser.rs is LIB code that
 #     resolves through the VERSIONED optional regular dep
 #     (`jugar-probar = { workspace = true, ... }`, version 0.68.0), which publish
 #     keeps. The guard keys on the dev-dep table only, so this row is a false
 #     positive of the guard, not a violation.
 crates/aprender-core/Cargo.toml|renacer
-crates/aprender-gpu/Cargo.toml|simular
 crates/aprender-orchestrate/Cargo.toml|jugar-probar
