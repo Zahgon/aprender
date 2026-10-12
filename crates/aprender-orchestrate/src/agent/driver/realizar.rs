@@ -181,54 +181,22 @@ fn parse_tool_calls_envelope(text: &str) -> (String, Vec<ToolCall>) {
 
     let mut cursor = text;
     loop {
-        // Find next tool call start — try <tool_call> first, then ```json
-        let xml_pos = cursor.find("<tool_call>");
-        let md_pos = cursor.find("```json");
-
-        let (start, tag_len, is_markdown) = match (xml_pos, md_pos) {
-            (Some(x), Some(m)) if x <= m => (x, "<tool_call>".len(), false),
-            (Some(x), None) => (x, "<tool_call>".len(), false),
-            (_, Some(m)) => (m, "```json".len(), true),
-            (None, None) => {
-                remaining.push_str(cursor);
-                break;
-            }
+        let Some((start, tag_len, is_markdown)) = next_envelope_start(cursor) else {
+            remaining.push_str(cursor);
+            break;
         };
 
         remaining.push_str(&cursor[..start]);
-        let after_tag = &cursor[start + tag_len..];
+        let (json_str, advance_past, delimited) =
+            split_envelope_body(&cursor[start + tag_len..], is_markdown);
 
-        // Find closing tag and extract JSON
-        let (json_str, advance_past) = if is_markdown {
-            // Markdown: ```json\n...\n```
-            if let Some(end) = after_tag.find("```") {
-                (&after_tag[..end], &after_tag[end + "```".len()..])
-            } else {
-                (after_tag, "")
-            }
-        } else if let Some(end) = after_tag.find("</tool_call>") {
-            (&after_tag[..end], &after_tag[end + "</tool_call>".len()..])
-        } else {
-            // PMAT-158: No closing tag — try parsing to end-of-string
-            (after_tag, "")
-        };
-        let json_str = json_str.trim();
-
-        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(json_str) {
-            // Must have "name" field to be a tool call (not just any JSON)
-            if let Some(name) = parsed.get("name").and_then(|n| n.as_str()) {
-                let name = name.to_string();
-                let input = parsed.get("input").cloned().unwrap_or(serde_json::json!({}));
-                call_counter += 1;
-                tool_calls.push(ToolCall { id: format!("local-{call_counter}"), name, input });
-            } else {
-                remaining.push_str(&cursor[start..]);
-                break;
-            }
-        } else {
+        let Some((name, input)) = parse_call_json(json_str.trim(), delimited).and_then(named_call)
+        else {
             remaining.push_str(&cursor[start..]);
             break;
-        }
+        };
+        call_counter += 1;
+        tool_calls.push(ToolCall { id: format!("local-{call_counter}"), name, input });
 
         cursor = advance_past;
         if cursor.is_empty() {
@@ -237,6 +205,105 @@ fn parse_tool_calls_envelope(text: &str) -> (String, Vec<ToolCall>) {
     }
 
     (remaining.trim().to_string(), tool_calls)
+}
+
+/// Where the next tool call starts in `cursor` — `<tool_call>` first, then
+/// ```` ```json ````: (offset, tag length, is markdown).
+fn next_envelope_start(cursor: &str) -> Option<(usize, usize, bool)> {
+    match (cursor.find("<tool_call>"), cursor.find("```json")) {
+        (Some(x), Some(m)) if x <= m => Some((x, "<tool_call>".len(), false)),
+        (Some(x), None) => Some((x, "<tool_call>".len(), false)),
+        (_, Some(m)) => Some((m, "```json".len(), true)),
+        (None, None) => None,
+    }
+}
+
+/// The JSON of one call, the text after it, and whether it was delimited.
+/// `delimited` is true only for a <tool_call> whose </tool_call> was found:
+/// the envelope, not a guess, says where the call ends.
+fn split_envelope_body(after_tag: &str, is_markdown: bool) -> (&str, &str, bool) {
+    let closer = if is_markdown { "```" } else { "</tool_call>" };
+    match after_tag.find(closer) {
+        Some(end) => (&after_tag[..end], &after_tag[end + closer.len()..], !is_markdown),
+        // PMAT-158: No closing tag — try parsing to end-of-string
+        None => (after_tag, "", false),
+    }
+}
+
+/// A parsed value is a tool call only when it has a string `name` (not just
+/// any JSON); a missing `input` is an empty object.
+fn named_call(parsed: serde_json::Value) -> Option<(String, serde_json::Value)> {
+    let name = parsed.get("name")?.as_str()?.to_string();
+    let input = parsed.get("input").cloned().unwrap_or(serde_json::json!({}));
+    Some((name, input))
+}
+
+/// #3719: recover a delimited `<tool_call>` whose JSON only lacks its closing
+/// brackets.
+///
+/// Measured on Qwen3.5-4B-Q4_K_M (ARM64, CUDA): the model's final turn was
+/// `<tool_call>{"name": "file_edit", "input": {"path": "stats.py", "old": "…",
+/// "new": "…"}</tool_call>`. That is the right edit with the outer `}` missing,
+/// so it failed to parse and was returned as the answer text, and the file
+/// was never edited. The `</tool_call>` tag already marks where the call
+/// ends, so the brackets still open there are closed in order.
+///
+/// Conservative, like the salvage parser: `None` unless the scan ends outside
+/// a string, nothing closes a bracket it did not open, at least one bracket is
+/// still open, and the result is an object with a string `name` and an
+/// explicit `input`. Any other malformation is left to fail as before.
+fn repair_unclosed_tool_call(json_str: &str) -> Option<serde_json::Value> {
+    let open = unclosed_brackets(json_str)?;
+    let mut repaired = json_str.to_string();
+    repaired.extend(open.iter().rev());
+    let parsed = serde_json::from_str::<serde_json::Value>(&repaired).ok()?;
+    let obj = parsed.as_object()?;
+    obj.get("name")?.as_str().filter(|n| !n.is_empty())?;
+    obj.get("input")?;
+    info!("closed {} unclosed bracket(s) in a delimited <tool_call> (#3719)", open.len());
+    Some(parsed)
+}
+
+/// The JSON of one tool call: parsed as written, or, only for a call its
+/// `</tool_call>` delimits, repaired by [`repair_unclosed_tool_call`].
+fn parse_call_json(json_str: &str, delimited: bool) -> Option<serde_json::Value> {
+    let parsed = serde_json::from_str::<serde_json::Value>(json_str).ok();
+    if parsed.is_some() || !delimited {
+        return parsed;
+    }
+    repair_unclosed_tool_call(json_str)
+}
+
+/// The closers still owed at the end of `json_str`, innermost last; `None`
+/// when the scan ends inside a string, a closer does not match its opener, or
+/// nothing is left open.
+fn unclosed_brackets(json_str: &str) -> Option<Vec<char>> {
+    let mut open: Vec<char> = Vec::new();
+    let (mut in_str, mut escaped) = (false, false);
+    for c in json_str.chars() {
+        if in_str {
+            (in_str, escaped) = string_step(c, escaped);
+            continue;
+        }
+        match c {
+            '"' => in_str = true,
+            '{' => open.push('}'),
+            '[' => open.push(']'),
+            '}' | ']' if open.pop() != Some(c) => return None,
+            _ => {}
+        }
+    }
+    (!in_str && !open.is_empty()).then_some(open)
+}
+
+/// One character inside a JSON string: returns (still in the string, the next
+/// character is escaped).
+fn string_step(c: char, escaped: bool) -> (bool, bool) {
+    if escaped {
+        (true, false)
+    } else {
+        (c != '"', c == '\\')
+    }
 }
 
 /// CCPA-m296 salvage parser: recover a tool call the model emitted OUTSIDE the
@@ -605,5 +672,62 @@ not valid json
         let (_text, calls) = parse_tool_calls(input);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].id, "local-1", "envelope parser owns this, not salvage");
+    }
+
+    // ── #3719: a delimited <tool_call> missing only its closing brackets ──
+
+    /// FALSIFIER (#3719): the final turn Qwen3.5-4B-Q4_K_M produced on ARM64
+    /// (CUDA), verbatim. The edit is right and the outer `}` is missing, so the
+    /// call failed to parse, came back as the answer text, and `stats.py` was
+    /// never edited. RED before `repair_unclosed_tool_call`: zero calls.
+    #[test]
+    fn falsify_3719_delimited_tool_call_missing_outer_brace_is_executed() {
+        let input = "<tool_call>\n{\"name\": \"file_edit\", \"input\": {\"path\": \"stats.py\", \
+                     \"old\": \"return sum(values) / (len(values) - 1)\", \"new\": \"return \
+                     sum(values) / len(values)\"}\n</tool_call>";
+        let (text, calls) = parse_tool_calls(input);
+        assert_eq!(
+            calls.len(),
+            1,
+            "#3719: the delimited call must be executed, not returned as text"
+        );
+        assert_eq!(calls[0].name, "file_edit");
+        assert_eq!(calls[0].input["path"], "stats.py");
+        assert_eq!(calls[0].input["old"], "return sum(values) / (len(values) - 1)");
+        assert_eq!(calls[0].input["new"], "return sum(values) / len(values)");
+        assert!(text.is_empty(), "the repaired call leaves no answer text, got {text:?}");
+    }
+
+    /// The repair closes brackets in the order they were opened, arrays too.
+    #[test]
+    fn repair_closes_nested_brackets_in_order() {
+        let input =
+            "<tool_call>{\"name\": \"shell\", \"input\": {\"args\": [\"a\", {\"b\": 1}</tool_call>";
+        let (_text, calls) = parse_tool_calls(input);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].input["args"][1]["b"], 1);
+    }
+
+    /// Everything else stays refused: the repair is not a general JSON fixer.
+    #[test]
+    fn repair_refuses_every_other_malformation() {
+        let refused = [
+            // an unterminated string: where it ends is a guess
+            "<tool_call>{\"name\": \"file_edit\", \"input\": {\"path\": \"a</tool_call>",
+            // a bracket closed that was never opened this way
+            "<tool_call>{\"name\": \"file_edit\", \"input\": [}</tool_call>",
+            // no </tool_call>: nothing delimits the call
+            "<tool_call>{\"name\": \"file_edit\", \"input\": {\"path\": \"a\"}",
+            // no name
+            "<tool_call>{\"input\": {\"path\": \"a\"}</tool_call>",
+            // no input
+            "<tool_call>{\"name\": \"file_edit\", \"args\": {\"path\": \"a\"}</tool_call>",
+            // nothing left open: a different defect (a trailing comma)
+            "<tool_call>{\"name\": \"file_edit\", \"input\": {},}</tool_call>",
+        ];
+        for input in refused {
+            let (_text, calls) = parse_tool_calls(input);
+            assert!(calls.is_empty(), "must not be repaired into a call: {input}");
+        }
     }
 }

@@ -2,15 +2,28 @@
 //!
 //! Extracted from code.rs to keep module under 500-line threshold.
 
-/// Compact system prompt for -p mode (PMAT-197).
+/// Compact system prompt for models under 2B parameters (PMAT-197/198).
 /// Minimal context to avoid overwhelming small models (Qwen3 1.7B).
 /// The full CODE_SYSTEM_PROMPT causes Qwen3 1.7B to loop on `</think>` tags
 /// when combined with 9 tool JSON schemas consuming most of the context window.
+///
+/// It names no tool and no `<tool_call>` format, so a model given only this
+/// prompt cannot know it has tools. It was once forced on every `-p` run,
+/// whatever the model size; that left `apr code -p` unable to edit a file on
+/// any model (#3719). `scale_prompt_for_model` is its only caller now.
 pub(super) const COMPACT_SYSTEM_PROMPT: &str = "\
 Answer the question. Be direct.\
 ";
 
 /// System prompt — PMAT-168: optimized for 1.5B-7B with explicit tool table.
+///
+/// #3719: every example input here must carry the fields its tool REQUIRES;
+/// `AprServeDriver` strips the JSON schemas, so this table is all a served
+/// model sees. It taught `file_edit` with `old`/`new` (the tool requires
+/// `old_string`/`new_string`) and `memory` with `key`/`value` (it requires
+/// `content`), and Qwen3.5-4B called `file_edit` exactly as taught until the
+/// loop guard ended the run. Pinned by
+/// `falsify_3719_prompt_tool_examples_supply_every_required_field`.
 ///
 /// 2026-05-20 update (V1_004 follow-up to paiml/claude-code-parity-apr M287):
 /// large coder-finetuned models (Qwen3-Coder-30B observed) emit Markdown
@@ -35,11 +48,11 @@ You have 9 tools. To use one, emit a <tool_call> block:
 |------|---------|---------------|
 | file_read | Read a file | {\"path\": \"src/main.rs\"} |
 | file_write | Create/overwrite file | {\"path\": \"new.rs\", \"content\": \"fn main() {}\"} |
-| file_edit | Replace text in file | {\"path\": \"src/lib.rs\", \"old\": \"foo\", \"new\": \"bar\"} |
+| file_edit | Replace text in file | {\"path\": \"src/lib.rs\", \"old_string\": \"foo\", \"new_string\": \"bar\"} |
 | glob | Find files by pattern | {\"pattern\": \"src/**/*.rs\"} |
 | grep | Search file contents | {\"pattern\": \"TODO\", \"path\": \"src/\"} |
 | shell | Run a command | {\"command\": \"cargo test --lib\"} |
-| memory | Remember/recall facts | {\"action\": \"remember\", \"key\": \"bug\", \"value\": \"off-by-one\"} |
+| memory | Remember/recall facts | {\"action\": \"remember\", \"content\": \"bug: off-by-one\"} |
 | pmat_query | Search code by intent | {\"query\": \"error handling\", \"limit\": 5} |
 | rag | Search project docs | {\"query\": \"authentication flow\"} |
 
@@ -56,7 +69,7 @@ Example 1 — read a file before editing:
 Example 2 — fix a one-line bug:
 
 <tool_call>
-{\"name\": \"file_edit\", \"input\": {\"path\": \"src/lib.rs\", \"old\": \"return (i, j);\", \"new\": \"return (i.min(j), i.max(j));\"}}
+{\"name\": \"file_edit\", \"input\": {\"path\": \"src/lib.rs\", \"old_string\": \"return (i, j);\", \"new_string\": \"return (i.min(j), i.max(j));\"}}
 </tool_call>
 
 Example 3 — verify with tests:
@@ -107,28 +120,18 @@ pub(super) fn estimate_model_params_from_name(path: &std::path::Path) -> f64 {
     let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
 
     // Match patterns: "1.7b", "8b", "0.6b", "70b", "3.8b"
-    // Look for a number followed by 'b' (case-insensitive, already lowered)
+    // Look for a number followed by 'b' (case-insensitive, already lowered).
+    // The scan walks string slices, so a non-ASCII stem cannot split a char.
     let mut best: f64 = 0.0;
-    let chars: Vec<char> = name.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        // Find start of a number
-        if chars[i].is_ascii_digit() {
-            let start = i;
-            // Consume digits and optional decimal
-            while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
-                i += 1;
-            }
-            // Check if followed by 'b'
-            if i < chars.len() && chars[i] == 'b' {
-                if let Ok(n) = name[start..i].parse::<f64>() {
-                    if n > best {
-                        best = n;
-                    }
-                }
-            }
+    let mut rest = name.as_str();
+    while let Some(start) = rest.find(|c: char| c.is_ascii_digit()) {
+        let run = &rest[start..];
+        let len = run.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(run.len());
+        let (number, after) = run.split_at(len);
+        if after.starts_with('b') {
+            best = number.parse::<f64>().map_or(best, |n| best.max(n));
         }
-        i += 1;
+        rest = after;
     }
     best
 }
@@ -137,7 +140,7 @@ pub(super) fn estimate_model_params_from_name(path: &std::path::Path) -> f64 {
 ///
 /// | Size | Prompt | Rationale |
 /// |------|--------|-----------|
-/// | <2B  | COMPACT | Avoids thinking loops, keeps tool format |
+/// | <2B  | COMPACT | Avoids thinking loops; names no tools     |
 /// | 2-7B | MID | Tool names + format, no example JSON |
 /// | 7B+  | FULL | Full table with examples + guidelines |
 pub(super) fn scale_prompt_for_model(params_b: f64) -> String {
