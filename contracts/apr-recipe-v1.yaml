@@ -1,5 +1,5 @@
 metadata:
-  version: 1.0.0
+  version: 1.1.0
   kind: schema
   description: |
     Declarative recipe for `apr finetune`, `apr distill` and `apr merge` (PMAT-4838, epic E8).
@@ -11,10 +11,16 @@ metadata:
     4.0, alpha 0.7, the `apr distill --config` defaults), and checks rules RCP-001..008
     before any run. It reports every violation in one error. The recipe hash is the SHA-256
     of the canonical JSON form (sorted keys, defaults filled), so receipts can show that two
-    runs used the same recipe. Driving the three commands from a recipe is a later ticket.
+    runs used the same recipe.
+    `--recipe FILE` on the three commands (PMAT-5230, train_recipe_run.rs) runs it: the kind
+    must match the command (RCP-009); values change only by `--set key=value`, which is
+    validated again and listed (RCP-010); every run writes `<output>.receipt.json` with both
+    hashes, the input digests, the version and the outcome (RCP-011); and each recipe field
+    maps to one command argument (RCP-012). A flag the recipe covers is refused beside it.
   references:
     - "https://github.com/paiml/aprender/issues/4838"
     - "https://github.com/paiml/aprender/issues/4002"
+    - "https://github.com/paiml/aprender/issues/5230"
     - "contracts/apr-cli-distill-train-v1.yaml"
 
 equations:
@@ -30,6 +36,14 @@ equations:
     formula: "validate(r) = { v : rule v is broken by r }, the whole set, not its first element"
   hash:
     formula: "hash(r) = sha256(canonical_json(fill_defaults(parse(r)))); parse(a) = parse(b) ⇒ hash(a) = hash(b); any changed value ⇒ different hash"
+  kind_check:
+    formula: "run(c, r) ⇒ kind(r) = c, else RCP-009 before c starts"
+  overrides:
+    formula: "r' = checked(set(r, k, v)) for each --set k=v; hash(r') = hash(r) ⇔ r' = r; every --set is listed with its old and new value"
+  receipt:
+    formula: "¬plan ⇒ receipt(output) ∋ {file_hash = hash(r), recipe_hash = hash(r'), sha256(i) for each local input i (null otherwise), version, git_sha, status ∈ {success, failed}}, written on success and on failure"
+  mapping:
+    formula: "args(r) is a pure function of r'; each covered field maps to one argument; fields with no argument are listed as not passed"
 
 falsification_tests:
   - id: FALSIFY-RCP-001
@@ -92,3 +106,27 @@ falsification_tests:
     test_harness: "cargo test -p apr-cli --lib train_recipe::tests::falsify_rcp_010"
     expected_output: "exit 0"
     if_fails: "Receipts could not show that two runs used the same recipe, or would show it for different recipes."
+  - id: FALSIFY-RCPRUN-009
+    name: kind_mismatch_stops_the_run
+    prediction: "a merge recipe given to `apr finetune` (and every other mismatch) is refused with RCP-009; the command never starts and no receipt is written"
+    test_harness: "cargo test -p apr-cli --lib train_recipe_run::tests::falsify_rcp_run_009"
+    expected_output: "exit 0"
+    if_fails: "A recipe could run under a command whose arguments mean something else."
+  - id: FALSIFY-RCPRUN-010
+    name: set_is_validated_and_listed
+    prediction: "--set changes the value and the hash and is listed old→new; a set that breaks a rule fails with that rule; a typo key, a missing '=', an empty key segment or a bad value fails to parse; a covered flag beside --recipe is refused by the parser"
+    test_harness: "cargo test -p apr-cli --lib train_recipe_run::tests::falsify_rcp_run_010"
+    expected_output: "exit 0"
+    if_fails: "A run could use values the recipe does not show, or a typo could be ignored silently."
+  - id: FALSIFY-RCPRUN-011
+    name: receipt_records_the_run
+    prediction: "a run writes <output>.receipt.json with both hashes, the input SHA-256 (null for a missing file), version, git sha, seed, overrides and status; a failed command still writes status failed with its error; plan mode writes none"
+    test_harness: "cargo test -p apr-cli --lib train_recipe_run::tests::falsify_rcp_run_011"
+    expected_output: "exit 0"
+    if_fails: "A trained artifact could not be traced back to the recipe and inputs that made it."
+  - id: FALSIFY-RCPRUN-012
+    name: recipe_maps_to_arguments
+    prediction: "each finetune, distill and merge recipe field maps to the expected argument value, for every merge strategy; fields with no argument are listed as not passed"
+    test_harness: "cargo test -p apr-cli --lib train_recipe_run::tests::falsify_rcp_run_012"
+    expected_output: "exit 0"
+    if_fails: "A recipe value could be dropped or sent to the wrong argument."

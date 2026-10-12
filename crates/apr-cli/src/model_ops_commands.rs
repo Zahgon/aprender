@@ -5,13 +5,13 @@ pub enum ModelOpsCommands {
     #[cfg(feature = "training")]
     Finetune {
         /// Input model file
-        #[arg(value_name = "FILE")]
+        #[arg(value_name = "FILE", conflicts_with = "recipe")]
         file: Option<ModelPath>,
         /// Fine-tuning method: auto, full, lora, qlora
-        #[arg(long, short = 'm', default_value = "auto")]
+        #[arg(long, short = 'm', default_value = "auto", conflicts_with = "recipe")]
         method: FreeText,
         /// LoRA rank (default: auto-selected)
-        #[arg(long, short = 'r')]
+        #[arg(long, short = 'r', conflicts_with = "recipe")]
         rank: Option<u32>,
         /// Available VRAM in GB
         #[arg(long, default_value = "16.0")]
@@ -20,10 +20,10 @@ pub enum ModelOpsCommands {
         #[arg(long)]
         plan: bool,
         /// Training data file (JSONL format)
-        #[arg(long, short = 'd', value_name = "FILE")]
+        #[arg(long, short = 'd', value_name = "FILE", conflicts_with = "recipe")]
         data: Option<InputFile>,
         /// Output path (adapter dir or merged model)
-        #[arg(short, long)]
+        #[arg(short, long, conflicts_with = "recipe")]
         output: Option<OutputPath>,
         /// Adapter path for merge mode
         #[arg(long)]
@@ -32,13 +32,13 @@ pub enum ModelOpsCommands {
         #[arg(long)]
         merge: bool,
         /// Training epochs
-        #[arg(long, default_value = "3")]
+        #[arg(long, default_value = "3", conflicts_with = "recipe")]
         epochs: u32,
         /// Learning rate. Default is rank-aware: the classic 2e-4 diverges at
         /// the high LoRA ranks auto-selected to fill VRAM (e.g. rank 256), so
         /// when omitted the recommendation is auto-lowered (2e-4 at rank<=32
         /// down to ~2.5e-5 at rank 256). Pass an explicit value to override.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "recipe")]
         learning_rate: Option<f64>,
         /// Model size for planning (e.g., "7B", "1.5B")
         #[arg(long, value_name = "SIZE")]
@@ -56,7 +56,7 @@ pub enum ModelOpsCommands {
         #[arg(long)]
         oversample: bool,
         /// Maximum sequence length for GPU buffer allocation (lower = less VRAM)
-        #[arg(long, value_name = "LEN")]
+        #[arg(long, value_name = "LEN", conflicts_with = "recipe")]
         max_seq_len: Option<usize>,
         /// Quantize frozen weights to NF4 (4-bit) for QLoRA training (~8x VRAM savings)
         #[arg(long)]
@@ -108,6 +108,16 @@ pub enum ModelOpsCommands {
         /// PMAT-486: Enable StepProfiler for per-phase wall-clock timing
         #[arg(long)]
         profile: bool,
+
+        /// Run from an apr.recipe/v1 file (kind: finetune). The flags it covers
+        /// (model, method, rank, data, output, epochs, learning rate, max seq
+        /// len) are refused beside it; change one with --set. Writes
+        /// <output>.receipt.json.
+        #[arg(long, value_name = "FILE")]
+        recipe: Option<ConfigPath>,
+        /// Change one recipe value, e.g. --set training.epochs=5 (needs --recipe)
+        #[arg(long = "set", value_name = "KEY=VALUE", requires = "recipe")]
+        set: Vec<FreeText>,
     },
     /// Prune model (structured/unstructured pruning) (GH-247)
     Prune {
@@ -142,34 +152,34 @@ pub enum ModelOpsCommands {
     /// Knowledge distillation (teacher -> student) (GH-247, ALB-011)
     Distill {
         /// Teacher model file (positional, for file-based mode)
-        #[arg(value_name = "TEACHER")]
+        #[arg(value_name = "TEACHER", conflicts_with = "recipe")]
         teacher: Option<ModelPath>,
         /// Student model file
-        #[arg(long, value_name = "FILE")]
+        #[arg(long, value_name = "FILE", conflicts_with = "recipe")]
         student: Option<ModelPath>,
         /// Training data file
-        #[arg(long, short = 'd', value_name = "FILE")]
+        #[arg(long, short = 'd', value_name = "FILE", conflicts_with = "recipe")]
         data: Option<InputFile>,
         /// Output file path
-        #[arg(short, long)]
+        #[arg(short, long, conflicts_with = "recipe")]
         output: Option<OutputPath>,
         /// Distillation strategy: standard, progressive, ensemble
         #[arg(long, default_value = "standard")]
         strategy: FreeText,
         /// Temperature for softmax scaling
-        #[arg(long, default_value = "3.0")]
+        #[arg(long, default_value = "3.0", conflicts_with = "recipe")]
         temperature: f64,
         /// Alpha weight for KL vs task loss
-        #[arg(long, default_value = "0.7")]
+        #[arg(long, default_value = "0.7", conflicts_with = "recipe")]
         alpha: f64,
         /// Training epochs
-        #[arg(long, default_value = "3")]
+        #[arg(long, default_value = "3", conflicts_with = "recipe")]
         epochs: u32,
         /// Plan mode (estimate only)
         #[arg(long)]
         plan: bool,
         /// YAML config file for two-stage distillation (ALB-011)
-        #[arg(long, value_name = "FILE")]
+        #[arg(long, value_name = "FILE", conflicts_with = "recipe")]
         config: Option<ConfigPath>,
         /// Distillation stage: precompute, train (logit KD), or generate (text-based, GH-455)
         #[arg(long, value_name = "STAGE")]
@@ -197,5 +207,14 @@ pub enum ModelOpsCommands {
         /// corpus directory.
         #[arg(long, value_name = "DIR")]
         dataset: Option<InputFile>,
+        /// Run from an apr.recipe/v1 file (kind: distill; `base` is the
+        /// student). The flags it covers (teacher, student, data, output,
+        /// temperature, alpha, epochs, config) are refused beside it; change
+        /// one with --set. Writes <output>.receipt.json.
+        #[arg(long, value_name = "FILE")]
+        recipe: Option<ConfigPath>,
+        /// Change one recipe value, e.g. --set distillation.alpha=0.5 (needs --recipe)
+        #[arg(long = "set", value_name = "KEY=VALUE", requires = "recipe")]
+        set: Vec<FreeText>,
     },
 }

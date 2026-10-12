@@ -764,16 +764,16 @@ pub enum Commands {
     /// Merge multiple models
     Merge {
         /// Model files to merge
-        #[arg(value_name = "FILES", num_args = 2..)]
+        #[arg(value_name = "FILES", num_args = 2.., conflicts_with = "recipe")]
         files: Vec<ModelPath>,
         /// Merge strategy (average, weighted, slerp, ties, dare)
-        #[arg(long, default_value = "average")]
+        #[arg(long, default_value = "average", conflicts_with = "recipe")]
         strategy: FreeText,
         /// Output file path (optional in --plan mode)
-        #[arg(short, long, required_unless_present = "plan")]
+        #[arg(short, long, required_unless_present_any = ["plan", "recipe"], conflicts_with = "recipe")]
         output: Option<OutputPath>,
         /// Weights for weighted merge (comma-separated, e.g., "0.7,0.3")
-        #[arg(long, value_delimiter = ',')]
+        #[arg(long, value_delimiter = ',', conflicts_with = "recipe")]
         weights: Option<Vec<f32>>,
         /// Base model for TIES/DARE (task vectors computed as delta from base)
         #[arg(long)]
@@ -793,6 +793,14 @@ pub enum Commands {
         /// #2392: Overwrite an existing output file (refused without it)
         #[arg(short, long)]
         force: bool,
+        /// Run from an apr.recipe/v1 file (kind: merge). The flags it covers
+        /// (files, strategy, output, weights) are refused beside it; change
+        /// one with --set. Writes <output>.receipt.json.
+        #[arg(long, value_name = "FILE")]
+        recipe: Option<ConfigPath>,
+        /// Change one recipe value, e.g. --set merge.strategy=slerp (needs --recipe)
+        #[arg(long = "set", value_name = "KEY=VALUE", requires = "recipe")]
+        set: Vec<FreeText>,
     },
     /// Quantize model weights (GH-243)
     Quantize {

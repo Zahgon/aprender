@@ -214,9 +214,11 @@ pub(crate) mod trace_save_tensor;
 #[cfg(feature = "training")]
 pub(crate) mod train;
 // PMAT-4838: declarative finetune/distill/merge recipe (contracts/apr-recipe-v1.yaml).
-// Its first caller is the next E8 ticket, which drives the commands from it.
-#[allow(dead_code)]
 pub(crate) mod train_recipe;
+// PMAT-5230: `--recipe` drives finetune/distill/merge and writes a run receipt.
+// The finetune mapping is read only when `apr finetune` exists (feature training).
+#[cfg_attr(not(feature = "training"), allow(dead_code))]
+pub(crate) mod train_recipe_run;
 pub(crate) mod tree;
 pub(crate) mod tui;
 #[cfg(feature = "training")]

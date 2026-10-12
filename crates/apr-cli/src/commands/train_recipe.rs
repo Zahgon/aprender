@@ -244,12 +244,23 @@ fn join_violations(v: &[Violation]) -> String {
 impl Recipe {
     /// Parse, fill defaults and validate. Every violation is returned.
     pub fn from_yaml(yaml: &str) -> Result<Self, RecipeError> {
-        let mut recipe: Self =
+        let recipe: Self =
             serde_yaml::from_str(yaml).map_err(|e| RecipeError::Parse(e.to_string()))?;
-        recipe.fill_defaults();
-        let violations = recipe.validate();
+        recipe.checked()
+    }
+
+    /// Same as `from_yaml`, from an already-parsed value (the `--set` path).
+    pub fn from_value(value: serde_json::Value) -> Result<Self, RecipeError> {
+        let recipe: Self =
+            serde_json::from_value(value).map_err(|e| RecipeError::Parse(e.to_string()))?;
+        recipe.checked()
+    }
+
+    fn checked(mut self) -> Result<Self, RecipeError> {
+        self.fill_defaults();
+        let violations = self.validate();
         if violations.is_empty() {
-            Ok(recipe)
+            Ok(self)
         } else {
             Err(RecipeError::Invalid(violations))
         }
