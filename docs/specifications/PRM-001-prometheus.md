@@ -56,9 +56,9 @@
 | G4 | Weights sha256 | 4B `00fe7986…69ef11a4` · 9B `03b74727…2b7e8` · 27B `84b5f7f1…d2a806` | [V] | REX-01 receipt |
 | G5 | Train themes | 0.70 fast (`--json-schema`, resident serve) · 0.71 wider + training (qwen35 finetune/distill; WGPU/Metal) | [O 2026-09-20] | `06x-release-schedule.md` |
 | G6 | `apr parity` v0.69.3 | GPU-vs-CPU only; no released llama.cpp comparison | [V] | REX-04 premise check |
-| G7 | rc.1 lane on gx10 | F2 guard (cos 0.8425) → CPU fallback (#4313); `--context-length` ignored, 262144 used (#4443); decode ≈ 0.5× ollama; **32k prefill 0.26×**; temperature-0 divergence at ≈ 55 tokens | [V] cop report | #4313, #4443, `evidence/4252-promotion.md` |
-| G8 | TTFT at 0.68.2 on a 4090 | 7.7× slower than llama.cpp; end-to-end 4.9× | [V] | #3596 |
-| G9 | Epic speed targets | E2: TTFT ≤ 2× llama.cpp · E6: decode, prefill, TTFT ≥ 1.0× llama.cpp across the certified matrix | [O] | APR-EPIC-001 §2 |
+| G7 | rc.1 lane on gx10 | F2 guard (cos 0.8425) → CPU fallback (#4313); `--context-length` ignored, 262144 used (#4443); decode and **32k prefill** both slower than ollama (figures in #4313, #4443); temperature-0 divergence at ≈ 55 tokens | [V] cop report | #4313, #4443, `evidence/4252-promotion.md` |
+| G8 | TTFT at 0.68.2 on a 4090 | slower than llama.cpp, TTFT and end-to-end (figures in #3596) | [V] | #3596 |
+| G9 | Epic speed targets | E2 TTFT target ≤ 2× llama.cpp · E6 target ≥ 1.0× llama.cpp for decode, prefill and TTFT across the certified matrix | [O] | APR-EPIC-001 §2 |
 | G10 | Executors | apr pin on gx10, lambda-labs, yoga; no `apr serve` unit, weights or review label anywhere | [V] | infra#1088 |
 | G11 | paiml-implement | v1.8.1 has no advisory lane; #420 unreleased | [V] | PRM report |
 | G12 | Ledger | findings stored as a count; `weights_sha256: None` hardcoded; free-text `LaneUnavailable` | [V] | `crates/aprender-review-experiment/src/ledger.rs` |
@@ -416,8 +416,8 @@ next_row: PRM-NN
 |---|---|---|
 | **Replay p95 on the primary cell** | ≤ slowest-voter p95 (measured); never up after 3 tags | PRM-S1 / PRM-10 |
 | **TTFT ratio vs llama.cpp** | ≤ 2× by E2 (0.71) `[O]` | replay receipt |
-| **Prefill ratio vs llama.cpp, per stratum** | ≥ 1.0× by E6 (0.73) `[O]` | replay receipt |
-| Decode ratio vs llama.cpp | ≥ 1.0× by E6 `[O]` | replay receipt |
+| **Prefill ratio vs llama.cpp, per stratum** | Target: ≥ 1.0× by E6 (0.73) `[O]` | replay receipt |
+| Decode ratio vs llama.cpp | Target: ≥ 1.0× by E6 `[O]` | replay receipt |
 | Verdict availability, rolling 7 d | ≥ 95% before tie-breaker `[O]` | ledger |
 | Receipts carrying an apr row | **100%** | receipt-lint |
 | Closes decided by apr above its rung | **0** | receipt audit |

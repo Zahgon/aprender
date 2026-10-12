@@ -13,14 +13,14 @@ prompts or completions; transcripts stay private.
 | apr build | rows (apr/llama) | wall p50 s | wall p95 s [95% CI] | ttft ratio | decode tps ratio |
 |---|---|---|---|---|---|
 | `96eb79f51` (0.69.3) | 200/200 | 26.61 | 69.36 [59.49, 82.56] | n/a: apr untimed before SRV-TIM-001 | n/a |
-| `33b5e5b24` (0.70.0 dev, SRV-TIM-001; apr sha256 `38313994…68ce`) | 200/200 | 26.98 | 68.83 [60.91, 85.64] | 4.40× | 0.216 (≈4.6× slower) |
+| `33b5e5b24` (0.70.0 dev, SRV-TIM-001; apr sha256 `38313994…68ce`) | 200/200 | 26.98 | 68.83 [60.91, 85.64] | 4.40× | 0.216 (`evidence/prm-001/s1-v2/33b5e5b24/speed-block.json`) |
 
-`33b5e5b24` is the build of record. The `speed-block.json` in each directory is the §9 block,
+`33b5e5b24` is the build of record. The `speed-block.json` in each `evidence/prm-001/s1-v2/<build>/` directory is the §9 block,
 produced by `replay summary --rows rows-both --voter LANE=FILE`.
 
 ## Queue budget (voter p95)
 
-`33b5e5b24/voters.txt` is `replay voters` over `evidence/pr-review/` at main
+`evidence/prm-001/s1-v2/33b5e5b24/voters.txt` is `replay voters` over `evidence/pr-review/` at main
 `8cf336c60a2b5071b855af99c99def618fb1f41b`. Of the 48 quorum receipts there, 23 carry a
 `duration_seconds`, and all 23 are `antigravity` lanes; the Claude lanes record none.
 Budget = the largest lane p95 = **601.6 s (antigravity)**. apr's wall p95 is 68.8 s, so it
