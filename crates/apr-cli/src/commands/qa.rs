@@ -756,6 +756,12 @@ fn print_qa_summary(gates: &[GateResult], passed: bool, total_duration: Duration
     println!();
     if passed {
         println!("  {}", output::badge_pass("ALL GATES PASSED"));
+    } else if !gates.is_empty() && gates.iter().all(|g| g.skipped) {
+        // #5226: every gate skipped is NOT MEASURED, neither a pass nor a gate failure.
+        println!(
+            "  {}",
+            output::badge_fail("NOT MEASURED: every gate skipped")
+        );
     } else {
         println!("  {}", output::badge_fail("GATES FAILED"));
         for gate in gates.iter().filter(|g| !g.passed && !g.skipped) {
@@ -779,3 +785,4 @@ include!("gpu_isolation_result.rs");
 include!("qa_dense_session.rs");
 include!("qa_08.rs");
 include!("qa_json_never_empty.rs");
+include!("qa_all_skipped_not_measured.rs");
