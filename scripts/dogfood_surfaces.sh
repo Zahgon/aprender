@@ -833,6 +833,15 @@ snapshot() {
         | LC_ALL=C sort)
     n=$(printf '%s\n' "$targets" | grep -c .)
     vacuity_guard "declared bin targets" "$n" "$MIN_BINARIES"
+    # DOGFOOD_SNAPSHOT_ONLY=<package>/<target> rebuilds that one line in place (#5181): a binary that grew
+    # subcommands after the last full snapshot gets a fresh line without rebuilding every target.
+    if [ -n "${DOGFOOD_SNAPSHOT_ONLY:-}" ]; then
+        targets=$(printf '%s\n' "$targets" | awk -F'\t' -v k="$DOGFOOD_SNAPSHOT_ONLY" '$1 "/" $2 == k')
+        n=$(printf '%s\n' "$targets" | grep -c .)
+        [ "$n" -eq 1 ] || { printf 'FAIL (snapshot): DOGFOOD_SNAPSHOT_ONLY=%s names %s targets, not 1\n' "$DOGFOOD_SNAPSHOT_ONLY" "$n" >&2; return 1; }
+        [ "$(jq -r '.package + "/" + .target' "$out" 2>/dev/null | grep -cxF "$DOGFOOD_SNAPSHOT_ONLY")" -eq 1 ] \
+            || { printf 'FAIL (snapshot): %s has no single line for %s to replace\n' "$out" "$DOGFOOD_SNAPSHOT_ONLY" >&2; return 1; }
+    fi
     mkdir -p "$(dirname "$out")"
     tmp="$out.tmp"; : > "$tmp"
     while IFS=$'\t' read -r pkg tgt src req; do
@@ -862,6 +871,13 @@ snapshot() {
               help_exit: $hrc, commands: $commands, options: $options, positionals: $positionals, routes: $routes, tools: $tools}' >> "$tmp"
         printf '  snap  %s/%s\n' "$pkg" "$tgt" >&2
     done <<< "$targets"
+    if [ -n "${DOGFOOD_SNAPSHOT_ONLY:-}" ]; then
+        jq -c --slurpfile new "$tmp" \
+            'if (.package + "/" + .target) == env.DOGFOOD_SNAPSHOT_ONLY then $new[0] else . end' "$out" > "$tmp.all" \
+            || { rm -f "${tmp:?}" "${tmp:?}.all"; return 1; }
+        mv -f "$tmp.all" "$tmp"
+        n=$(grep -c . "$out")
+    fi
     [ "$(grep -c . "$tmp")" -eq "$n" ] || { printf 'FAIL (snapshot): %s lines for %s targets\n' "$(grep -c . "$tmp")" "$n" >&2; return 1; }
     mv -f "$tmp" "$out"
     printf 'snapshot: %s bin targets -> %s (HEAD %s)\n' "$n" "${out#"$REPO_ROOT"/}" "${sha:0:9}"
