@@ -215,62 +215,56 @@ impl Kernel for MultiWarpQ6KGemvKernel {
                 let lane_is = ctx.div_u32(lane_id, 16);
                 let lane_is_f32 = ctx.cvt_f32_u32(lane_is);
 
-                for &(offset, n_idx_val, group_val, ds_even, ds_odd) in &offset_params {
-                    let offset_reg = ctx.mov_u32_imm(offset);
-                    let val_idx = ctx.add_u32_reg(lane_id, offset_reg);
+                // #5221: each lane needs only 6 distinct bytes per super-block,
+                // ql[64n + l], ql[64n + 32 + l] and qh[128 + 32n + l] for n in {0, 1}.
+                // Load each once (all coalesced across the warp) instead of once per
+                // offset (16 byte loads). The FMA order below is unchanged.
+                let lane_64 = ctx.cvt_u64_u32(lane_id);
+                let lane_addr = ctx.add_u64(sb_addr, lane_64);
+                let mut ql_bytes = Vec::with_capacity(4);
+                for off in [0u64, 32, 64, 96] {
+                    let o = ctx.mov_u64_imm(off);
+                    let a = ctx.add_u64(lane_addr, o);
+                    let byte = ctx.ld_global_u8(a);
+                    ql_bytes.push(ctx.cvt_u32_u8(byte));
+                }
+                let mut qh_bytes = Vec::with_capacity(2);
+                for off in [128u64, 160] {
+                    let o = ctx.mov_u64_imm(off);
+                    let a = ctx.add_u64(lane_addr, o);
+                    let byte = ctx.ld_global_u8(a);
+                    qh_bytes.push(ctx.cvt_u32_u8(byte));
+                }
 
+                let mask_0xf = ctx.mov_u32_imm(0xF);
+                let mask_0x3 = ctx.mov_u32_imm(0x3);
+                let four = ctx.mov_u32_imm(4);
+                let sb_k_base = ctx.mul_u32(sb_idx, Q6K_SUPER_BLOCK_SIZE);
+                let x_lane_idx = ctx.add_u32_reg(sb_k_base, lane_id);
+
+                for &(offset, n_idx_val, group_val, ds_even, ds_odd) in &offset_params {
                     // Select ds based on lane position (is=0 → ds_even, is=1 → ds_odd)
                     let ds_diff = ctx.sub_f32(ds[ds_odd], ds[ds_even]);
                     let ds_selected = ctx.fma_f32(lane_is_f32, ds_diff, ds[ds_even]);
 
-                    // l = lane_id (position within 32-value group)
-                    let l = lane_id;
+                    // ql byte = ql[64 * n + 32 * (group & 1) + l]; low nibble for
+                    // group < 2, high nibble for group >= 2
+                    let ql_byte_32 = ql_bytes[(2 * n_idx_val + (group_val & 1)) as usize];
+                    let ql_nibble = if group_val < 2 {
+                        ctx.and_u32(ql_byte_32, mask_0xf)
+                    } else {
+                        ctx.shr_u32(ql_byte_32, four)
+                    };
 
-                    let n_idx = ctx.mov_u32_imm(n_idx_val);
-                    let group = ctx.mov_u32_imm(group_val);
-
-                    // ql_byte_offset = 64 * n_idx + l + (32 * group_is_odd)
-                    let sixty_four = ctx.mov_u32_imm(64);
-                    let thirty_two = ctx.mov_u32_imm(32);
-                    let one_32 = ctx.mov_u32_imm(1);
-                    let n_idx_x64 = ctx.mul_u32_reg(n_idx, sixty_four);
-                    let ql_base = ctx.add_u32_reg(n_idx_x64, l);
-                    let group_is_odd = ctx.and_u32(group, one_32);
-                    let ql_offset_add = ctx.mul_u32_reg(group_is_odd, thirty_two);
-                    let ql_byte_offset = ctx.add_u32_reg(ql_base, ql_offset_add);
-
-                    // Load ql byte
-                    let ql_byte_offset_64 = ctx.cvt_u64_u32(ql_byte_offset);
-                    let ql_addr = ctx.add_u64(sb_addr, ql_byte_offset_64);
-                    let ql_byte = ctx.ld_global_u8(ql_addr);
-                    let ql_byte_32 = ctx.cvt_u32_u8(ql_byte);
-
-                    // Extract nibble: low if group < 2, high if group >= 2
-                    let group_div_2 = ctx.shr_u32(group, one_32);
-                    let four = ctx.mov_u32_imm(4);
-                    let nibble_shift = ctx.mul_u32_reg(group_div_2, four);
-                    let ql_shifted = ctx.shr_u32(ql_byte_32, nibble_shift);
-                    let mask_0xf = ctx.mov_u32_imm(0xF);
-                    let ql_nibble = ctx.and_u32(ql_shifted, mask_0xf);
-
-                    // qh_byte_offset = 32 * n_idx + l
-                    let n_idx_x32 = ctx.mul_u32_reg(n_idx, thirty_two);
-                    let qh_byte_offset = ctx.add_u32_reg(n_idx_x32, l);
-
-                    // Load qh byte (offset 128 + qh_byte_offset)
-                    let qh_base_offset = ctx.mov_u64_imm(128);
-                    let qh_base = ctx.add_u64(sb_addr, qh_base_offset);
-                    let qh_byte_offset_64 = ctx.cvt_u64_u32(qh_byte_offset);
-                    let qh_addr = ctx.add_u64(qh_base, qh_byte_offset_64);
-                    let qh_byte = ctx.ld_global_u8(qh_addr);
-                    let qh_byte_32 = ctx.cvt_u32_u8(qh_byte);
-
-                    // qh_bit_shift = 2 * group
-                    let two = ctx.mov_u32_imm(2);
-                    let qh_shift = ctx.mul_u32_reg(group, two);
-                    let qh_shifted = ctx.shr_u32(qh_byte_32, qh_shift);
-                    let mask_0x3 = ctx.mov_u32_imm(0x3);
-                    let qh_2bits = ctx.and_u32(qh_shifted, mask_0x3);
+                    // qh bits = (qh[32 * n + l] >> (2 * group)) & 3
+                    let qh_byte_32 = qh_bytes[n_idx_val as usize];
+                    let qh_2bits = if group_val == 0 {
+                        ctx.and_u32(qh_byte_32, mask_0x3)
+                    } else {
+                        let qh_shift = ctx.mov_u32_imm(2 * group_val);
+                        let qh_shifted = ctx.shr_u32(qh_byte_32, qh_shift);
+                        ctx.and_u32(qh_shifted, mask_0x3)
+                    };
 
                     // Combine: quant = ql_nibble | (qh_2bits << 4) - 32
                     let qh_shifted_up = ctx.shl_u32(qh_2bits, four);
@@ -281,10 +275,10 @@ impl Kernel for MultiWarpQ6KGemvKernel {
                     // Dequantize: val = ds_selected * quant
                     let dequant = ctx.mul_f32(ds_selected, quant_signed);
 
-                    // Load activation x[sb_idx * 256 + val_idx]
+                    // Load activation x[sb_idx * 256 + offset + l]
                     // GH-215 FIX: Bounds-check for non-256-aligned K dimensions.
-                    let sb_k_base = ctx.mul_u32(sb_idx, Q6K_SUPER_BLOCK_SIZE);
-                    let x_idx = ctx.add_u32_reg(sb_k_base, val_idx);
+                    let offset_reg = ctx.mov_u32_imm(offset);
+                    let x_idx = ctx.add_u32_reg(x_lane_idx, offset_reg);
                     let x_idx_64 = ctx.cvt_u64_u32(x_idx);
                     let x_bytes = ctx.mul_u64(x_idx_64, 4);
                     let x_addr = ctx.add_u64(x_ptr, x_bytes);
