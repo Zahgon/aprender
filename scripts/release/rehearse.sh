@@ -574,7 +574,7 @@ cpu_measured() { bash "$SCRIPT_DIR/release_lanes.sh" measured-cpu --cache "$1"; 
 # reason on stderr: a fetch or a reader read nothing, or no commit in the walk was measured by both. That night is
 # not_measured, and the count resets. rc 3 a caller error.
 pick_c() {
-    local g="" remote=origin cache="" rows line sha fp k=0 cre=$'^([0-9a-f]{40})\t(green|red)\t([0-9]+)$'
+    local g="" remote=origin cache="" rows line sha fp k=0 mc="" cc="" cre=$'^([0-9a-f]{40})\t(green|red)\t([0-9]+)$'
     local -A models=() cpu=()
     while [ $# -gt 0 ]; do
         case $1 in
@@ -607,9 +607,14 @@ pick_c() {
             printf 'pick: C %s (main~%s): models-crux %s, cleanroom-cpu %s\n' "$sha" "$k" "${models[$sha]}" "${cpu[$sha]}" >&2
             printf '%s\n' "$sha"; return 0
         fi
+        [ -n "$mc" ] || [ -z "${models[$sha]:-}" ] || mc="$sha (main~$k)"
+        [ -n "$cc" ] || [ -z "${cpu[$sha]:-}" ] || cc="$sha (main~$k)"
         k=$((k + 1))
     done <<< "$fp"
     echo "not_measured: no commit in main's newest $PICK_DEPTH first-parent commits was measured by both the models bundle (${#models[@]} commits) and an infra clean-room run (${#cpu[@]} commits)" >&2
+    # #5074: the crux producer and the clean-room each pick their own C, so name each side's newest C in the walk. Two
+    # named commits that differ is the split this pick cannot cross; a side named as none measured nothing in the walk.
+    echo "not_measured: the two sides measured different commits (#5074): models-crux newest ${mc:-none in the walk}, cleanroom-cpu newest ${cc:-none in the walk}" >&2
     return 2
 }
 
@@ -1386,6 +1391,9 @@ selftest_pick() {
     ev "$idxa" "$m5:not_measured" "$m3:red" "$s1:green" "$m1:green" || return 2
     CPU=$cpua pk c_is_the_newest_first_parent_commit_both_measured 0 "$m1" "pick: C $m1 (main~4): models-crux green, cleanroom-cpu red run 15"
     CPU=$cpua PICK_DEPTH=4 pk the_walk_is_bounded 2 "" "no commit in main's newest 4 first-parent commits was measured by both"
+    # #5074: crux measured m3 and m1, the clean-room measured m5 and m4 only: the not_measured line names both newest Cs.
+    CPU=$(printf '%s\tgreen\t41\n%s\tred\t42\n' "$m5" "$m4") pk a_split_c_is_named 2 "" "the two sides measured different commits (#5074): models-crux newest $m3 (main~2), cleanroom-cpu newest $m5 (main~0)"
+    CPU="" pk a_side_with_nothing_in_the_walk_is_named_none 2 "" "models-crux newest $m3 (main~2), cleanroom-cpu newest none in the walk"
     ev "$m5 red" "$m5:red" || return 2
     CPU=$(printf '%s\tgreen\t21' "$m5") pk a_red_models_bundle_on_the_head_is_c 0 "$m5" "pick: C $m5 (main~0): models-crux red, cleanroom-cpu green run 21"
     ev "$m1 green" || return 2
