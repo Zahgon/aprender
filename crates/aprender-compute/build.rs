@@ -93,7 +93,10 @@ fn main() {
         }
     };
 
-    let bindings: BindingFile = match serde_saphyr::from_str(&yaml_content) {
+    let bindings: BindingFile = match serde_saphyr::from_str_with_options(
+        &yaml_content,
+        serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary },
+    ) {
         Ok(b) => b,
         Err(e) => {
             println!(

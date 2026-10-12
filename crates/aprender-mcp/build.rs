@@ -76,7 +76,7 @@ mod codegen {
                 contract_path.display()
             )
         });
-        let parsed: ContractRoot = serde_saphyr::from_str(&yaml).unwrap_or_else(|e| {
+        let parsed: ContractRoot = serde_saphyr::from_str_with_options(&yaml, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary }).unwrap_or_else(|e| {
             panic!(
                 "FALSIFY-MCP-008: failed to parse {} as YAML: {e}",
                 contract_path.display()

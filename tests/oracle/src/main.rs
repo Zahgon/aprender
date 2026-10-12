@@ -72,7 +72,10 @@ fn oracle_pairs(data: &Path, shapes: &Path) -> Result<Vec<Pair>, String> {
         .iter()
         .map(|r| {
             (
-                r.focus_node().to_string().trim_matches(['<', '>']).to_string(),
+                r.focus_node()
+                    .to_string()
+                    .trim_matches(['<', '>'])
+                    .to_string(),
                 short_component(&r.constraint_component().to_string()),
             )
         })
@@ -85,7 +88,7 @@ fn oracle_pairs(data: &Path, shapes: &Path) -> Result<Vec<Pair>, String> {
 fn expected_pairs(yaml: &Path) -> Result<(String, Vec<Pair>), String> {
     let text = std::fs::read_to_string(yaml).map_err(|e| format!("{}: {e}", yaml.display()))?;
     let doc: serde_json::Value =
-        serde_saphyr::from_str(&text).map_err(|e| format!("{}: {e}", yaml.display()))?;
+        serde_saphyr::from_str_with_options(&text, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary }).map_err(|e| format!("{}: {e}", yaml.display()))?;
     let id = doc
         .get("id")
         .and_then(|v| v.as_str())
@@ -221,8 +224,11 @@ fn main() {
         "corpus": corpus,
     });
     let path = oracle_dir.join("differential.json");
-    std::fs::write(&path, format!("{}\n", serde_json::to_string_pretty(&out).expect("json")))
-        .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    std::fs::write(
+        &path,
+        format!("{}\n", serde_json::to_string_pretty(&out).expect("json")),
+    )
+    .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     println!(
         "ont-oracle: {} case(s), {} disagreement(s) → {}",
         cases,
@@ -256,9 +262,10 @@ fn pv_violations(v: &serde_json::Value) -> Vec<Pair> {
             continue;
         };
         let focus = left.split_whitespace().next().unwrap_or_default();
-        let focus = focus
-            .strip_prefix("ont:")
-            .map_or_else(|| focus.to_string(), |l| format!("https://ont.paiml.dev/v1alpha1/{l}"));
+        let focus = focus.strip_prefix("ont:").map_or_else(
+            || focus.to_string(),
+            |l| format!("https://ont.paiml.dev/v1alpha1/{l}"),
+        );
         let Some((before_colon, _)) = right.split_once("): ") else {
             continue;
         };

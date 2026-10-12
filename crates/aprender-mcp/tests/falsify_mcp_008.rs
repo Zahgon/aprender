@@ -140,7 +140,7 @@ fn load_contract_tools() -> Vec<Value> {
     let path = contract_path();
     let yaml =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    let root: Value = serde_saphyr::from_str(&yaml)
+    let root: Value = serde_saphyr::from_str_with_options(&yaml, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary })
         .unwrap_or_else(|e| panic!("parse {} as YAML: {e}", path.display()));
     root.get("tools")
         .and_then(|v| v.as_array())

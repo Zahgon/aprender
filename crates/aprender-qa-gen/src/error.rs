@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn test_error_from_serde_saphyr() {
         let yaml_err: serde_saphyr::Error =
-            serde_saphyr::from_str::<i32>("not: [yaml").unwrap_err();
+            serde_saphyr::from_str_with_options::<i32>("not: [yaml", serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary }).unwrap_err();
         let err: Error = yaml_err.into();
         assert!(matches!(err, Error::YamlError(_)));
         assert!(err.to_string().contains("YAML error"));

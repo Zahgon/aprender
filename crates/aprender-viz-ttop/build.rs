@@ -27,7 +27,10 @@ fn process_contract(path: &std::path::Path) -> (usize, usize) {
         Ok(c) => c,
         Err(_) => return (0, 0),
     };
-    let yaml: ContractYaml = match serde_saphyr::from_str(&content) {
+    let yaml: ContractYaml = match serde_saphyr::from_str_with_options(
+        &content,
+        serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary },
+    ) {
         Ok(y) => y,
         Err(_) => return (0, 0),
     };
@@ -40,7 +43,10 @@ fn process_contract(path: &std::path::Path) -> (usize, usize) {
             pre += eq.preconditions.len();
         }
         if !eq.postconditions.is_empty() {
-            println!("cargo:rustc-env={key}_POST_COUNT={}", eq.postconditions.len());
+            println!(
+                "cargo:rustc-env={key}_POST_COUNT={}",
+                eq.postconditions.len()
+            );
             post += eq.postconditions.len();
         }
     }
