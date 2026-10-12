@@ -1,5 +1,5 @@
 metadata:
-  version: 1.1.0
+  version: 1.2.0
   created: '2026-04-08'
   author: PAIML Engineering
   registry: true
@@ -148,6 +148,22 @@ falsification_tests:
   counter_example_classes:
   - "macOS: no /proc/meminfo and no sysctl hw.memsize fallback (#2568)"
   - "a cfg!(target_os = ...) guard added around the assertion, which hides exactly the broken platform"
+
+
+- id: F-CHAOS-008
+  rule: OOM guard counts a quantized tensor's elements from TRAITS, never a table of its own (#3418)
+  prediction: |
+    For every ggml id that trueno_quant::TRAITS sizes, one block of type_size
+    bytes is estimated as blck_size elements, so estimated F32 bytes cannot
+    undercount. Before the derivation the guard's own 8-arm table undercounts:
+    Q4_0 (id 2) is read as 36 B/32 and every unlisted quant falls to 4 B/element,
+    which lets an over-budget eager dequant through (fail OPEN).
+  test: cargo test -p aprender-serve --lib contract_gate::tests::estimate_elements_counts_one_block_per_traits_row_3418
+  if_fails: "the GH-478 OOM guard sizes a quant type differently from the upstream-extracted TRAITS table"
+  ship_blocking: true
+  counter_example_classes:
+  - "id 2 sized as Q8_0 (36 B/32) when ggml id 2 is Q4_0 (18 B/32): half the elements"
+  - "an unlisted quant id (Q5_K 176 B/256) falling to the F32 arm: ~5.8x undercount"
 
 proof_obligations:
 - id: AQC-BND-001

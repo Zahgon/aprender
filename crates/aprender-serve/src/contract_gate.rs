@@ -483,16 +483,16 @@ fn dequant_verdict(
 }
 
 /// Estimate number of elements from byte size and GGML dtype.
+///
+/// F-CHAOS-008 (#3418): read from `trueno_quant::TRAITS`, the upstream-extracted
+/// table, so every sized id counts `type_size` bytes as `blck_size` elements.
+/// APR bytes 8/9 (GH-239: GGML Q8_0/Q8_1 or APR-native Q4/Q8) take the GGML
+/// reading, which counts MORE elements than the APR one: the guard fails closed.
 fn estimate_elements(byte_size: usize, dtype: u8) -> usize {
-    match dtype {
-        12 => byte_size / 144 * 256, // Q4_K: 144 bytes per 256 elements
-        14 => byte_size / 210 * 256, // Q6_K: 210 bytes per 256 elements
-        2 => byte_size / 36 * 32,    // Q8_0: 36 bytes per 32 elements
-        1 => byte_size / 2,          // F16: 2 bytes per element
-        30 => byte_size / 2,         // BF16: 2 bytes per element
-        8 => byte_size / 5 * 4,      // APR Q4: 5 bytes per 4 elements
-        9 => byte_size / 5 * 4,      // APR Q8: 5 bytes per 4 elements
-        _ => byte_size / 4,          // F32: 4 bytes per element
+    match trueno_quant::TRAITS.get(usize::from(dtype)) {
+        Some(t) if t.blck_size > 0 => byte_size / t.type_size as usize * t.blck_size as usize,
+        // A removed or unknown id has no layout; count it as F32, as before.
+        _ => byte_size / 4,
     }
 }
 
@@ -1074,6 +1074,29 @@ mod tests {
     #[test]
     fn test_estimate_elements_bf16() {
         assert_eq!(estimate_elements(200, 30), 100);
+    }
+
+    /// F-CHAOS-008 (#3418): one block of every TRAITS-sized id is `blck_size`
+    /// elements. An undercount here lets the GH-478 guard admit an OOM.
+    #[test]
+    fn estimate_elements_counts_one_block_per_traits_row_3418() {
+        let mut wrong = Vec::new();
+        for (id, t) in trueno_quant::TRAITS.iter().enumerate() {
+            if t.blck_size == 0 {
+                continue;
+            }
+            let id = u8::try_from(id).expect("43 ids fit u8");
+            let got = estimate_elements(t.type_size as usize, id);
+            if got != t.blck_size as usize {
+                wrong.push(format!("{id} {}: {got} != {}", t.name, t.blck_size));
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "{} ids miscounted:\n{}",
+            wrong.len(),
+            wrong.join("\n")
+        );
     }
 
     #[test]
