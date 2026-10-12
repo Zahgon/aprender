@@ -12,11 +12,16 @@
 # read from where it already lives:
 #   V         the argument (X.Y.Z), refused otherwise
 #   T         "v$V"
-#   AP        the train's state directory: <main checkout>/target/release-train/<T>,
-#             where <main checkout> is the directory holding the repo's COMMON git dir,
-#             so every worktree of the repo resolves the SAME AP (prepare_bump.sh writes
-#             release_notes.md there and autopilot.sh reads it). target/ is ignored.
-#             RELEASE_AP overrides it at run time; it is never a literal in the tree.
+#   AP        the train's state directory: ${XDG_STATE_HOME:-$HOME/.local/state}/aprender/
+#             release-train/<T>, OUTSIDE every checkout, and the same for every worktree on
+#             the host (prepare_bump.sh writes release_notes.md there and autopilot.sh reads
+#             it). RELEASE_AP overrides it at run time; it is never a literal in the tree.
+#             #5198: it used to be <main checkout>/target/release-train/<T>. The release
+#             worktree is $AP/wt, so cargo there read the main checkout's gitignored
+#             .cargo/config.toml, whose [patch.crates-io] entries rewrite the lock file,
+#             and the models step's --locked build failed on a sha that builds clean
+#             outside the tree. release_state_dir_check refuses a state dir under any
+#             .cargo config carrying [patch], the default and RELEASE_AP alike.
 #   milestone the one milestone titled exactly "$V"            (release_milestone_number)
 #   epic      the one `epic`-labelled item in that milestone titled
 #             "EPIC: release train $V ..."                     (release_epic_number;
@@ -33,28 +38,54 @@
 RELEASE_REPO=paiml/aprender
 RELEASE_INFRA=paiml/infra
 
-# release_state_root <repo-root> -> the main checkout (parent of the common .git dir), or the root itself
-release_state_root() {
-    local root=$1 common=""
-    common=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || common=""
-    case "$common" in
-        */.git) printf '%s\n' "${common%/.git}" ;;
-        *)      printf '%s\n' "$root" ;;
+# release_state_base -> the directory the default state dirs live under; rc 2 when neither
+# XDG_STATE_HOME nor HOME names an absolute path (a relative base would land in the cwd, a checkout)
+release_state_base() {
+    local base=${XDG_STATE_HOME:-}
+    [ -n "$base" ] || { [ -n "${HOME:-}" ] && base="$HOME/.local/state"; }
+    case "$base" in
+        /*) printf '%s/aprender/release-train\n' "$base" ;;
+        *)  printf 'release: neither XDG_STATE_HOME nor HOME is an absolute path; set RELEASE_AP\n' >&2; return 2 ;;
     esac
 }
 
-# release_params <version> [<repo-root>] -> sets V T AP REPO INFRA; rc 2 on a bad version
+# release_state_dir_check <dir> -> rc 2 naming the file when a .cargo/config.toml or .cargo/config
+# in <dir> or any ancestor carries a [patch] table (#5198). cargo reads every such file above
+# its cwd, and the release worktree is <dir>/wt, so a patch there rewrites Cargo.lock and every
+# --locked build fails. $CARGO_HOME's own config is exempt: cargo reads it from any cwd, so a
+# state dir cannot escape it and it is not what moving the dir is for.
+release_state_dir_check() {
+    local d cargo_home f
+    d=$(cd -P -- "$1" 2>/dev/null && pwd) || { printf 'release: state dir %s does not resolve\n' "$1" >&2; return 2; }
+    cargo_home=$(cd -P -- "${CARGO_HOME:-${HOME:-/nonexistent}/.cargo}" 2>/dev/null && pwd) || cargo_home=""
+    while :; do
+        if [ "$d/.cargo" != "$cargo_home" ]; then
+            for f in "$d/.cargo/config.toml" "$d/.cargo/config"; do
+                [ -f "$f" ] && grep -qE '^[[:space:]]*\[patch' "$f" && {
+                    printf 'release: %s carries a [patch] table above the state dir %s; cargo would read it in %s/wt and --locked would fail (#5198). Set RELEASE_AP outside it.\n' "$f" "$1" "$1" >&2
+                    return 2
+                }
+            done
+        fi
+        [ "$d" = / ] && return 0
+        d=$(dirname -- "$d")
+    done
+}
+
+# release_params <version> [<repo-root>] -> sets V T AP REPO INFRA; rc 2 on a bad version or state dir.
+# <repo-root> is accepted for the callers that pass it; the state dir no longer derives from it.
 release_params() {
-    local v=${1:-} root=${2:-}
+    local v=${1:-} base
     [[ $v =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
         || { printf 'release: version "%s" is not X.Y.Z -- pass the version being cut as the first argument\n' "$v" >&2; return 2; }
-    [ -n "$root" ] || root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" || return 2
     V=$v
     T="v$V"
     REPO=$RELEASE_REPO
     INFRA=$RELEASE_INFRA
-    AP="${RELEASE_AP:-$(release_state_root "$root")/target/release-train/$T}"
+    if [ -n "${RELEASE_AP:-}" ]; then AP=$RELEASE_AP
+    else base=$(release_state_base) || return 2; AP="$base/$T"; fi
     mkdir -p "$AP" || { printf 'release: cannot create the state dir %s\n' "$AP" >&2; return 2; }
+    release_state_dir_check "$AP" || return 2
     return 0
 }
 
