@@ -1,5 +1,5 @@
 metadata:
-  version: 1.6.0
+  version: 1.7.0
   created: '2026-09-20'
   author: PAIML Engineering
   description: |
@@ -44,7 +44,7 @@ metadata:
   - 'GitHub #3418 (serve sizes from TRAITS, one table), #3430 (M1), #3431 (M2 reconciliation), #3421 (epic), #3563 (pin-derived artifacts, general case)'
 
 name: ggml-type
-version: 1.6.0
+version: 1.7.0
 scope: aprender-quant (trueno_quant) ggml tensor-type enum and TRAITS table
 
 description: |
@@ -290,6 +290,22 @@ falsification_tests:
     Measured 2026-10-12 on la-74/3418 15c70af23, before the change: RED on
     the 1-D check (the Q4_K arm drops the fifth bit: 315.5 where Q5_K reads
     811.5). GREEN after; each of the two arms, reverted alone, turns it RED.
+- id: FT-GGMLT-012
+  rule: every quantized dtype byte the APR writer emits reaches its own decoder in the APR loader (#3418)
+  prediction: |
+    every_byte_the_apr_writer_emits_reaches_its_own_decoder_3418
+    (aprender-serve lib) checks that dequant_by_dtype decodes 128 as AprQ4
+    (dequantize_apr_q4_native), 129 as AprQ8 (dequantize_apr_q8_native),
+    10 as Q2_K and 11 as Q3_K (crate::quantize::dequantize_q2_k /
+    dequantize_q3_k), with the Q2_K and Q3_K super-blocks sized from the one
+    ggml table. GREEN once each byte has its own arm; removing any of the
+    four arms sends that byte to the F32 arm and turns it RED.
+  test: cargo test -p aprender-serve --lib every_byte_the_apr_writer_emits_reaches_its_own_decoder_3418
+  if_fails: 'an APR tensor written as AprQ4, AprQ8, Q2_K or Q3_K is read as raw little-endian F32 bytes.'
+  evidence: |
+    Measured 2026-10-12 on la-74/3418 b8e2f67d3, before the change: RED on
+    the first check (a 64-value AprQ4 tensor came back as 9 F32 values).
+    GREEN after; each of the four arms, removed alone, turns it RED.
 
 kani_harnesses:
 - id: KANI-GGMLT-001

@@ -55,6 +55,32 @@ fn dequant_q6k_tensor(tensor_data: &[u8], dims: &[usize]) -> Vec<f32> {
     }
 }
 
+/// #3418: a 256-element k-quant tensor whose super-block size comes from the
+/// one ggml table, with rows padded to 256 (GH-202) decoded row by row.
+fn dequant_superblock_tensor(
+    tensor_data: &[u8],
+    dims: &[usize],
+    ggml_id: u32,
+    decode: fn(&[u8]) -> crate::error::Result<Vec<f32>>,
+) -> Vec<f32> {
+    let num_elements: usize = dims.iter().product();
+    let Some(block_bytes) = crate::gguf::ggml_type_table::traits(ggml_id).map(|t| t.type_size)
+    else {
+        return vec![0.0; num_elements];
+    };
+    if dims.len() == 2 && !dims[1].is_multiple_of(256) {
+        dequant_perrow(tensor_data, dims, 256, block_bytes, |block, out| {
+            if let Ok(values) = decode(block) {
+                out.copy_from_slice(&values);
+            }
+        })
+    } else {
+        let mut values = decode(tensor_data).unwrap_or_else(|_| vec![0.0; num_elements]);
+        values.resize(num_elements, 0.0);
+        values
+    }
+}
+
 /// Dequantize a single tensor's raw bytes based on GGML dtype.
 /// GH-191: Match on GGML dtype values written by converter.
 /// GH-88: Added Q4_0, Q4_1, Q5_0, Q5_1 support for mixed-quantization GGUF imports.
@@ -75,6 +101,9 @@ fn dequant_by_dtype(tensor_data: &[u8], dims: &[usize], dtype: u8) -> Vec<f32> {
         12 => dequant_q4k_tensor(tensor_data, dims),
         13 => dequant_q5k_tensor(tensor_data, dims),
         14 => dequant_q6k_tensor(tensor_data, dims),
+        // #3418: Q2_K and Q3_K have decoders; they no longer fall to the F32 arm.
+        10 => dequant_superblock_tensor(tensor_data, dims, 10, crate::quantize::dequantize_q2_k),
+        11 => dequant_superblock_tensor(tensor_data, dims, 11, crate::quantize::dequantize_q3_k),
         // GH-239: dtype=8 is ambiguous — either GGML Q8_0 or APR Q4 native.
         8 => {
             let num_elements: usize = dims.iter().product();
@@ -89,6 +118,10 @@ fn dequant_by_dtype(tensor_data: &[u8], dims: &[usize], dtype: u8) -> Vec<f32> {
             let num_elements: usize = dims.iter().product();
             dequantize_apr_q8_native(tensor_data, num_elements)
         },
+        // #3418: the ids the APR writer emits today (GH-438); 8 and 9 above are
+        // the legacy ids for the same two layouts.
+        128 => dequantize_apr_q4_native(tensor_data, dims.iter().product()),
+        129 => dequantize_apr_q8_native(tensor_data, dims.iter().product()),
         1 => tensor_data
             .as_chunks::<2>()
             .0
@@ -627,5 +660,66 @@ mod q5k_arm_tests_3418 {
         };
         assert!(lookup.get_q4k("q4k").is_some(), "Q4_K bytes must reach the Q4_K kernel");
         assert!(lookup.get_q4k("q5k").is_none(), "Q5_K bytes reached the Q4_K kernel");
+    }
+}
+
+/// FT-GGMLT-012 (#3418): every dtype byte the APR writer emits for a
+/// quantized tensor reaches its own decoder. Before this, 128 (AprQ4),
+/// 129 (AprQ8), 10 (Q2_K) and 11 (Q3_K) fell through to the F32 arm and
+/// were read as raw little-endian floats.
+#[cfg(test)]
+mod apr_writer_bytes_tests_3418 {
+    use super::dequant_by_dtype;
+    use crate::apr_transformer::dequant::{dequantize_apr_q4_native, dequantize_apr_q8_native};
+
+    fn pattern(len: usize) -> Vec<u8> {
+        (0..len).map(|i| ((i * 37 + 11) % 256) as u8).collect()
+    }
+
+    /// `n` blocks of `block_bytes`, each opening with the f16 scale 1.0.
+    fn blocks(n: usize, block_bytes: usize) -> Vec<u8> {
+        let mut data = pattern(n * block_bytes);
+        for b in data.chunks_exact_mut(block_bytes) {
+            b[..2].copy_from_slice(&[0x00, 0x3C]);
+        }
+        data
+    }
+
+    fn type_size(id: u32) -> usize {
+        crate::gguf::ggml_type_table::traits(id)
+            .expect("id is in the one ggml table")
+            .type_size
+    }
+
+    #[test]
+    fn every_byte_the_apr_writer_emits_reaches_its_own_decoder_3418() {
+        // AprQ4 = 128: per-32 block [f16 scale][16 nibble bytes].
+        let q4 = blocks(2, 18);
+        assert_eq!(
+            dequant_by_dtype(&q4, &[64], 128),
+            dequantize_apr_q4_native(&q4, 64),
+            "AprQ4 (128) was not decoded as AprQ4"
+        );
+
+        // AprQ8 = 129: [f32 scale][i8 x N].
+        let mut q8 = 0.5f32.to_le_bytes().to_vec();
+        q8.extend(pattern(16));
+        assert_eq!(
+            dequant_by_dtype(&q8, &[16], 129),
+            dequantize_apr_q8_native(&q8, 16),
+            "AprQ8 (129) was not decoded as AprQ8"
+        );
+
+        // Q2_K = 10 and Q3_K = 11: one 256-element super-block each, sized
+        // from the one ggml table.
+        let q2 = pattern(type_size(10));
+        let want_q2 = crate::quantize::dequantize_q2_k(&q2).expect("one Q2_K super-block");
+        assert_eq!(want_q2.len(), 256);
+        assert_eq!(dequant_by_dtype(&q2, &[256], 10), want_q2, "Q2_K (10) was not decoded as Q2_K");
+
+        let q3 = pattern(type_size(11));
+        let want_q3 = crate::quantize::dequantize_q3_k(&q3).expect("one Q3_K super-block");
+        assert_eq!(want_q3.len(), 256);
+        assert_eq!(dequant_by_dtype(&q3, &[256], 11), want_q3, "Q3_K (11) was not decoded as Q3_K");
     }
 }
