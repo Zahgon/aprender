@@ -232,6 +232,11 @@ fn escape_scan_sees_a_planted_path() {
     ] {
         assert_eq!(escapes(split), vec![first.to_string()], "{split}");
     }
+    // Multibyte text before a splice: the offset is a byte offset, so the line map counts bytes.
+    let one = "é\ninclude!(\"x\");";
+    assert_eq!(escapes(one), vec!["include!(\"x\");".to_string()], "{one}");
+    let many = format!("{}\ninclude!(\nx);\nlet y = 1;", "é".repeat(50));
+    assert_eq!(escapes(&many), vec!["include!(".to_string()], "{many}");
     for clean in [
         "use super::error_model::{ErrorModel, Refusal};",
         "use crate::kernel_oracle::oracle;",
