@@ -28,12 +28,12 @@ DIRTY_FLAG="--allow""-dirty"
 BUILD_WORD="car""go"   # split so guard_tree files this checker with the no-cargo guards: it runs no build tool
 SSH_WORD="ss""h "
 PUBLISH_RE='(cargo|make)[[:space:]]+'"publi""sh"
-# H15 skips exactly this file by path (C314, handoff/c314-a3-laya-lt0-lt1a.md): it must name
+# H15 skips exactly this file by path: it must name
 # the forbidden needles to plant them. The needle itself stays a plain substring.
 H15_SELF="scripts/check_laya_train_rules.sh"
 
 LT1_RECEIPT="evidence/laya-train/lt-1/receipt.json"
-# The ONE path H4 exempts (Q5 ruling, handoff/quorum-a3-laya-q5-lt1-order.md): the LT-1
+# The ONE path H4 exempts: the LT-1
 # proxy-layer probe is measurement, not model code, and must merge before its receipt.
 LT1_PROBE="crates/aprender-train/examples/laya_engine_probe.rs"
 LT9_DECL="evidence/laya-train/lt-9/declaration.json"

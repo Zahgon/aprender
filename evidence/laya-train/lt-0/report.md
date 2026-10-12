@@ -1,6 +1,6 @@
 # LT-0: first reads (APR-LAYA-TRAIN-001)
 
-Measured 2026-10-10, 10:50Z to 11:00Z, on `noah-Lambda-Vector` (48 threads, 125 GiB), by the
+Measured 2026-10-10, 10:50Z to 11:00Z, on a 48-thread, 125 GiB workstation, by the
 worker `laya-train` (claude-opus-5-5). Nothing was built or run except the rule checker's
 self-test. `main` = `e39f91a65e` (committed 2026-10-10T08:04:52Z). PR heads were read from
 `refs/pull/4941/head` = `e7730a3a4c` and `refs/pull/4634/head` = `dad7f6a5e0`, read-only.
@@ -136,8 +136,8 @@ So LT-7 feeds the judge the plants of `device_recorded`, and the partial ones of
 ## (e) How a command runs on a CPU pool host today
 
 Nothing fits. No document defines "CPU pool host" or names one. Every dispatchable
-self-hosted workflow runs on a `clean-room` runner, `intel,perf-solo` (the clean-room-16
-box) or a GPU runner; no make target dispatches remote work (the nearest pattern is
+self-hosted workflow runs on a clean-room runner, a performance
+runner or a GPU runner; no make target dispatches remote work (the nearest pattern is
 `nightly-train-run`, a local `systemctl --user` unit). Per the spec, LT-1's PR adds one
 workflow that starts on `workflow_dispatch` only, and its runner label is question Q2.
 
@@ -159,11 +159,11 @@ RED. `--self-test` plants 35 cases in a throwaway repository (each rule's mutant
 named RED, each clean case PASS) and runs in `workspace-test` through
 `ci/explicit-test-commands.d/795-laya-train-rules-self-test.cmd`. Two readings of the spec,
 stated so they can be overruled:
-- H4: a head that adds LT-1's own receipt may touch `crates/`. One path is exempt by the Q5
-  ruling (handoff/quorum-a3-laya-q5-lt1-order.md): `crates/aprender-train/examples/laya_engine_probe.rs`,
+- H4: a head that adds LT-1's own receipt may touch `crates/`. One path is exempt:
+  `crates/aprender-train/examples/laya_engine_probe.rs`,
   the proxy probe, which must merge before its receipt can exist; the arm prints the exempt count.
 - H15: the needles are plain substrings, so every form of an ssh call is a hit. Exactly one
-  path is skipped (C314, handoff/c314-a3-laya-lt0-lt1a.md): `scripts/check_laya_train_rules.sh`,
+  path is skipped: `scripts/check_laya_train_rules.sh`,
   which must name the needles to plant them; the arm prints the skipped path.
 - H5: the chosen engine is read from `"engine"` in LT-1's receipt on the base.
 
