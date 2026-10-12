@@ -8,14 +8,16 @@
 
 use std::path::{Path, PathBuf};
 
-/// Text that splices source or macros in from outside the scanned files, matched with all
-/// whitespace removed: `include!`-family macros, `#[path = …]` (also inside `cfg_attr`),
-/// `#[macro_use]` and `extern crate`.
-const SPLICES: [&str; 6] = [
+/// Text that splices source or macros in from outside the scanned files, matched on the whole file
+/// with all whitespace (line breaks included) removed: `include!`-family macros, `#[path = …]`
+/// (also raw `r"…"`/`r#"…"#`, and inside `cfg_attr`), `#[macro_use]` and `extern crate`.
+const SPLICES: [&str; 8] = [
     "include!",
     "include_str!",
     "include_bytes!",
     "path=\"",
+    "path=r\"",
+    "path=r#",
     "macro_use",
     "externcrate",
 ];
@@ -52,13 +54,10 @@ fn escapes(src: &str) -> Vec<String> {
     let lines: Vec<&str> = src.lines().map(code_of).collect();
     let code = lines.join("\n");
     let line_at = |i: usize| code[..i].matches('\n').count();
-    let mut hits: Vec<bool> = lines
-        .iter()
-        .map(|line| {
-            let squeezed: String = line.split_whitespace().collect();
-            SPLICES.iter().any(|s| squeezed.contains(s))
-        })
-        .collect();
+    let mut hits = vec![false; lines.len()];
+    for line in splice_lines(&code) {
+        hits[line] = true;
+    }
     let mut pos = 0;
     while let Some(off) = code[pos..].find("::") {
         let i = pos + off;
@@ -93,6 +92,30 @@ fn escapes(src: &str) -> Vec<String> {
         .filter(|(_, hit)| *hit)
         .map(|(line, _)| line.trim().to_string())
         .collect()
+}
+
+/// The line each splice starts on, found in `code` with every whitespace character removed, so a
+/// splice broken across lines (`include\n!(…)`, `extern\ncrate x;`) is still one splice.
+fn splice_lines(code: &str) -> Vec<usize> {
+    let mut squeezed = String::new();
+    let mut line_of = Vec::new();
+    let mut line = 0;
+    for c in code.chars() {
+        if c == '\n' {
+            line += 1;
+        }
+        if !c.is_whitespace() {
+            squeezed.push(c);
+            line_of.extend(std::iter::repeat_n(line, c.len_utf8()));
+        }
+    }
+    let mut found: Vec<usize> = SPLICES
+        .iter()
+        .flat_map(|s| squeezed.match_indices(s).map(|(i, _)| line_of[i]))
+        .collect();
+    found.sort_unstable();
+    found.dedup();
+    found
 }
 
 /// A lowercase path segment is a crate root iff nothing path-like precedes it.
@@ -186,11 +209,29 @@ fn escape_scan_sees_a_planted_path() {
         "#[cfg_attr(test, path = \"../gguf/mod.rs\")]",
         "#[macro_use]",
         "trueno::dispatch!(x);",
+        "#[path = r\"../quantize/mod.rs\"]",
+        "#[path = r#\"../quantize/mod.rs\"#]",
     ] {
         assert_eq!(escapes(planted), vec![planted.to_string()], "{planted}");
     }
-    let split = "use crate\n    ::quantize::fused_q4k_parallel_matvec;";
-    assert_eq!(escapes(split), vec!["use crate".to_string()], "{split}");
+    // Split across lines: the escape is reported on the line it starts on.
+    for (split, first) in [
+        (
+            "use crate\n    ::quantize::fused_q4k_parallel_matvec;",
+            "use crate",
+        ),
+        ("include\n!(\"../quantize/fused.rs\");", "include"),
+        (
+            "const K: &str = include_str\n    !(\"../gguf/mod.rs\");",
+            "const K: &str = include_str",
+        ),
+        ("#[path\n= \"../quantize/mod.rs\"]", "#[path"),
+        ("#[path =\n    r\"../quantize/mod.rs\"]", "#[path ="),
+        ("extern\ncrate trueno;", "extern"),
+        ("#[macro\n_use]", "#[macro"),
+    ] {
+        assert_eq!(escapes(split), vec![first.to_string()], "{split}");
+    }
     for clean in [
         "use super::error_model::{ErrorModel, Refusal};",
         "use crate::kernel_oracle::oracle;",
