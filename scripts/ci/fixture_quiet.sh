@@ -23,10 +23,19 @@
 # The exit status is the command's own: a BAD row still turns the step red.
 #
 #   scripts/ci/fixture_quiet.sh <label> -- <command> [args...]
-#   scripts/ci/fixture_quiet.sh --self-test     # case table
+#   scripts/ci/fixture_quiet.sh --self-test     # case table, then the wiring check on this repo's workflows
+#   scripts/ci/fixture_quiet.sh --check-wiring [WORKFLOW.yml...]
 #
 # The ci.yml step wraps the driver's case table with it; the step keeps its
 # name and its verdict. Rust port of the driver: #4610 item 2, with a7.
+#
+# WHERE IT MAY BE WIRED (#5063)
+# -----------------------------
+# Only around `fat_driver.py self-test`. Wrapped around the driver's real `run`
+# or `wait` step, it would turn real section failures into fixture text and the
+# run would stay quiet. --check-wiring is RED on a self-test step that is not
+# wrapped and on a run or wait step that is; --self-test runs it on this repo's
+# workflows, so the x86-main step that runs the case table also runs the check.
 
 set -euo pipefail
 
@@ -73,6 +82,32 @@ quiet() {
     printf '::%s::\n' "$tok"
     printf '%s: end of case-table text, rc=%s\n' "$label" "$rc"
     return "$rc"
+}
+
+# check_wiring WORKFLOW... -> one FAIL line per misplaced wrapper. rc 0 clean;
+# 1 a FAIL; 2 a file not readable, or no fat_driver.py self-test step at all (a
+# check that found nothing to check is not clean). A step is a `- ` item and the
+# more-indented lines under it; comment lines and trailing ` #` comments are not
+# read, so a comment naming the wrapper wraps nothing.
+check_wiring() {
+    local f out
+    if [ "$#" -eq 0 ]; then
+        echo "fixture_quiet.sh: --check-wiring needs a workflow file" >&2
+        return 2
+    fi
+    for f in "$@"; do
+        [ -r "$f" ] || { echo "FAIL $f: not readable"; return 2; }
+    done
+    if ! out=$(awk -f "$SCRIPT_DIR/fixture_quiet_wiring.awk" "$@"); then
+        echo "FAIL awk exited non-zero on the workflows"
+        return 2
+    fi
+    if grep -qx NONE <<<"$out"; then
+        grep -vx NONE <<<"$out" || true
+        echo "FAIL no fat_driver.py self-test step in: $*"
+        return 2
+    fi
+    [ -z "$out" ] || { printf '%s\n' "$out"; return 1; }
 }
 
 # ---------------------------------------------------------------------------
@@ -146,12 +181,73 @@ self_test() {
     rc=0; out=$(quiet "" -- true 2>/dev/null) || rc=$?
     row "an empty label is a usage error (rc 2)" "$([ "$rc" -eq 2 ] && echo 0 || echo 1)"
 
+    # #5063: the wiring check. Each row is one workflow, read through a process
+    # substitution so the table writes no file. w NAME TEXT -> check_wiring's rc.
+    w() { local r=0; check_wiring <(printf '%s\n' "$2") > /dev/null || r=$?; echo "$r"; }
+    local good='    steps:
+      # #4596: fixture_quiet.sh shows them as labelled text.
+      - name: fat_driver case table must still turn RED
+        run: setsid --wait bash scripts/ci/fixture_quiet.sh "fat_driver self-test" -- python3 scripts/ci/fat_driver.py self-test
+      - name: Sections
+        env:
+          A: b
+        run: >-
+          python3 scripts/ci/fat_driver.py run
+          --sections a
+      - name: wait
+        id: wait
+        if: always()
+        run: python3 scripts/ci/fat_driver.py wait --results r.json'
+    row "wiring: the shape ci.yml uses is clean" "$([ "$(w good "$good")" = 0 ] && echo 0 || echo 1)"
+    row "wiring: RED on an unwrapped self-test" \
+        "$([ "$(w r1 '      - name: t
+        run: python3 scripts/ci/fat_driver.py self-test')" = 1 ] && echo 0 || echo 1)"
+    row "wiring: RED on a wrapped run (one line)" \
+        "$([ "$(w r2 "$good
+      - run: bash scripts/ci/fixture_quiet.sh x -- python3 scripts/ci/fat_driver.py run --sections a")" = 1 ] && echo 0 || echo 1)"
+    row "wiring: RED on a wrapped wait" \
+        "$([ "$(w r3 "$good
+      - name: w
+        run: bash scripts/ci/fixture_quiet.sh x -- python3 scripts/ci/fat_driver.py wait")" = 1 ] && echo 0 || echo 1)"
+    row "wiring: RED on a wrapped run folded over lines" \
+        "$([ "$(w r4 "$good
+      - name: s
+        run: >-
+          bash scripts/ci/fixture_quiet.sh x --
+          python3 scripts/ci/fat_driver.py run
+          --sections a")" = 1 ] && echo 0 || echo 1)"
+    row "wiring: RED on a self-test whose only wrapper is a comment line" \
+        "$([ "$(w r5 '      - name: t
+        run: |
+          # fixture_quiet.sh
+          python3 scripts/ci/fat_driver.py self-test')" = 1 ] && echo 0 || echo 1)"
+    row "wiring: RED on a self-test whose only wrapper is a trailing comment" \
+        "$([ "$(w r6 '      - name: t
+        run: python3 scripts/ci/fat_driver.py self-test # fixture_quiet.sh')" = 1 ] && echo 0 || echo 1)"
+    row "wiring: a wrapped self-test does not cover the bare run in the next step" \
+        "$([ "$(w c1 '      - run: bash scripts/ci/fixture_quiet.sh x -- python3 scripts/ci/fat_driver.py self-test
+      - run: python3 scripts/ci/fat_driver.py run')" = 0 ] && echo 0 || echo 1)"
+    row "wiring: no self-test step anywhere is not clean (rc 2)" \
+        "$([ "$(w n1 '      - run: python3 scripts/ci/fat_driver.py run')" = 2 ] && echo 0 || echo 1)"
+    rc=0; check_wiring "$REPO_ROOT/.github/workflows/absent-5063.yml" > /dev/null || rc=$?
+    row "wiring: an unreadable workflow is not clean (rc 2)" "$([ "$rc" -eq 2 ] && echo 0 || echo 1)"
+    rc=0; out=$(check_wiring "$REPO_ROOT"/.github/workflows/*.yml) || rc=$?
+    [ "$rc" -eq 0 ] || printf '%s\n' "$out"
+    row "wiring: this repo's workflows wrap every self-test and no run or wait" "$([ "$rc" -eq 0 ] && echo 0 || echo 1)"
+
     printf 'fixture_quiet.sh self-test: %s/%s rows as expected\n' "$((rows - bad))" "$rows"
     (( rows > 0 && bad == 0 ))
 }
 
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)
+
 if [ "${1:-}" = "--self-test" ]; then
     self_test
+elif [ "${1:-}" = "--check-wiring" ]; then
+    shift
+    if [ "$#" -eq 0 ]; then set -- "$REPO_ROOT"/.github/workflows/*.yml; fi
+    check_wiring "$@"
 else
     quiet "$@"
 fi
