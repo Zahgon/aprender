@@ -4,7 +4,7 @@
 # B1 (rule a, C332): every night on main's head, the same script and the same policy file as release
 # day run everything except the tag push and the uploads. Green means exit 0, every lane measured on
 # that night's commit, no rerun. The 3 nights before release day are green; a red night resets the
-# count (nightly_greens.sh counts this job's scheduled runs on main).
+# count (nightly_greens.sh counts this job's scheduled and dispatched runs on main).
 #
 # H10: a rehearsal makes no write outside its own state directory. Enforced, not promised:
 #   * every stage runs with the write guard (lib_write_guard.sh) first on PATH. A write is refused
@@ -50,7 +50,8 @@
 #       scripts/release and the blob ids of the stop list and the policy file; a night counts only when
 #       its ids equal REV's (release day's), so any change to them resets the count. A night is keyed on
 #       the C its own record names (the release-rehearsal artifact), never on the run's head_sha. The count is
-#       nightly_greens.sh's over this workflow's scheduled runs on main: a dispatched day run never counts.
+#       nightly_greens.sh's over this workflow's scheduled and dispatched runs on main: a dispatched run on main is a
+#       night ("\"tonight\" is a concept we control", operator, relayed verbatim 2026-10-11).
 #       Ready prints one RECEIPT line per counting night. EXIT 0 ready · 1 not ready · 2 · 3 as below.
 #   rehearse.sh --classify TOOL CWD [ARG...]   READ or WRITE <why>, as the guard decides it
 #   rehearse.sh --selftest       the case table: guard must-refuse/must-pass, the stub end to end,
@@ -75,7 +76,7 @@ SUMMARY='Release rehearsal (B1): no train summary. This bump is never pushed.'
 IDS_TREE=scripts/release
 IDS_STOP=contracts/release-ready-v1.yaml
 IDS_POLICY=contracts/model-capability-ladder-v1.yaml
-# The workflow whose scheduled runs on main are the counting nights, and the floor its REST reads keep.
+# The workflow whose scheduled and dispatched runs on main are the counting nights, and the floor its REST reads keep.
 WORKFLOW=release-rehearsal-nightly.yml
 RATE_FLOOR=1000
 # That workflow's file, and the train that reads its run (--in-run): wiring() holds the one to the other.
@@ -88,10 +89,13 @@ RECORD_ARTIFACT=release-rehearsal
 STREAK_NEED=1
 # B1 Q1: C is the newest first-parent main commit that both the models crux bundle and an infra clean-room run
 # measured. The bundle and its INDEX sit on EVIDENCE_BRANCH under MODELS_DIR; the walk reads main's newest PICK_DEPTH
-# first-parent commits (about five days of main in early October 2026), and a commit further back is no night's C.
+# first-parent commits, and a commit further back is no night's C. The bound is in commits, sized from main's merge rate:
+# 60 was about five days of main in early October 2026, and on 2026-10-11 main merged 34 first-parent commits in 24 hours
+# (64 in 72), so 60 was under two days. A crux bundle written at night is first read by the next morning's rehearsal, and
+# its C was measured by the clean-room a day or more before, so the walk fell short (#5062). 200 is about six days at that rate.
 EVIDENCE_BRANCH=nightly-evidence
 MODELS_DIR=models-crux
-PICK_DEPTH=60
+PICK_DEPTH=200
 
 # shellcheck source=scripts/release/lib_write_guard.sh
 . "$SCRIPT_DIR/lib_write_guard.sh" || exit 2
@@ -365,6 +369,14 @@ night_env() {
     printf 'C=%s\nV=%s\nSOURCE=%s\nSTARTED=%s\n' "$2" "$3" "$4" "$(date -u -d "@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%FT%TZ)" > "$1/night.env" || return 2
     if ids=$(release_ids "$4" "$2" 2>&1); then printf 'IDS=%s\n' "$ids"
     else printf 'IDS=-\nIDS_WHY=%s\n' "${ids%%$'\n'*}"; fi >> "$1/night.env"
+    # AGE: how far C is down main's first parents when the night starts (#5062: pick may reach 200 merges back, so a
+    # green says which C it judged and how old that C is). Read from the checkout's origin/main; none there is AGE=-.
+    local mh k
+    if mh=$(git -C "$4" rev-parse -q --verify refs/remotes/origin/main^{commit} 2>/dev/null) \
+        && k=$(git -C "$4" rev-list --first-parent "$mh" 2>/dev/null | awk -v c="$2" '$0 == c && !f { print NR; f = 1 }') && [ -n "$k" ]; then
+        printf 'AGE=main~%s (main %s)\n' "$((k - 1))" "${mh:0:10}"
+    elif [ -n "${mh:-}" ]; then printf 'AGE=-\nAGE_WHY=%s is not on the first parents of main %s\n' "$2" "${mh:0:10}"
+    else printf 'AGE=-\nAGE_WHY=the checkout has no origin/main\n'; fi >> "$1/night.env"
 }
 
 # rate_ok RELPATH -> rc 0 while the core allowance is above the floor; rc 2 and the reason on stderr otherwise.
@@ -380,14 +392,14 @@ rate_ok() {
     [ "$rem" -ge "$fl" ] || { echo "core remaining $rem under $fl" >&2; return 2; }
 }
 
-# fetch_runs CACHE OUT -> OUT: the workflow's scheduled runs on main, nightly_greens.sh's six columns then head_sha.
+# fetch_runs CACHE OUT -> OUT: the workflow's runs on main (every event: the judge keeps schedule and workflow_dispatch), nightly_greens.sh's six columns then head_sha.
 # One REST read, sent with the cached ETag (a 304 reuses CACHE/runs.json). rc 2 and the reason on stderr when
 # GitHub cannot be read or the floor is reached: not_measured, never "no nights".
 fetch_runs() {
     local cache=$1 out=$2 relpath=${3:-0} st hdr=()
     rate_ok "$relpath" || return 2
     [ -s "$cache/runs.etag" ] && [ -s "$cache/runs.json" ] && hdr=(-H "If-None-Match: $(cat "$cache/runs.etag")")
-    gh api -i "${hdr[@]}" "repos/$REPO/actions/workflows/$WORKFLOW/runs?branch=main&event=schedule&per_page=60" > "$cache/runs.http" 2>/dev/null
+    gh api -i "${hdr[@]}" "repos/$REPO/actions/workflows/$WORKFLOW/runs?branch=main&per_page=60" > "$cache/runs.http" 2>/dev/null
     st=$(awk 'NR == 1 { print $2; exit }' "$cache/runs.http")
     case $st in
         200) awk 'f { print } /^\r?$/ { f = 1 }' "$cache/runs.http" > "$cache/runs.json" || return 2
@@ -437,7 +449,7 @@ ids_diff() {
 }
 
 # streak --commit REV --as-of YYYY-MM-DD --cache DIR [--repo DIR] [--history FILE] -> the STREAK_NEED counting nights'
-# receipts a pass on REV needs (C345 #4, Q9; one since C355 item 6). REV's ids are release day's. A scheduled night on main is keyed on its
+# receipts a pass on REV needs (C345 #4, Q9; one since C355 item 6). REV's ids are release day's. A night on main (scheduled or dispatched) is keyed on its
 # own C, the commit its record names, never on the run's head_sha (the pick sets C behind main's head). It counts
 # only when C carries the same ids; any other, and a record that names no C or two, is a reset, judged as a red
 # night. The count is nightly_greens.sh's. The history is FILE (seven columns, as fetch_runs writes) or one read of
@@ -507,13 +519,13 @@ streak() {
         # a night whose C is not on the target's ids is a reset: its run is judged failure, whatever it ended as
         printf 'RESET run %s (night %s, C %s): %s\n' "$id" "$day" "$c" "$why"
         printf '%s\n' "$id" >> "$cache/resets.tsv"; red=1
-    done < <(awk -F'\t' -v OFS='\t' -v asof="$asof" 'NR > 1 && $3 == "main" && $4 == "schedule" && substr($2, 1, 10) <= asof {
+    done < <(awk -F'\t' -v OFS='\t' -v asof="$asof" 'NR > 1 && $3 == "main" && ($4 == "schedule" || $4 == "workflow_dispatch") && substr($2, 1, 10) <= asof {
                  print $2, $1, substr($2, 1, 10), ($5 == "" ? "-" : $5), $6, $7 }' "$hist" | LC_ALL=C sort -r | cut -f 2-)
     awk -F'\t' -v OFS='\t' -v cut="$cut" '
         FILENAME == ARGV[1] { reset[$1] = 1; next }
         FNR == 1 { print $1, $2, $3, $4, $5, $6; next }
-        $3 == "main" && $4 == "schedule" && cut != "" && substr($2, 1, 10) <= cut { next }
-        $3 == "main" && $4 == "schedule" && ($1 in reset) { $5 = "failure" }
+        $3 == "main" && ($4 == "schedule" || $4 == "workflow_dispatch") && cut != "" && substr($2, 1, 10) <= cut { next }
+        $3 == "main" && ($4 == "schedule" || $4 == "workflow_dispatch") && ($1 in reset) { $5 = "failure" }
         { print $1, $2, $3, $4, $5, $6 }' "$cache/resets.tsv" "$hist" > "$cache/history.tsv" \
         || { echo "not_measured: the history could not be read"; return 2; }
     rc=0; o=$(bash "$SCRIPT_DIR/nightly_greens.sh" --check release-rehearsal --history "$cache/history.tsv" --as-of "$asof") || rc=$?
@@ -613,6 +625,8 @@ judge() {
     [ -f "$st/bump.commit" ] && bumpc=$(cat "$st/bump.commit")
     [ -f "$st/bump.parent" ] && bparent=$(cat "$st/bump.parent")
     printf 'REHEARSAL %s on %s\n' "$v" "$c"
+    if grep -q '^AGE=main~' "$st/night.env"; then printf 'AGE   C is %s at the night'\''s start\n' "$(sed -n 's/^AGE=//p' "$st/night.env")"
+    else printf 'AGE   not measured: %s\n' "$(sed -n 's/^AGE_WHY=//p' "$st/night.env" | grep . || echo 'night.env has no AGE line')"; fi
     ids=$(sed -n 's/^IDS=//p' "$st/night.env")
     if [[ $ids =~ ^tree=[0-9a-f]{40,64}\ stop=[0-9a-f]{40,64}\ policy=[0-9a-f]{40,64}$ ]]; then printf 'IDS   %s\n' "$ids"
     else
@@ -704,9 +718,10 @@ wiring() {
     from=$(wr_tv INRUN_FROM); caller=$(wr_tv INRUN_CALLER); wfl=$(wr_tv INRUN_WF); models=$(wr_tv INRUN_MODELS)
     { [ -n "$caller" ] && [ -n "$wfl" ] && [ -n "$models" ]; } || { printf 'miswired: the train names no INRUN_CALLER, INRUN_WF or INRUN_MODELS'; return 1; }
     [ "$from" = ".github/workflows/$WORKFLOW" ] || bad="$bad train(INRUN_FROM=$from)"
-    # the train's capture prefixes, in its column order: the assert, then the relay
-    mapfile -t caps < <(grep -o 'capture("^[^"(]*(?<s>\[0-9a-f\]{40})\$")' "$tr" | sed 's/^capture("^//; s/(?<s>.*$//')
-    [ "${#caps[@]}" -eq 2 ] || { printf 'miswired: the train has %s step-name captures, not 2' "${#caps[@]}"; return 1; }
+    # the train's distinct capture prefixes, in its column order: the assert, then the relay. The in-run read captures
+    #   both; the lanes read (#5087) captures the assert again, which is the same step name, so it counts once
+    mapfile -t caps < <(grep -o 'capture("^[^"(]*(?<s>\[0-9a-f\]{40})\$")' "$tr" | sed 's/^capture("^//; s/(?<s>.*$//' | awk '!s[$0]++')
+    [ "${#caps[@]}" -eq 2 ] || { printf 'miswired: the train has %s distinct step-name captures, not 2' "${#caps[@]}"; return 1; }
     # wr_named NAME -> the key of each job whose name: is NAME; wr_with ERE -> the key of each job with a line matching ERE
     wr_named() { awk -v n="$1" '/^jobs:$/ { j = 1; next } !j { next } /^  [A-Za-z0-9_-]+:$/ { k = substr($1, 1, length($1) - 1); next }
         /^    name: / { v = $0; sub(/^    name: /, "", v); sub(/[ \t]+#.*$/, "", v); if (v == n || (P != "" && index(v, P) == 1)) print k }' P="${2:-}" "$wf"; }
@@ -1255,7 +1270,11 @@ GH
     sr a_c_not_in_the_repo_is_not_measured 2 "not_measured: night 2026-10-08 run 3: its C $none is not in" "$c2" "$n6|$c1" "$n7|$c2" "$n8|$c2|$none"
     sr a_pass_commit_without_the_stop_list_is_not_measured 2 "not_measured: the pass commit's ids cannot be read" "$c0" "$n6|$c0" "$n7|$c0" "$n8|$c0"
     sr a_stop_list_that_is_a_directory_is_not_measured 2 "has no blob $IDS_STOP" "$c6" "$n6|$c2" "$n7|$c2" "$n8|$c2"
-    sr day_runs_do_not_count 1 "not ready: night 2026-10-07 was red (run 2, failure)" "$c2" "$n6|$c1" "2|2026-10-07|schedule|failure|1|$c2|none" "4|2026-10-08|workflow_dispatch|success|1|$none"
+    # a dispatched run on main is a night (operator, relayed verbatim 2026-10-11: "\"tonight\" is a concept we control"); a push is not
+    sr a_dispatched_night_counts 0 "RECEIPT run 4 night 2026-10-08 C $c2 head $c2" "$c2" "$n6|$c1" "$n7|$c2" "4|2026-10-08|workflow_dispatch|success|1|$c2"
+    sr a_red_dispatched_night_is_red 1 "not ready: night 2026-10-08 was red (run 4, failure)" "$c2" "$n6|$c2|none" "$n7|$c2|none" "4|2026-10-08|workflow_dispatch|failure|1|$c2|none"
+    sr a_dispatched_night_on_other_ids_resets 1 "RESET run 4 (night 2026-10-08, C $c3)" "$c2" "$n6|$c2" "$n7|$c2" "4|2026-10-08|workflow_dispatch|success|1|$c3"
+    sr push_runs_do_not_count 1 "not ready: night 2026-10-07 was red (run 2, failure)" "$c2" "$n6|$c1" "2|2026-10-07|schedule|failure|1|$c2|none" "4|2026-10-08|push|success|1|$none"
     sr a_running_night_on_the_same_ids_waits 0 "RECEIPT run 2 night 2026-10-07" "$c2" "0|2026-10-05|schedule|success|1|$c1" "$n6|$c1" "$n7|$c2" "3|2026-10-08|schedule||1|$c2"
     # keyed on C: the head is the workflow's commit, C the one the night measured
     sr a_night_counts_on_its_c_whatever_its_head 0 "RECEIPT run 3 night 2026-10-08 C $c2 head $c3" "$c2" "$n6|$c3|$c1" "$n7|$c3|$c2" "$n8|$c3|$c2"
@@ -1284,6 +1303,18 @@ GH
     }
     ne a_night_records_its_commits_ids "$c1" "IDS=$(release_ids "$g" "$c1")"
     ne a_night_without_the_stop_list_records_why "$c0" "IDS_WHY=$c0 has no blob $IDS_STOP"
+    # AGE (#5062): C's distance down main's first parents, read from the checkout's origin/main
+    # main is a merge of c4 into c3: c4 is reachable from main but not on its first parents
+    local mm; mm=$(sg commit-tree "$c3^{tree}" -p "$c3" -p "$c4" -m merge) && sg update-ref refs/remotes/origin/main "$mm" || return 2
+    ne a_night_records_how_far_c_is_down_main "$c1" "AGE=main~3 (main ${mm:0:10})"
+    ne a_c_off_main_records_why "$c4" "AGE_WHY=$c4 is not on the first parents of main ${mm:0:10}"
+    local da="$tmp/ne-age"
+    fixture_night "$da" && night_env "$da" "$c1" 0.71.0 "$g" || return 2
+    o=$(judge "$da" 2>&1)
+    if [[ $o == *"AGE   C is main~3 (main ${mm:0:10}) at the night's start"* ]]; then pass=$((pass + 1))
+    else printf '  BROKE %-48s %s\n' the_verdict_prints_cs_age "$(printf '%s' "$o" | grep '^AGE' | head -1)"; fail=$((fail + 1)); fi
+    sg update-ref -d refs/remotes/origin/main || return 2
+    ne a_checkout_without_main_records_why "$c1" "AGE_WHY=the checkout has no origin/main"
     local d="$tmp/ne-judge"
     fixture_night "$d" && night_env "$d" "$c0" 0.71.0 "$g" || return 2
     rc=0; o=$(judge "$d" 2>&1) || rc=$?
@@ -1299,7 +1330,7 @@ GH
     rd() { # rd NAME WANT_RC WANT_OUT WANT_RUNS_CALLS WANT_ETAG_CALLS WANT_RECORD_READS [RATE [FLAG]]
         rc=0; o=$(PATH="$gs/bin:$PATH" GHS="$gs" GHS_RATE="${7:-5000 4000}" streak --commit "$c2" --repo "$g" --as-of 2026-10-08 --cache "$gs/cache" ${8:+"$8"} 2>&1) || rc=$?
         local runs etag dl
-        runs=$(grep -c 'actions/workflows/release-rehearsal-nightly.yml/runs?branch=main&event=schedule' "$gs/calls" 2>/dev/null)
+        runs=$(grep -c 'actions/workflows/release-rehearsal-nightly.yml/runs?branch=main&per_page=60' "$gs/calls" 2>/dev/null)
         etag=$(grep -c 'If-None-Match: "e1"' "$gs/calls" 2>/dev/null)
         dl=$(grep -c '^run download ' "$gs/calls" 2>/dev/null)
         if [ "$rc" = "$2" ] && [[ $o == *"$3"* ]] && [ "${runs:-0}" = "$4" ] && [ "${etag:-0}" = "$5" ] && [ "${dl:-0}" = "$6" ]; then pass=$((pass + 1))
@@ -1382,6 +1413,13 @@ selftest_pick() {
     rc=0; o=$( pick_c --repo "$p/clone" 2>&1 ) || rc=$?
     if [ "$rc" = 3 ] && [[ $o == *"--pick-c needs --cache DIR"* ]]; then pass=$((pass + 1))
     else printf '  BROKE %-48s rc=%s (want 3): %s\n' a_pick_without_a_cache_is_a_caller_error "$rc" "$o"; fail=$((fail + 1)); fi
+    # #5062: main merges ~34 first-parent commits a day, so the night's C is often 60+ commits back by the morning the
+    # rehearsal reads it. C 70 merges back is still in the walk (the old 60 refused it).
+    local h=$m5 n
+    for n in $(seq 1 70); do h=$(cm $((700 + n)) "n$n" "$h") || return 2; done
+    pg update-ref refs/heads/main "$h" || return 2
+    ev "$(printf '%s green\n' "$m5")" "$m5:green" || return 2
+    CPU=$(printf '%s\tgreen\t31' "$m5") pk a_c_seventy_merges_back_is_in_the_walk 0 "$m5" "pick: C $m5 (main~70): models-crux green, cleanroom-cpu green run 31"
     printf '  %s pick rows\n' "$((pass + fail - p0))"
 }
 
@@ -1463,6 +1501,7 @@ selftest_wiring() {
     wrow a_second_job_named_models_is_refused wf 'models(name)' 's/^    name: rehearse$/    name: models/'
     wrow a_workflow_that_runs_no_night_is_refused wf 'night(run)' 's/bash scripts\/release\/rehearse\.sh --run /bash scripts\/release\/rehearse.sh --judge /'
     wrow a_train_with_one_capture_is_refused train 'step-name captures, not 2' 's/capture("^Relayed the models-crux bundle of (?<s>\[0-9a-f\]{40})\$")/test("^Relayed")/'
+    wrow a_lanes_read_capturing_another_assert_is_refused train '3 distinct step-name captures' '/^lanes_rows() {$/,/^}$/s/capture("^Assert HEAD is (?<s>/capture("^Asserted (?<s>/'
     wrow a_train_naming_no_models_job_is_refused train 'names no INRUN' 's/^INRUN_MODELS="models"$/INRUN_MODELS=models/'
     if o=$(wiring "$tmp/no-such.yml" "$TRAIN_SCRIPT" 2>&1); then printf '  BROKE %-48s accepted: %s\n' a_missing_workflow_is_refused "$o"; fail=$((fail + 1))
     elif [[ $o == *"no-such.yml is missing"* ]]; then pass=$((pass + 1)); else printf '  BROKE %-48s %s\n' a_missing_workflow_is_refused "$o"; fail=$((fail + 1)); fi
@@ -1571,7 +1610,9 @@ ids_policy_is_the_stop_list  rehearse.sh         s/^IDS_POLICY=contracts\/model-
 ids_type_unchecked           rehearse.sh         s/ \&\& \[ "\$(git -C "\$g" cat-file -t "\$id")" = "\$want" \]//
 ids_reset_names_nothing      rehearse.sh         s/\[ "\${a\[i\]}" = "\${b\[i\]}" \] ||/true ||/
 missing_c_is_a_reset         rehearse.sh         s/^                1) why=\$ids ;;/                1|2) why=$ids ;;/
-day_runs_get_ids             rehearse.sh         s/NR > 1 \&\& \$3 == "main" \&\& \$4 == "schedule" \&\& substr(\$2, 1, 10) <= asof {/NR > 1 \&\& substr($2, 1, 10) <= asof {/
+day_runs_get_ids             rehearse.sh         s/NR > 1 \&\& \$3 == "main" \&\& (\$4 == "schedule" || \$4 == "workflow_dispatch") \&\& substr(\$2, 1, 10) <= asof {/NR > 1 \&\& substr($2, 1, 10) <= asof {/
+dispatch_skipped_by_walk     rehearse.sh         s/NR > 1 \&\& \$3 == "main" \&\& (\$4 == "schedule" || \$4 == "workflow_dispatch")/NR > 1 \&\& \$3 == "main" \&\& (\$4 == "schedule")/
+dispatch_reset_not_judged    rehearse.sh         s/        \$3 == "main" \&\& (\$4 == "schedule" || \$4 == "workflow_dispatch") \&\& (\$1 in reset)/        \$3 == "main" \&\& \$4 == "schedule" \&\& (\$1 in reset)/
 c_keyed_on_head              rehearse.sh         s/ids=\$(release_ids "\$repo" "\$c" 2>\&1)/ids=$(release_ids "$repo" "$hd" 2>\&1)/
 record_without_c_counts      rehearse.sh         s/\[\[ \$e =~ \^\[0-9a-f\]{40}\$ \]\] ||/true ||/
 sources_not_compared         rehearse.sh         s/\[ "\$t" = "\$e" \] ||/true ||/
@@ -1605,6 +1646,10 @@ pick_not_measured_line_counts rehearse.sh         s/\[ "\$state" != not_measured
 pick_bundle_unchecked        rehearse.sh         s/\[ "\$v" = "\$state" \] || {/true || {/
 pick_not_first_parent        rehearse.sh         s/rev-list --first-parent -n "\$PICK_DEPTH"/rev-list -n "$PICK_DEPTH"/
 pick_unbounded               rehearse.sh         s/ -n "\$PICK_DEPTH" refs\/rehearsal\/main/ refs\/rehearsal\/main/
+pick_depth_two_days          rehearse.sh         s/^PICK_DEPTH=200$/PICK_DEPTH=60/
+age_off_by_one               rehearse.sh         s/"\$((k - 1))" "\${mh:0:10}"/"$k" "${mh:0:10}"/
+age_any_parent               rehearse.sh         s/rev-list --first-parent "\$mh"/rev-list "$mh"/
+age_not_judged               rehearse.sh         s/AGE   C is %s at the night/AGE   %s/
 pick_models_red_refused      rehearse.sh         s/ (green|red|not_measured)\$'/ (green|not_measured)$'/
 pick_cpu_red_refused         rehearse.sh         s/\\t(green|red)\\t/\\t(green)\\t/
 pick_models_side_unchecked   rehearse.sh         s/if \[ -n "\${models\[\$sha\]:-}" \] && /if /
@@ -1636,6 +1681,7 @@ wiring_missing_train_unnamed rehearse.sh         s/\[ -f "\$tr" \] || { printf '
 wiring_train_names_unchecked rehearse.sh         s/|| { printf 'miswired: the train names no INRUN_CALLER/|| true || { printf 'x/
 wiring_train_from_unchecked  rehearse.sh         s/\[ "\$from" = ".github\/workflows\/\$WORKFLOW" \] || bad=/true || bad=/
 wiring_capture_count_free    rehearse.sh         s/\[ "\${#caps\[@\]}" -eq 2 \] || {/true || {/
+wiring_captures_not_deduped  rehearse.sh         s/ | awk '!s\[\$0\]++')$/)/
 wiring_names_keep_comments   rehearse.sh         s/ sub(\/\[ \\t\]+#\.\*\$\/, "", v);//
 wiring_step_runs_past_its_end rehearse.sh        s/{ if (hit) exit; s = "" }/{ s = "" }/
 wiring_one_takes_two_jobs    rehearse.sh         s/wr_one() { .*/wr_one() { [ -n "$1" ]; }/
