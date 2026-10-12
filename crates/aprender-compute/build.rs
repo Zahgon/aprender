@@ -93,7 +93,7 @@ fn main() {
         }
     };
 
-    let bindings: BindingFile = match serde_yaml_ng::from_str(&yaml_content) {
+    let bindings: BindingFile = match serde_saphyr::from_str(&yaml_content) {
         Ok(b) => b,
         Err(e) => {
             println!(

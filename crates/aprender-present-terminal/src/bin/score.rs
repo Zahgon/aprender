@@ -494,40 +494,41 @@ impl CrateAnalyzer {
     /// Get code coverage percentage
     fn get_coverage(&self) -> f64 {
         // Try cargo llvm-cov
-        let output = Command::new("cargo")
-            .args(["llvm-cov", "--json"])
-            .current_dir(&self.path)
-            .output();
-
-        if let Ok(out) = output {
-            if out.status.success() {
-                // Parse JSON output for line coverage
-                if let Ok(text) = String::from_utf8(out.stdout) {
-                    // Simple extraction - look for "lines" coverage
-                    if let Some(start) = text.find("\"lines\"") {
-                        if let Some(pct_start) = text[start..].find("\"percent\"") {
-                            let search = &text[start + pct_start..];
-                            if let Some(colon) = search.find(':') {
-                                let num_start = colon + 1;
-                                if let Some(end) =
-                                    search[num_start..].find(|c: char| !c.is_numeric() && c != '.')
-                                {
-                                    if let Ok(pct) =
-                                        search[num_start..num_start + end].trim().parse::<f64>()
-                                    {
-                                        return pct;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        if let Some(pct) = self.llvm_cov_line_percent() {
+            return pct;
         }
 
         // Estimate based on test count
         let tests = self.grep_pattern("#[test]");
         ((tests as f64 / 50.0) * 80.0).min(85.0)
+    }
+
+    /// Run `cargo llvm-cov --json` and extract the line coverage percentage.
+    fn llvm_cov_line_percent(&self) -> Option<f64> {
+        let out = Command::new("cargo")
+            .args(["llvm-cov", "--json"])
+            .current_dir(&self.path)
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let text = String::from_utf8(out.stdout).ok()?;
+        Self::parse_lines_percent(&text)
+    }
+
+    /// Simple extraction of the first "percent" value after the "lines" key.
+    fn parse_lines_percent(text: &str) -> Option<f64> {
+        let start = text.find("\"lines\"")?;
+        let pct_start = text[start..].find("\"percent\"")?;
+        let search = &text[start + pct_start..];
+        let colon = search.find(':')?;
+        let num_start = colon + 1;
+        let end = search[num_start..].find(|c: char| !c.is_numeric() && c != '.')?;
+        search[num_start..num_start + end]
+            .trim()
+            .parse::<f64>()
+            .ok()
     }
 
     /// Run clippy and count warnings
@@ -802,7 +803,7 @@ fn main() {
     // Load config (F-PMAT-018)
     let config = if let Some(config_path) = &cli.config {
         match std::fs::read_to_string(config_path) {
-            Ok(content) => serde_yaml_ng::from_str(&content).unwrap_or_default(),
+            Ok(content) => serde_saphyr::from_str(&content).unwrap_or_default(),
             Err(_) => ScoringConfig::default(),
         }
     } else {
@@ -833,7 +834,7 @@ fn main() {
                         std::process::exit(1);
                     }
                 },
-                OutputFormat::Yaml => match serde_yaml_ng::to_string(&report) {
+                OutputFormat::Yaml => match serde_saphyr::to_string(&report) {
                     Ok(yaml) => println!("{yaml}"),
                     Err(e) => {
                         eprintln!("YAML serialization error: {e}");
@@ -1093,7 +1094,7 @@ mod tests {
             threshold: 80,
             analysis_time_ms: Some(100),
         };
-        let yaml = serde_yaml_ng::to_string(&report);
+        let yaml = serde_saphyr::to_string(&report);
         assert!(yaml.is_ok());
     }
 }

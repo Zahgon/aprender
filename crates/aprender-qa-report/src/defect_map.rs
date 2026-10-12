@@ -26,7 +26,7 @@ pub struct DefectFixtureEntry {
 /// since it's an embedded static file).
 pub fn load_defect_fixture_map() -> Result<HashMap<String, DefectFixtureEntry>, String> {
     let yaml = include_str!("defect_fixture_map.yaml");
-    serde_yaml::from_str(yaml).map_err(|e| format!("Failed to parse defect fixture map: {e}"))
+    serde_saphyr::from_str(yaml).map_err(|e| format!("Failed to parse defect fixture map: {e}"))
 }
 
 /// Map a `ConversionFailureType` to its defect-fixture map key

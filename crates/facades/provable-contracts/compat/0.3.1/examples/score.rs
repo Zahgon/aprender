@@ -57,7 +57,7 @@ fn main() {
     if binding_path.exists() {
         let content = std::fs::read_to_string(binding_path).unwrap();
         let binding: provable_contracts::binding::BindingRegistry =
-            serde_yaml::from_str(&content).unwrap();
+            serde_saphyr::from_str(&content).unwrap();
 
         let mut parsed = Vec::new();
         for entry in &entries {

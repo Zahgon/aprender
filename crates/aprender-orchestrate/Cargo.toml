@@ -155,7 +155,6 @@ simular = { workspace = true, optional = true }
 
 # Transpilers (native-only)
 # depyler = { version = "3.20", optional = true }  # blocked: serde version conflict (1.0.200-1.0.219)
-bashrs = { version = "6.65", optional = true }
 
 # Testing and quality (native-only).
 # NOTE: the `probar = { workspace = true, optional = true }` alias that used to
@@ -274,7 +273,7 @@ simulation = ["simular", "native"]
 
 # Transpilers (native-only)
 # depyler blocked until serde versions aligned
-transpilers = ["bashrs", "native"]
+transpilers = ["native"]
 
 # Testing and quality (see the dependency note: `probar` -> `jugar-probar`,
 # the same in-tree package under its other alias)

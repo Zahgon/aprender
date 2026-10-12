@@ -39,7 +39,7 @@ upstream = { path = "../../aprender-contracts", version = "0.71.1", package = "a
 # the facade does not re-export third-party crates, so the compat corpus takes
 # them as dev-dependencies instead. Versions match the aprender workspace.
 serde_json = "1.0"
-serde_yaml = "0.9"
+serde-saphyr = { workspace = true }
 
 [features]
 default = []

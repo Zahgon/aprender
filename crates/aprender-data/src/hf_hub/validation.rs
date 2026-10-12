@@ -151,45 +151,50 @@ impl DatasetCardValidator {
         };
 
         // Parse YAML
-        let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&yaml_content) else {
+        let Ok(yaml) = serde_saphyr::from_str::<serde_json::Value>(&yaml_content) else {
             return errors;
         };
 
         // Validate task_categories
-        if let Some(categories) = yaml.get("task_categories") {
-            if let Some(arr) = categories.as_sequence() {
-                for cat in arr {
-                    if let Some(cat_str) = cat.as_str() {
-                        if !VALID_TASK_CATEGORIES.contains(&cat_str) {
-                            errors.push(ValidationError {
-                                field: "task_categories".to_string(),
-                                value: cat_str.to_string(),
-                                suggestions: Self::suggest_similar(cat_str, VALID_TASK_CATEGORIES),
-                            });
-                        }
-                    }
-                }
-            }
-        }
+        Self::validate_string_array_field(
+            &yaml,
+            "task_categories",
+            VALID_TASK_CATEGORIES,
+            &mut errors,
+        );
 
         // Validate size_categories
-        if let Some(sizes) = yaml.get("size_categories") {
-            if let Some(arr) = sizes.as_sequence() {
-                for size in arr {
-                    if let Some(size_str) = size.as_str() {
-                        if !VALID_SIZE_CATEGORIES.contains(&size_str) {
-                            errors.push(ValidationError {
-                                field: "size_categories".to_string(),
-                                value: size_str.to_string(),
-                                suggestions: Self::suggest_similar(size_str, VALID_SIZE_CATEGORIES),
-                            });
-                        }
-                    }
+        Self::validate_string_array_field(
+            &yaml,
+            "size_categories",
+            VALID_SIZE_CATEGORIES,
+            &mut errors,
+        );
+
+        errors
+    }
+
+    /// Appends an error for each string in the array `field` that is not in `valid`.
+    fn validate_string_array_field(
+        yaml: &serde_json::Value,
+        field: &str,
+        valid: &[&str],
+        errors: &mut Vec<ValidationError>,
+    ) {
+        let Some(arr) = yaml.get(field).and_then(|v| v.as_array()) else {
+            return;
+        };
+        for item in arr {
+            if let Some(item_str) = item.as_str() {
+                if !valid.contains(&item_str) {
+                    errors.push(ValidationError {
+                        field: field.to_string(),
+                        value: item_str.to_string(),
+                        suggestions: Self::suggest_similar(item_str, valid),
+                    });
                 }
             }
         }
-
-        errors
     }
 
     /// Validates a README file and returns a Result.

@@ -74,7 +74,7 @@ rand = { version = "0.9", optional = true }
 [build-dependencies]
 provable-contracts = { workspace = true }  # #4369: build_helper::env_key, the one CONTRACT_* key builder
 serde = { version = "1", features = ["derive"] }
-serde_yaml_ng = "0.10"
+serde-saphyr = { workspace = true }
 
 [dev-dependencies]
 tokio-test = "0.4"

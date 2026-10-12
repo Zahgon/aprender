@@ -37,7 +37,7 @@ fn main() {
         return;
     };
 
-    let Ok(bindings): Result<BindingFile, _> = serde_yaml_ng::from_str(&yaml) else {
+    let Ok(bindings): Result<BindingFile, _> = serde_saphyr::from_str(&yaml) else {
         println!("cargo:rustc-env=CONTRACT_BINDING_SOURCE=none");
         return;
     };

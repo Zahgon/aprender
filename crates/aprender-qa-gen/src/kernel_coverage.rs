@@ -367,7 +367,7 @@ impl CoverageContext {
     pub fn load(contracts_path: &Path, bindings_path: &Path) -> crate::Result<Self> {
         let arch_path = contracts_path.join("arch-constraints-v1.yaml");
         let arch_content = std::fs::read_to_string(&arch_path)?;
-        let arch_file: ArchConstraintsFile = serde_yaml::from_str(&arch_content)?;
+        let arch_file: ArchConstraintsFile = serde_saphyr::from_str(&arch_content)?;
 
         let default_constraints = yaml_entry_to_constraints(&arch_file.default);
 
@@ -384,7 +384,7 @@ impl CoverageContext {
         architectures.sort_by(|a, b| a.0.cmp(&b.0));
 
         let bindings_content = std::fs::read_to_string(bindings_path)?;
-        let bindings_file: KernelBindingsFile = serde_yaml::from_str(&bindings_content)?;
+        let bindings_file: KernelBindingsFile = serde_saphyr::from_str(&bindings_content)?;
 
         Ok(Self {
             architectures,
@@ -400,7 +400,7 @@ impl CoverageContext {
     /// Returns an error if the YAML is malformed or missing required fields.
     #[cfg(test)]
     pub fn from_yaml_str(arch_yaml: &str, bindings_yaml: &str) -> crate::Result<Self> {
-        let arch_file: ArchConstraintsFile = serde_yaml::from_str(arch_yaml)?;
+        let arch_file: ArchConstraintsFile = serde_saphyr::from_str(arch_yaml)?;
         let default_constraints = yaml_entry_to_constraints(&arch_file.default);
 
         let mut architectures = Vec::new();
@@ -415,7 +415,7 @@ impl CoverageContext {
         }
         architectures.sort_by(|a, b| a.0.cmp(&b.0));
 
-        let bindings_file: KernelBindingsFile = serde_yaml::from_str(bindings_yaml)?;
+        let bindings_file: KernelBindingsFile = serde_saphyr::from_str(bindings_yaml)?;
 
         Ok(Self {
             architectures,
@@ -715,25 +715,31 @@ fn walk_rs_files_for_name(dir: &Path, name: &str) -> (bool, Option<String>) {
             if found {
                 return (true, file);
             }
-        } else if path.extension().is_some_and(|ext| ext == "rs") {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                let patterns = [
-                    format!("fn {name}("),
-                    format!("fn {name}<"),
-                    format!("struct {name} "),
-                    format!("struct {name} {{"),
-                    format!("struct {name}{{"),
-                ];
-                for pattern in &patterns {
-                    if content.contains(pattern.as_str()) {
-                        return (true, Some(path.display().to_string()));
-                    }
-                }
-            }
+        } else if let Some(file) = rs_file_defines_name(&path, name) {
+            return (true, Some(file));
         }
     }
 
     (false, None)
+}
+
+/// Return the file path if `path` is a readable .rs file defining `name`.
+fn rs_file_defines_name(path: &Path, name: &str) -> Option<String> {
+    if !path.extension().is_some_and(|ext| ext == "rs") {
+        return None;
+    }
+    let content = std::fs::read_to_string(path).ok()?;
+    let patterns = [
+        format!("fn {name}("),
+        format!("fn {name}<"),
+        format!("struct {name} "),
+        format!("struct {name} {{"),
+        format!("struct {name}{{"),
+    ];
+    if patterns.iter().any(|p| content.contains(p.as_str())) {
+        return Some(path.display().to_string());
+    }
+    None
 }
 
 /// Build per-class coverage summary from model results.

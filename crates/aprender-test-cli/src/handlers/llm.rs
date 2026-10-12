@@ -90,7 +90,7 @@ pub async fn execute_llm_test(args: &LlmTestArgs) -> CliResult<()> {
     let config_str =
         std::fs::read_to_string(&args.config).map_err(|e| CliError::Generic(e.to_string()))?;
     let config: TestConfig =
-        serde_yaml_ng::from_str(&config_str).map_err(|e| CliError::Generic(e.to_string()))?;
+        serde_saphyr::from_str(&config_str).map_err(|e| CliError::Generic(e.to_string()))?;
 
     let client = jugar_probar::llm::LlmClient::new(&args.url, &args.model);
 
@@ -1892,7 +1892,7 @@ tests:
         content: "Hello"
     expect_pattern: "(?i)hello"
 "#;
-        let config: TestConfig = serde_yaml_ng::from_str(yaml).unwrap();
+        let config: TestConfig = serde_saphyr::from_str(yaml).unwrap();
         assert_eq!(config.tests.len(), 2);
         assert_eq!(config.tests[0].name, "basic_math");
         assert_eq!(config.tests[0].expect_contains, Some("56".to_string()));
