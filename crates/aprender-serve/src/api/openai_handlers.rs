@@ -348,6 +348,30 @@ mod perf039_ignore_eos_tests {
         );
     }
 
+    /// #4810: a Qwen instruct GGUF declares `<|im_end|>` as EOS, yet a turn can end on
+    /// `<|endoftext|>`. `/v1/completions` stops on both (`completion_stop_tokens`); a chat
+    /// route that stops on the declared EOS alone decodes on to `max_tokens`.
+    #[test]
+    fn chat_stops_on_every_eog_marker_not_just_eos() {
+        let vocab = ["<unk>", "hi", "<|im_end|>", "<|endoftext|>"];
+        let tok = BPETokenizer::new(
+            vocab.iter().map(|s| (*s).to_string()).collect(),
+            vec![],
+            "<unk>",
+        )
+        .expect("test tokenizer");
+        let (im_end, endoftext) = (2, 3);
+        let cancel = crate::generate::CancelToken::never();
+        let config = chat_quantized_config(&request(None), &tok, Some(im_end), false, &cancel);
+        assert_eq!(config.stop_tokens, vec![im_end, endoftext]);
+        let ignored =
+            chat_quantized_config(&request(Some(true)), &tok, Some(im_end), false, &cancel);
+        assert!(
+            ignored.stop_tokens.is_empty(),
+            "ignore_eos still empties the set"
+        );
+    }
+
     /// `ignore_eos` must survive DESERIALIZATION, not just exist as a field.
     ///
     /// serde ignores unknown fields by default, so before this field existed a
