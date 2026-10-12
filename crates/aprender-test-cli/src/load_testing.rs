@@ -191,7 +191,7 @@ impl LoadTestScenario {
 
     /// Load from YAML string
     pub fn from_yaml(yaml: &str) -> Result<Self, String> {
-        serde_saphyr::from_str_with_options(yaml, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary }).map_err(|e| format!("Failed to parse YAML: {}", e))
+        serde_saphyr::from_str_with_options(yaml, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false }).map_err(|e| format!("Failed to parse YAML: {}", e))
     }
 
     /// Load from file
@@ -1143,7 +1143,7 @@ mod tests {
         scenario.add_request(LoadTestRequest::get("home", "/"));
 
         let yaml = serde_saphyr::to_string(&scenario).unwrap();
-        let parsed: LoadTestScenario = serde_saphyr::from_str_with_options(&yaml, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary }).unwrap();
+        let parsed: LoadTestScenario = serde_saphyr::from_str_with_options(&yaml, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false }).unwrap();
 
         assert_eq!(parsed.name, "YAML Test");
         assert_eq!(parsed.stages.len(), 1);

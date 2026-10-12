@@ -369,7 +369,7 @@ impl CoverageContext {
         let arch_content = std::fs::read_to_string(&arch_path)?;
         let arch_file: ArchConstraintsFile = serde_saphyr::from_str_with_options(
             &arch_content,
-            serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary },
+            serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false },
         )?;
 
         let default_constraints = yaml_entry_to_constraints(&arch_file.default);
@@ -389,7 +389,7 @@ impl CoverageContext {
         let bindings_content = std::fs::read_to_string(bindings_path)?;
         let bindings_file: KernelBindingsFile = serde_saphyr::from_str_with_options(
             &bindings_content,
-            serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary },
+            serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false },
         )?;
 
         Ok(Self {
@@ -408,7 +408,7 @@ impl CoverageContext {
     pub fn from_yaml_str(arch_yaml: &str, bindings_yaml: &str) -> crate::Result<Self> {
         let arch_file: ArchConstraintsFile = serde_saphyr::from_str_with_options(
             arch_yaml,
-            serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary },
+            serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false },
         )?;
         let default_constraints = yaml_entry_to_constraints(&arch_file.default);
 
@@ -426,7 +426,7 @@ impl CoverageContext {
 
         let bindings_file: KernelBindingsFile = serde_saphyr::from_str_with_options(
             bindings_yaml,
-            serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary },
+            serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false },
         )?;
 
         Ok(Self {

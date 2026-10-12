@@ -79,7 +79,7 @@ fn emit_contract_file_pre_post(path: &PathBuf, total_pre: &mut usize, total_post
     };
     let Ok(parsed) = serde_saphyr::from_str_with_options::<ContractYaml>(
         &contents,
-        serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary },
+        serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false },
     ) else {
         return;
     };
@@ -140,7 +140,7 @@ fn emit_presentar_binding_env() {
     };
     let Ok(bf) = serde_saphyr::from_str_with_options::<BindingFile>(
         &content,
-        serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary },
+        serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false },
     ) else {
         println!("cargo:warning=[contract] Failed to parse binding.yaml");
         println!("cargo:rustc-env=CONTRACT_BINDING_SOURCE=none");

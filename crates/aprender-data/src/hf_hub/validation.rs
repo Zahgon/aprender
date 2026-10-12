@@ -153,7 +153,7 @@ impl DatasetCardValidator {
         // Parse YAML
         let Ok(yaml) = serde_saphyr::from_str_with_options::<serde_json::Value>(
             &yaml_content,
-            serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary },
+            serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false },
         ) else {
             return errors;
         };

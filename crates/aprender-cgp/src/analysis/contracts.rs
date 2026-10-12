@@ -123,7 +123,7 @@ impl ContractVerification {
 pub fn load_contract(path: &Path) -> Result<PerformanceContract> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read contract: {}", path.display()))?;
-    let contract: PerformanceContract = serde_saphyr::from_str_with_options(&content, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary })
+    let contract: PerformanceContract = serde_saphyr::from_str_with_options(&content, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false })
         .with_context(|| format!("Failed to parse contract: {}", path.display()))?;
     Ok(contract)
 }
@@ -631,7 +631,7 @@ mod tests {
     fn test_contract_yaml_roundtrip() {
         let contract = sample_contract();
         let yaml = serde_saphyr::to_string(&contract).unwrap();
-        let parsed: PerformanceContract = serde_saphyr::from_str_with_options(&yaml, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary }).unwrap();
+        let parsed: PerformanceContract = serde_saphyr::from_str_with_options(&yaml, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false }).unwrap();
         assert_eq!(parsed.name, contract.name);
         assert_eq!(parsed.kernel, contract.kernel);
         assert_eq!(parsed.bounds.len(), 1);

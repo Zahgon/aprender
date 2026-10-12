@@ -803,7 +803,7 @@ fn main() {
     // Load config (F-PMAT-018)
     let config = if let Some(config_path) = &cli.config {
         match std::fs::read_to_string(config_path) {
-            Ok(content) => serde_saphyr::from_str_with_options(&content, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary }).unwrap_or_default(),
+            Ok(content) => serde_saphyr::from_str_with_options(&content, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false }).unwrap_or_default(),
             Err(_) => ScoringConfig::default(),
         }
     } else {

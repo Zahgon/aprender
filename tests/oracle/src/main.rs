@@ -88,7 +88,7 @@ fn oracle_pairs(data: &Path, shapes: &Path) -> Result<Vec<Pair>, String> {
 fn expected_pairs(yaml: &Path) -> Result<(String, Vec<Pair>), String> {
     let text = std::fs::read_to_string(yaml).map_err(|e| format!("{}: {e}", yaml.display()))?;
     let doc: serde_json::Value =
-        serde_saphyr::from_str_with_options(&text, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary }).map_err(|e| format!("{}: {e}", yaml.display()))?;
+        serde_saphyr::from_str_with_options(&text, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false }).map_err(|e| format!("{}: {e}", yaml.display()))?;
     let id = doc
         .get("id")
         .and_then(|v| v.as_str())
