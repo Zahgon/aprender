@@ -581,6 +581,7 @@ impl AprTransformer {
 
         // Parse tensor index
         let tensors = Self::parse_apr_tensor_index(data, tensor_index_offset, data_offset, tensor_count);
+        check_quant_tensor_sizes(&tensors)?;
 
         // GH-478: Resource limit gate — check if F32 dequant would exceed system RAM.
         // This fires BEFORE any weight allocation, preventing OOM.

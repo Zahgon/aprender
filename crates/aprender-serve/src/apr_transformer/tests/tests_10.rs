@@ -123,6 +123,12 @@ fn make_q4k_data(num_elements: usize) -> Vec<u8> {
     vec![0u8; num_blocks * 144]
 }
 
+/// Create Q5_K tensor data: 176 bytes per block, 256 elements/block (#3418:
+/// these tensors used to be built from the 144-byte Q4_K layout).
+fn make_q5k_data(num_elements: usize) -> Vec<u8> {
+    vec![0u8; num_elements.div_ceil(256) * 176]
+}
+
 /// Create Q6_K tensor data: 210 bytes per block, 256 elements/block
 fn make_q6k_data(num_elements: usize) -> Vec<u8> {
     let num_blocks = num_elements.div_ceil(256);
@@ -179,7 +185,8 @@ fn make_hf_tensors(
         match dtype {
             DTYPE_F16 => make_f16_data(num_elements, 0.01),
             DTYPE_Q8_0 => make_q8_0_data(num_elements),
-            DTYPE_Q4_K | DTYPE_Q5_K => make_q4k_data(num_elements),
+            DTYPE_Q4_K => make_q4k_data(num_elements),
+            DTYPE_Q5_K => make_q5k_data(num_elements),
             DTYPE_Q6_K => make_q6k_data(num_elements),
             _ => make_f32_data(num_elements, 0.01), // F32 default
         }
@@ -446,3 +453,53 @@ fn test_from_apr_bytes_q6k_flat_weights() {
 include!("apr_03.rs");
 include!("apr_02_02.rs");
 include!("forward_02.rs");
+
+// ============================================================================
+// #3418 (FT-GGMLT-013): a quantized tensor whose byte size does not match its
+// dims under the one ggml table is refused at load, never zero-filled.
+// ============================================================================
+
+#[test]
+fn apr_load_refuses_a_tensor_whose_bytes_do_not_fit_its_dims_3418() {
+    let hidden = 256;
+    let intermediate = 256;
+    let vocab = 4;
+    let meta = minimal_metadata(hidden, 1, 4, 4, vocab, intermediate);
+    let with_gate = |cut: usize| {
+        let mut tensors = make_hf_tensors(
+            hidden,
+            intermediate,
+            4,
+            4,
+            vocab,
+            DTYPE_F32,
+            DTYPE_F32,
+            DTYPE_F32,
+        );
+        for t in &mut tensors {
+            if t.name.contains("gate_proj") {
+                let num_elements: usize = t.dims.iter().map(|d| *d as usize).product();
+                // Q4_0: 18 bytes per 32 values, scale f16 1.0 then nibbles.
+                let mut data: Vec<u8> = (0..num_elements / 32 * 18)
+                    .map(|i| ((i * 37 + 11) % 256) as u8)
+                    .collect();
+                for b in data.chunks_exact_mut(18) {
+                    b[..2].copy_from_slice(&[0x00, 0x3C]);
+                }
+                data.truncate(data.len() - cut);
+                t.dtype = 2;
+                t.data = data;
+            }
+        }
+        AprTransformer::from_apr_bytes(&build_apr_v2(&meta, &tensors))
+    };
+
+    let whole = with_gate(0);
+    assert!(whole.is_ok(), "a whole Q4_0 tensor: {}", whole.unwrap_err());
+
+    let short = with_gate(1);
+    assert!(
+        short.is_err(),
+        "a Q4_0 tensor one byte short was loaded (its weights zero-filled) instead of refused"
+    );
+}

@@ -1,5 +1,5 @@
 metadata:
-  version: 1.7.0
+  version: 1.8.0
   created: '2026-09-20'
   author: PAIML Engineering
   description: |
@@ -44,7 +44,7 @@ metadata:
   - 'GitHub #3418 (serve sizes from TRAITS, one table), #3430 (M1), #3431 (M2 reconciliation), #3421 (epic), #3563 (pin-derived artifacts, general case)'
 
 name: ggml-type
-version: 1.7.0
+version: 1.8.0
 scope: aprender-quant (trueno_quant) ggml tensor-type enum and TRAITS table
 
 description: |
@@ -306,6 +306,25 @@ falsification_tests:
     Measured 2026-10-12 on la-74/3418 b8e2f67d3, before the change: RED on
     the first check (a 64-value AprQ4 tensor came back as 9 F32 values).
     GREEN after; each of the four arms, removed alone, turns it RED.
+- id: FT-GGMLT-013
+  rule: the APR loader refuses a block-quantized tensor whose byte size does not fit its dims under the one ggml table, instead of zero-filling it (#3418)
+  prediction: |
+    apr_load_refuses_a_tensor_whose_bytes_do_not_fit_its_dims_3418
+    (aprender-serve lib) builds a minimal APR v2 file whose gate_proj is Q4_0
+    (ggml 2). With the whole 18-byte-per-32 payload AprTransformer::from_apr_bytes
+    is Ok; with one byte cut it is Err. The accepted sizes come from the
+    table (blck_size, type_size): ceil(n / blck) * type_size, or for a 2-D
+    tensor rows * ceil(cols / blck) * type_size (rows padded, GH-202). Ids 8
+    and 9 are skipped (legacy APR Q4/Q8, GH-438). GREEN once the loader
+    checks; removing the check turns it RED.
+  test: cargo test -p aprender-serve --lib apr_load_refuses_a_tensor_whose_bytes_do_not_fit_its_dims_3418
+  if_fails: 'a short or oversized quantized APR tensor loads, and the decoder zero-fills the weights it cannot read.'
+  evidence: |
+    Measured 2026-10-12 on la-74/3418 dab237dac, before the change: RED on
+    the short check (the one-byte-short Q4_0 tensor loaded; the whole one
+    loaded too, as it should). GREEN after; removing the check turns it RED.
+    Two existing Q5_K fixtures (tests_10 make_hf_tensors) were built from the
+    144-byte Q4_K layout; the check refused them and they now use 176 bytes.
 
 kani_harnesses:
 - id: KANI-GGMLT-001

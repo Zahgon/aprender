@@ -81,6 +81,41 @@ fn dequant_superblock_tensor(
     }
 }
 
+/// #3418 (FT-GGMLT-013): refuse a block-quantized tensor whose byte size does
+/// not fit its dims under the one ggml table. The decoders zero-fill what they
+/// cannot read, so a short tensor would otherwise load as zeros. A 2-D tensor
+/// may store each row padded to whole blocks (GH-202). Ids 8 and 9 are the
+/// legacy APR Q4/Q8 ids (GH-438) and are not ggml blocks here.
+fn check_quant_tensor_sizes(
+    tensors: &std::collections::BTreeMap<String, (usize, usize, Vec<usize>, u8)>,
+) -> crate::error::Result<()> {
+    for (name, (_, size, dims, dtype)) in tensors {
+        if matches!(dtype, 8 | 9) {
+            continue;
+        }
+        let Some(t) = crate::gguf::ggml_type_table::traits(u32::from(*dtype))
+            .filter(|t| t.blck_size > 1)
+        else {
+            continue;
+        };
+        let elements: usize = dims.iter().product();
+        let flat = elements.div_ceil(t.blck_size) * t.type_size;
+        let padded = match dims.as_slice() {
+            [rows, cols] => rows * cols.div_ceil(t.blck_size) * t.type_size,
+            _ => flat,
+        };
+        if *size != flat && *size != padded {
+            return Err(crate::error::RealizarError::FormatError {
+                reason: format!(
+                    "tensor {name}: {size} bytes do not fit dims {dims:?} as {} ({flat} or {padded} expected)",
+                    t.name
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Dequantize a single tensor's raw bytes based on GGML dtype.
 /// GH-191: Match on GGML dtype values written by converter.
 /// GH-88: Added Q4_0, Q4_1, Q5_0, Q5_1 support for mixed-quantization GGUF imports.
