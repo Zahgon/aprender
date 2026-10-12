@@ -138,7 +138,7 @@ fn main() {
         gpu_results.push(bench_long_context());
         pb.inc(1);
 
-        pb.set_message("GPU-010: Production Parity (M7)");
+        pb.set_message("GPU-010: Sustained Generation (M7)");
         gpu_results.push(bench_production_parity());
         pb.inc(1);
 
@@ -1130,19 +1130,11 @@ fn bench_long_context() -> BenchResult {
     }
 }
 
-/// GPU-010: Production Parity Benchmark (M7 target: 80% of llama.cpp)
-/// Simulates production workload and compares against llama.cpp baseline
+/// GPU-010: sustained generation throughput (M7). It reports our own sustained tok/s against our
+/// own 50 tok/s floor. llama.cpp is not run, so no parity is claimed; that needs llama.cpp
+/// measured on the same config and model (a comparator baseline is measured or absent, never
+/// asserted: PERF-008, F12).
 fn bench_production_parity() -> BenchResult {
-    // llama.cpp reference: 256 tok/s for 7B model on CUDA
-    // Target: 80% parity = 205 tok/s
-    // However, we're using WGPU (not CUDA) and test 0.1B model
-    // Scale target proportionally: 205 * (0.1/7) * adjustment_factor
-
-    // For fair comparison with our test workload:
-    // - Our GPU-007 achieves ~60 tok/s for 0.1B scale simulation
-    // - llama.cpp achieves 256 tok/s for actual 7B
-    // - Our target for "production parity" is achieving consistent, sustained throughput
-
     // Use production-realistic config (same as GPU-007 large model)
     let vocab_size = 32000usize;
     let hidden_dim = 1024usize;
@@ -1199,24 +1191,19 @@ fn bench_production_parity() -> BenchResult {
 
     let sustained_tok_s = total_tokens as f64 / total_time.as_secs_f64();
 
-    // Production parity target:
-    // For our 0.1B simulation, we target sustained throughput of 50 tok/s
-    // This represents "production ready" inference that can serve requests consistently
-    let production_target = 50.0; // tok/s sustained
-
-    // Calculate parity percentage against our scaled target
-    let parity_pct = (sustained_tok_s / production_target) * 100.0;
+    // Our own floor for this synthetic config, not a comparator: 50 tok/s sustained
+    let production_target = 50.0;
 
     BenchResult {
         name: format!(
-            "GPU-010: Prod Parity{}",
+            "GPU-010: Sustained Gen{}",
             if has_gpu { " (GPU)" } else { " (CPU)" }
         ),
         metric: "Sustained".to_string(),
         value: sustained_tok_s,
         unit: "tok/s".to_string(),
-        target: production_target, // M7 target: 50 tok/s sustained
-        passed: sustained_tok_s >= production_target && parity_pct >= 80.0,
+        target: production_target, // M7: our own 50 tok/s sustained floor
+        passed: sustained_tok_s >= production_target,
     }
 }
 

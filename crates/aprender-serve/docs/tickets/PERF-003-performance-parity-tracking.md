@@ -12,6 +12,12 @@ Last measured: 2025-12-12 (Updated after M28 completion - Metrics & Health Monit
 > divided our measured throughput by `llama_cpp_reference = 50.0`, a constant llama.cpp was never
 > run to produce (a fabricated comparator baseline, PERF-008 F12). GPU-018 now reports only its own
 > measured tok/s, as an informational line outside the results table and the pass counts. A parity figure needs llama.cpp measured on the same config and model.
+>
+> **Correction (2026-10-12, #5072).** GPU-010 / M7 was named "Production Parity" and framed on a
+> llama.cpp reference (256 tok/s for a 7B model on CUDA, an 80% parity target) that the example
+> never ran. It never compared against llama.cpp: it measures our own sustained tok/s against our
+> own 50 tok/s floor, and that is all it now claims. M7 is a sustained-throughput floor, not parity
+> with llama.cpp, which is not measured.
 
 ### Benchmark Results Summary
 
@@ -44,7 +50,7 @@ Last measured: 2025-12-12 (Updated after M28 completion - Metrics & Health Monit
 | GPU-007: Large Model | Throughput | **60.80 tok/s** | 50 tok/s | ✅ Pass |
 | GPU-008: Memory Efficiency | Est. VRAM | **6.15 GB** | 8 GB | ✅ Pass |
 | GPU-009: Long Context | Context Len | **2048 pos** | 2048 pos | ✅ Pass |
-| GPU-010: Prod Parity | Sustained | **83.29 tok/s** | 50 tok/s | ✅ Pass |
+| GPU-010: Sustained Gen | Sustained, own floor (no llama.cpp parity) | **83.29 tok/s** | 50 tok/s | ✅ Pass |
 | GPU-011: Extended Context | Context Len | **4096 pos** | 4096 pos | ✅ Pass |
 | GPU-012: Ultra-Long Context | Context Len | **8192 pos** | 8192 pos | ✅ Pass |
 | GPU-013: Super-Long Context | Context Len | **16384 pos** | 16384 pos | ✅ Pass |
@@ -77,7 +83,7 @@ Last measured: 2025-12-12 (Updated after M28 completion - Metrics & Health Monit
 | M4: Full Parity | 230+ tok/s | 736 tok/s | ✅ **ACHIEVED (3.2x)** |
 | M5: Large Model | 50 tok/s (7B scale) | **63.00 tok/s** | ✅ **COMPLETE (1.26x)** |
 | M6: Memory Efficiency | < 8GB VRAM | **6.15 GB** | ✅ **COMPLETE** |
-| M7: Production Parity | 50 tok/s sustained | **83.29 tok/s** | ✅ **COMPLETE (1.67x)** |
+| M7: Sustained Throughput (own floor; llama.cpp parity not measured, see correction) | 50 tok/s sustained | **83.29 tok/s** | ✅ **COMPLETE (1.67x own floor)** |
 | M8: Extended Context | 4096 positions | **4096 pos** | ✅ **COMPLETE** |
 | M9: Ultra-Long Context | 8192 positions | **8192 pos** | ✅ **COMPLETE** |
 | M10: Super-Long Context | 16384 positions | **16384 pos** | ✅ **COMPLETE** |
@@ -131,7 +137,7 @@ Last measured: 2025-12-12 (Updated after M28 completion - Metrics & Health Monit
 4. **PERF-005**: ✅ RESOLVED - M3 COMPLETE - GPU token generation at 450 tok/s (3.5x target!)
 5. **PERF-006**: ✅ RESOLVED - M5 COMPLETE - Large model at 63.00 tok/s (1.26x target!)
 6. **PERF-007**: ✅ RESOLVED - M6 COMPLETE - StreamingKVCache at 6.15 GB VRAM (23% under target!)
-7. **PERF-008**: ✅ RESOLVED - M7 COMPLETE - Production parity at 83.29 tok/s sustained (67% over target!)
+7. **PERF-008**: ✅ RESOLVED - M7 COMPLETE - 83.29 tok/s sustained, 67% over our own 50 tok/s floor (no llama.cpp parity, see correction)
 8. **PERF-009**: ✅ RESOLVED - M8 COMPLETE - Extended context at 4096 positions
 9. **PERF-010**: ✅ RESOLVED - M9 COMPLETE - Ultra-long context at 8192 positions
 10. **PERF-011**: ✅ RESOLVED - M10 COMPLETE - Super-long context at 16384 positions
@@ -170,7 +176,7 @@ Last measured: 2025-12-12 (Updated after M28 completion - Metrics & Health Monit
 6. [x] ~~Optimize for larger models - M5 target: 50 tok/s~~ ✅ 63.00 tok/s achieved!
 7. [x] ~~Implement StreamingKVCache (M6)~~ ✅ 6.15 GB VRAM (23% under target!)
 8. [x] ~~Add GPU-008/009 benchmarks~~ ✅ Memory efficiency + Long context
-9. [x] ~~Add GPU-010 production parity benchmark (M7)~~ ✅ 83.29 tok/s sustained
+9. [x] ~~Add GPU-010 sustained-throughput benchmark (M7)~~ ✅ 83.29 tok/s sustained (own floor, no llama.cpp parity)
 10. [x] ~~Add GPU-011 extended context benchmark (M8)~~ ✅ 4096 positions
 11. [x] ~~Add GPU-012 ultra-long context benchmark (M9)~~ ✅ 8192 positions
 12. [ ] Implement actual 7B model loading (future enhancement)
@@ -231,7 +237,7 @@ cargo test --lib --features gpu
 | M4: Full Parity | ✅ Complete | 3.9x target (904 vs 230 tok/s) |
 | M5: Large Model | ✅ Complete | 1.26x target (63.18 vs 50 tok/s) |
 | M6: Memory Efficiency | ✅ Complete | 23% under target (6.15 vs 8 GB) |
-| M7: Production Parity | ✅ Complete | 1.72x target (86.07 vs 50 tok/s sustained) |
+| M7: Sustained Throughput | ✅ Complete (own floor) | 1.72x our own floor (86.07 vs 50 tok/s sustained); llama.cpp parity not measured |
 | M8: Extended Context | ✅ Complete | 4096 positions supported |
 | M9: Ultra-Long Context | ✅ Complete | 8192 positions supported |
 | M10: Super-Long Context | ✅ Complete | 16384 positions supported |
