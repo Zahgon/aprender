@@ -567,10 +567,10 @@ mod tests {
     }
 
     /// The model ladder owes a cell to every command in the release cell universe (#3745, quorum
-    /// q-3745 option A). A LAB check, run beside the tree scan in guards-nightly.yml; the release path
+    /// q-3745 option A). A LAB check, run beside the tree scan in guards-nightly.yml (ticket #5231); the release path
     /// still judges the ladder's own verb set and the anti-shrink floor as before.
     #[test]
-    #[ignore = "LAB (#3745): the ladder-gap requirement runs in guards-nightly.yml, never on a PR path"]
+    #[ignore = "LAB (#5231): the ladder-gap requirement runs in guards-nightly.yml, never on a PR path"]
     fn the_ladder_owes_every_model_cell_command() {
         let p = repo_root().join("contracts/model-capability-ladder-v1.yaml");
         let text = std::fs::read_to_string(&p).expect("the ladder contract is readable");
