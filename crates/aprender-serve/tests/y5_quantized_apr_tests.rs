@@ -23,7 +23,11 @@ fn y5_1a_quantization_type_enum_exists() {
 
     // Verify as_bits_per_weight returns correct values
     assert_eq!(_q4k.bits_per_weight(), 4.5, "Q4_K is 4.5 bits/weight");
-    assert_eq!(_q8_0.bits_per_weight(), 8.0, "Q8_0 is 8 bits/weight");
+    assert_eq!(
+        _q8_0.bits_per_weight(),
+        8.5,
+        "Q8_0 is 8.5 bits/weight (34 bytes per 32, ggml table)"
+    );
     assert_eq!(_f32.bits_per_weight(), 32.0, "F32 is 32 bits/weight");
 }
 

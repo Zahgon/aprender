@@ -26,14 +26,14 @@ fn test_quantization_type_default() {
 fn test_quantization_type_bits_per_weight() {
     assert_eq!(AprQuantizationType::F32.bits_per_weight(), 32.0);
     assert_eq!(AprQuantizationType::Q4_K.bits_per_weight(), 4.5);
-    assert_eq!(AprQuantizationType::Q8_0.bits_per_weight(), 8.0);
+    assert_eq!(AprQuantizationType::Q8_0.bits_per_weight(), 8.5);
 }
 
 #[test]
 fn test_quantization_type_bytes_per_block() {
     assert_eq!(AprQuantizationType::F32.bytes_per_block(), 4);
     assert_eq!(AprQuantizationType::Q4_K.bytes_per_block(), 144);
-    assert_eq!(AprQuantizationType::Q8_0.bytes_per_block(), 36);
+    assert_eq!(AprQuantizationType::Q8_0.bytes_per_block(), 34);
 }
 
 #[test]
@@ -146,7 +146,7 @@ fn test_quantized_transformer_new_q8_0() {
     let transformer = QuantizedAprTransformer::new(config, AprQuantizationType::Q8_0);
 
     assert_eq!(transformer.quantization_type(), AprQuantizationType::Q8_0);
-    assert_eq!(transformer.bits_per_weight(), 8.0);
+    assert_eq!(transformer.bits_per_weight(), 8.5);
 }
 
 #[test]
@@ -327,7 +327,7 @@ fn test_quantized_transformer_calculate_quantized_bytes() {
     // 100 values = 4 blocks (ceil(100/32) = 4)
     assert_eq!(
         QuantizedAprTransformer::calculate_quantized_bytes(100, AprQuantizationType::Q8_0),
-        4 * 36
+        4 * 34
     );
 }
 

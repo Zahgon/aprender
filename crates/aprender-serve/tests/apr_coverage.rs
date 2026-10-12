@@ -1484,14 +1484,14 @@ fn test_generate_config_custom() {
 fn test_apr_quantization_type_bits_per_weight() {
     assert!((AprQuantizationType::F32.bits_per_weight() - 32.0).abs() < 0.001);
     assert!((AprQuantizationType::Q4_K.bits_per_weight() - 4.5).abs() < 0.001);
-    assert!((AprQuantizationType::Q8_0.bits_per_weight() - 8.0).abs() < 0.001);
+    assert!((AprQuantizationType::Q8_0.bits_per_weight() - 8.5).abs() < 0.001);
 }
 
 #[test]
 fn test_apr_quantization_type_bytes_per_block() {
     assert_eq!(AprQuantizationType::F32.bytes_per_block(), 4);
     assert_eq!(AprQuantizationType::Q4_K.bytes_per_block(), 144);
-    assert_eq!(AprQuantizationType::Q8_0.bytes_per_block(), 36);
+    assert_eq!(AprQuantizationType::Q8_0.bytes_per_block(), 34);
 }
 
 #[test]
@@ -2552,7 +2552,7 @@ fn test_apr_quantization_type_all_types() {
     let types = [
         (AprQuantizationType::F32, 32.0, 4, 1, 0),
         (AprQuantizationType::Q4_K, 4.5, 144, 256, 1),
-        (AprQuantizationType::Q8_0, 8.0, 36, 32, 2),
+        (AprQuantizationType::Q8_0, 8.5, 34, 32, 2),
     ];
 
     for (qtype, bits, bytes_per_block, values_per_block, byte_id) in types {

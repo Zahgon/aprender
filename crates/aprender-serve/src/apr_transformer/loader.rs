@@ -311,34 +311,39 @@ pub enum AprQuantizationType {
 }
 
 impl AprQuantizationType {
-    /// Get bits per weight for this quantization type
+    /// The ggml type id this variant is laid out as (FT-GGMLT-016, #3418).
+    #[must_use]
+    pub fn ggml_id(&self) -> u32 {
+        match self {
+            Self::F32 => 0,
+            Self::Q4_K => 12,
+            Self::Q8_0 => 8,
+        }
+    }
+
+    /// This variant's row in the one ggml table.
+    fn traits(&self) -> &'static crate::gguf::ggml_type_table::GgmlTypeTraits {
+        crate::gguf::ggml_type_table::traits(self.ggml_id())
+            .expect("AprQuantizationType ggml ids are rows of the ggml table")
+    }
+
+    /// Get bits per weight for this quantization type (from the ggml table)
     #[must_use]
     pub fn bits_per_weight(&self) -> f64 {
-        match self {
-            Self::F32 => 32.0,
-            Self::Q4_K => 4.5, // 144 bytes per 256 values
-            Self::Q8_0 => 8.0, // 36 bytes per 32 values (scale + 32 int8)
-        }
+        let t = self.traits();
+        (t.type_size * 8) as f64 / t.blck_size as f64
     }
 
-    /// Get bytes per super-block (256 values for Q4_K, 32 for Q8_0)
+    /// Get bytes per block (from the ggml table: Q4_K 144, Q8_0 34)
     #[must_use]
     pub fn bytes_per_block(&self) -> usize {
-        match self {
-            Self::F32 => 4,    // 4 bytes per value
-            Self::Q4_K => 144, // 144 bytes per 256 values
-            Self::Q8_0 => 36,  // 4 (scale) + 32 (int8) per 32 values
-        }
+        self.traits().type_size
     }
 
-    /// Get values per block
+    /// Get values per block (from the ggml table: Q4_K 256, Q8_0 32)
     #[must_use]
     pub fn values_per_block(&self) -> usize {
-        match self {
-            Self::F32 => 1,
-            Self::Q4_K => 256,
-            Self::Q8_0 => 32,
-        }
+        self.traits().blck_size
     }
 
     /// Convert to byte representation for header

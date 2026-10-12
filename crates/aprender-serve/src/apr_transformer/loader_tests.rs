@@ -15,14 +15,14 @@ mod tests {
     fn test_quant_type_bits_per_weight() {
         assert!((AprQuantizationType::F32.bits_per_weight() - 32.0).abs() < 0.001);
         assert!((AprQuantizationType::Q4_K.bits_per_weight() - 4.5).abs() < 0.001);
-        assert!((AprQuantizationType::Q8_0.bits_per_weight() - 8.0).abs() < 0.001);
+        assert!((AprQuantizationType::Q8_0.bits_per_weight() - 8.5).abs() < 0.001);
     }
 
     #[test]
     fn test_quant_type_bytes_per_block() {
         assert_eq!(AprQuantizationType::F32.bytes_per_block(), 4);
         assert_eq!(AprQuantizationType::Q4_K.bytes_per_block(), 144);
-        assert_eq!(AprQuantizationType::Q8_0.bytes_per_block(), 36);
+        assert_eq!(AprQuantizationType::Q8_0.bytes_per_block(), 34);
     }
 
     #[test]
@@ -115,7 +115,7 @@ mod tests {
         let config = make_test_config();
         let qt = QuantizedAprTransformer::new(config.clone(), AprQuantizationType::Q8_0);
         assert_eq!(qt.quantization_type(), AprQuantizationType::Q8_0);
-        assert!((qt.bits_per_weight() - 8.0).abs() < 0.001);
+        assert!((qt.bits_per_weight() - 8.5).abs() < 0.001);
     }
 
     #[test]
@@ -173,15 +173,15 @@ mod tests {
 
     #[test]
     fn test_quantized_transformer_calculate_quantized_bytes_q8_0() {
-        // 32 values = 1 block = 36 bytes
+        // 32 values = 1 block = 34 bytes (ggml Q8_0, FT-GGMLT-016)
         let bytes =
             QuantizedAprTransformer::calculate_quantized_bytes(32, AprQuantizationType::Q8_0);
-        assert_eq!(bytes, 36);
+        assert_eq!(bytes, 34);
 
-        // 33 values = 2 blocks = 72 bytes
+        // 33 values = 2 blocks = 68 bytes
         let bytes =
             QuantizedAprTransformer::calculate_quantized_bytes(33, AprQuantizationType::Q8_0);
-        assert_eq!(bytes, 72);
+        assert_eq!(bytes, 68);
     }
 
     #[test]
@@ -299,6 +299,28 @@ mod tests {
             let qt2 = QuantizedAprTransformer::from_bytes(&bytes).unwrap();
             assert_eq!(qt2.quantization_type(), quant_type);
             assert_eq!(qt2.config().hidden_dim, config.hidden_dim);
+        }
+    }
+}
+
+/// FT-GGMLT-016 (#3418): AprQuantizationType sizes are the one ggml table's.
+#[cfg(test)]
+mod table_sizes_3418 {
+    use super::AprQuantizationType;
+
+    #[test]
+    fn apr_quantization_type_sizes_come_from_the_table_3418() {
+        for (q, id) in [
+            (AprQuantizationType::F32, 0u32),
+            (AprQuantizationType::Q4_K, 12),
+            (AprQuantizationType::Q8_0, 8),
+        ] {
+            assert_eq!(q.ggml_id(), id, "{q:?} ggml id");
+            let t = crate::gguf::ggml_type_table::traits(id).expect("ggml id in the table");
+            assert_eq!(q.bytes_per_block(), t.type_size, "{q:?} bytes per block vs {}", t.name);
+            assert_eq!(q.values_per_block(), t.blck_size, "{q:?} values per block vs {}", t.name);
+            let bits = (t.type_size * 8) as f64 / t.blck_size as f64;
+            assert!((q.bits_per_weight() - bits).abs() < 1e-9, "{q:?} bits per weight vs {}", t.name);
         }
     }
 }
