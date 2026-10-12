@@ -1002,4 +1002,107 @@ mod dequant_dispatch_tests_4621 {
             crate::quantize::dequantize_q2_k(row).expect("oracle")
         });
     }
+
+    /// #5119: blocks whose scale f16s are NaN, +Inf or -Inf, one pattern per block in
+    /// turn, against the CPU oracle. Returns `(bit-equal, both NaN with different bits,
+    /// finite on one side only or unequal finite)` over the `n * k` outputs.
+    fn non_finite_scale_census(
+        qtype: WeightQuantType,
+        block_bytes: usize,
+        f16_at: &[usize],
+        row_oracle: impl Fn(&[u8]) -> Vec<f32>,
+    ) -> Option<(usize, usize, usize)> {
+        let mut exec = executor()?;
+        let (n, k) = (4usize, 3584usize);
+        let mut bytes = random_blocks(n, k, block_bytes, f16_at);
+        let specials = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY];
+        for (i, blk) in bytes.chunks_exact_mut(block_bytes).enumerate() {
+            // block i: field (i / 3) % len gets specials[i % 3]; every 4th block stays finite
+            if i % 4 == 3 {
+                continue;
+            }
+            let at = f16_at[(i / 3) % f16_at.len()];
+            let v = half::f16::from_f32(specials[i % 3]);
+            blk[at..at + 2].copy_from_slice(&v.to_le_bytes());
+        }
+        let row_bytes = k.div_ceil(256) * block_bytes;
+        let mut want = Vec::with_capacity(n * k);
+        for row in bytes.chunks_exact(row_bytes) {
+            want.extend_from_slice(&row_oracle(row)[..k]);
+        }
+        let zeros = vec![0.0f32; n * k];
+        exec.dequant_scratch = Some(GpuBuffer::from_host(&exec.context, &zeros).expect("scratch"));
+        exec.dequant_scratch_size = zeros.len();
+        let w = GpuBuffer::from_host(&exec.context, &bytes).expect("w");
+        exec.qwen35_dequant_f32(qtype, w.as_ptr(), n as u32, k as u32)
+            .unwrap_or_else(|e| panic!("#5119: {qtype:?} has a dequant kernel: {e}"));
+        exec.stream.synchronize().expect("sync");
+        let mut got = vec![0.0f32; n * k];
+        exec.dequant_scratch
+            .as_ref()
+            .expect("scratch")
+            .copy_to_host(&mut got)
+            .expect("readback");
+        let (mut eq, mut nan_bits, mut diff) = (0, 0, 0);
+        let mut first = None;
+        for i in 0..n * k {
+            if got[i].to_bits() == want[i].to_bits() {
+                eq += 1;
+            } else if got[i].is_nan() && want[i].is_nan() {
+                nan_bits += 1;
+            } else {
+                diff += 1;
+                first.get_or_insert((i, got[i], want[i]));
+            }
+        }
+        eprintln!("#5119 {qtype:?}: eq={eq} nan_bits={nan_bits} diff={diff} first={first:?}");
+        Some((eq, nan_bits, diff))
+    }
+
+    /// #5119: on NaN/±Inf scales the device and the CPU oracle agree on every output.
+    /// Finite outputs are bit-equal and each NaN sits where the oracle has a NaN; only
+    /// the NaN payload bits differ (PTX canonical NaN vs the propagated f16 payload).
+    #[test]
+    fn non_finite_scales_match_the_cpu_oracle_5119() {
+        use crate::quantize::iq2_s::{dequantize_iq2_s, IQ2_S_BLOCK_BYTES};
+        use crate::quantize::iq2_xxs::{GGML_TYPE_IQ2_XXS, IQ2_XXS_BLOCK_BYTES};
+        use crate::quantize::iq3_s::{GGML_TYPE_IQ3_S, IQ3_S_BLOCK_BYTES};
+        use crate::quantize::iq3_xxs::{GGML_TYPE_IQ3_XXS, IQ3_XXS_BLOCK_BYTES};
+        let rows = [
+            non_finite_scale_census(WeightQuantType::IQ2S, IQ2_S_BLOCK_BYTES, &[0], |row| {
+                dequantize_iq2_s(row).expect("oracle")
+            }),
+            non_finite_scale_census(WeightQuantType::Q2K, 84, &[80, 82], |row| {
+                crate::quantize::dequantize_q2_k(row).expect("oracle")
+            }),
+            non_finite_scale_census(
+                WeightQuantType::IQ2XXS,
+                IQ2_XXS_BLOCK_BYTES,
+                &[0],
+                iq_row_oracle(GGML_TYPE_IQ2_XXS, IQ2_XXS_BLOCK_BYTES),
+            ),
+            non_finite_scale_census(
+                WeightQuantType::IQ3S,
+                IQ3_S_BLOCK_BYTES,
+                &[0],
+                iq_row_oracle(GGML_TYPE_IQ3_S, IQ3_S_BLOCK_BYTES),
+            ),
+            non_finite_scale_census(
+                WeightQuantType::IQ3XXS,
+                IQ3_XXS_BLOCK_BYTES,
+                &[0],
+                iq_row_oracle(GGML_TYPE_IQ3_XXS, IQ3_XXS_BLOCK_BYTES),
+            ),
+        ];
+        for r in rows.into_iter().flatten() {
+            assert_eq!(
+                r.2, 0,
+                "#5119: a finite/non-finite or value mismatch: {r:?}"
+            );
+            assert!(
+                r.1 > 0 && r.0 > 0,
+                "#5119: the non-finite blocks were not exercised: {r:?}"
+            );
+        }
+    }
 }
