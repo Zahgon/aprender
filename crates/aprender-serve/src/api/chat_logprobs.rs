@@ -701,8 +701,12 @@ mod tests {
                 logit: 4.0,
                 logprob: -0.25,
             }],
+            logsumexp_full: 4.25,
         };
         let lp = ChatLogprobs::from_steps(&tokenizer(), &[s]);
+        assert_eq!(lp.content[0].token_id, 1);
+        assert_eq!(lp.content[0].logsumexp_full, 4.25);
+        assert_eq!(lp.content[0].top_logprobs[0].token_id, 1);
         assert_eq!(lp.content[0].logprob, -0.25);
         assert_eq!(lp.content[0].top_logprobs[0].logprob, -0.25);
     }
