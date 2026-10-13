@@ -104,6 +104,7 @@ mod tests {
         let metrics = MultiClassMetrics::from_predictions(&[0, 1], &[0, 1]);
         assert_eq!(metrics.f1_avg_for_classes(&[]), None);
         assert_eq!(metrics.f1_avg_for_classes(&[1, 2]), None);
+        assert_eq!(metrics.f1_avg_for_classes(&[1, 1]), None);
     }
 
     #[test]
