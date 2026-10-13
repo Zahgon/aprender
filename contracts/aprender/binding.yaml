@@ -415,19 +415,19 @@ bindings:
   signature: 'fn global_max_pool(node_features: &[Vec<f32>], batch: &[usize]) -> Vec<Vec<f32>>'
   status: implemented
   notes: Max aggregation of node features per graph
-- contract: ../gguf-format-safety-v1.yaml
+- contract: gguf-format-safety-v1.yaml
   equation: magic_validation
   module_path: aprender::bundle::format
   function: validate_magic
   status: implemented
   notes: Magic byte check before any allocation
-- contract: ../gguf-format-safety-v1.yaml
+- contract: gguf-format-safety-v1.yaml
   equation: metadata_kv_safety
   module_path: aprender::format::gguf::reader
   function: read_metadata_value
   status: implemented
   notes: String length checked before alloc (CVE-2024-25664 mitigation)
-- contract: ../safetensors-format-safety-v1.yaml
+- contract: safetensors-format-safety-v1.yaml
   equation: header_size_validation
   module_path: aprender::format::core_io
   function: parse_and_validate_header
@@ -989,14 +989,14 @@ bindings:
   status: implemented
   notes: Per-request KV cache, immutable model weights (Arc)
 # --- encoder-forward-v1 bindings (GH-326, BERT inference) ---
-- contract: ../encoder-forward-v1.yaml
+- contract: encoder-forward-v1.yaml
   equation: encoder_layer
   module_path: aprender::models::bert::layer
   function: BertLayer::forward
   signature: 'fn forward(&self, input: &Tensor) -> Tensor'
   status: implemented
   notes: "BERT encoder layer: LayerNorm(x + BiAttn(x)) → LayerNorm(h + FFN(h))"
-- contract: ../encoder-forward-v1.yaml
+- contract: encoder-forward-v1.yaml
   equation: cls_pooling
   module_path: aprender::models::bert
   function: cls_embedding
@@ -1004,21 +1004,21 @@ bindings:
   status: not_implemented
   notes: "CLS pooling: encoder_output[0] (first token embedding)"
 # --- format-parity-v1 bindings (model format conversion) ---
-- contract: ../format-parity-v1.yaml
+- contract: format-parity-v1.yaml
   equation: transpose_involution
   module_path: aprender::format::layout
   function: swap_axes
   signature: 'fn swap_axes(tensor: &Tensor) -> Tensor'
   status: not_implemented
   notes: "swap(swap(shape)) == shape — transpose is its own inverse"
-- contract: ../format-parity-v1.yaml
+- contract: format-parity-v1.yaml
   equation: element_count
   module_path: aprender::format::layout
   function: validate_element_count
   signature: 'fn validate_element_count(gguf_shape: &[usize], apr_shape: &[usize]) -> bool'
   status: not_implemented
   notes: product(gguf_shape) == product(apr_shape) across format conversion
-- contract: ../format-parity-v1.yaml
+- contract: format-parity-v1.yaml
   equation: name_bijection
   module_path: aprender::format::converter_types
   function: Architecture::map_name
@@ -1026,7 +1026,7 @@ bindings:
   status: implemented
   notes: "Bijective tensor name mapping: GGUF ↔ APR ↔ SafeTensors"
 # --- bidirectional-attention-v1 bindings (BERT attention) ---
-- contract: ../bidirectional-attention-v1.yaml
+- contract: bidirectional-attention-v1.yaml
   equation: bidirectional_attention
   module_path: aprender::nn::transformer
   function: bidirectional_attention

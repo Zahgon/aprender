@@ -233,19 +233,19 @@ bindings:
   signature: 'fn global_max_pool(node_features: &[Vec<f32>], batch: &[usize]) -> Vec<Vec<f32>>'
   status: implemented
   notes: Max aggregation of node features per graph
-- contract: ../gguf-format-safety-v1.yaml
+- contract: gguf-format-safety-v1.yaml
   equation: magic_validation
   module_path: aprender::bundle::format
   function: validate_magic
   status: implemented
   notes: Magic byte check before any allocation
-- contract: ../gguf-format-safety-v1.yaml
+- contract: gguf-format-safety-v1.yaml
   equation: metadata_kv_safety
   module_path: aprender::format::gguf::reader
   function: read_metadata_value
   status: implemented
   notes: String length checked before alloc (CVE-2024-25664 mitigation)
-- contract: ../safetensors-format-safety-v1.yaml
+- contract: safetensors-format-safety-v1.yaml
   equation: header_size_validation
   module_path: aprender::format::core_io
   function: parse_and_validate_header
