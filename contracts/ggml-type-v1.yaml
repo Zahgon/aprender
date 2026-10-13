@@ -1,5 +1,5 @@
 metadata:
-  version: 1.23.0
+  version: 1.24.0
   created: '2026-09-20'
   author: PAIML Engineering
   description: |
@@ -44,7 +44,7 @@ metadata:
   - 'GitHub #3418 (serve sizes from TRAITS, one table), #3430 (M1), #3431 (M2 reconciliation), #3421 (epic), #3563 (pin-derived artifacts, general case)'
 
 name: ggml-type
-version: 1.23.0
+version: 1.24.0
 scope: aprender-quant (trueno_quant) ggml tensor-type enum and TRAITS table
 
 description: |
@@ -577,6 +577,17 @@ falsification_tests:
   if_fails: 'a quantized APR transformer returns all-zero logits whatever its LM head bytes are.'
   evidence: |
     Quorum 2026-10-13 (sonnet+haiku, planted fact F5; haiku caught it by id, sonnet in substance): 2/2 a.
+- id: FT-GGMLT-029
+  rule: the GPU Q4 adapter (AprQ4ToGpuAdapter::upload_weights) types every weight by its own QuantizedAprTensorQ4.qtype (typed_weights / gpu_q4_weight_type) before anything is uploaded, and refuses any type but Q4_0 because the GPU Q4 forward runs only the Q4_0 gemv; no weight is labelled Q4_0 by a fixed constant (#3418, quorum handoff/quorum-la074-a1-gpuq4.md 2/2 a)
+  prediction: |
+    gpu_q4_upload_types_every_weight_by_its_own_qtype_3418: names in upload order,
+    every type Q4_0, the data is the tensor's own slice.
+    gpu_q4_upload_refuses_a_non_q4_0_weight_3418: a Q8_0 ffn_down is refused by name
+    and type, and a mixed-type QKV (u32::MAX) is refused. Accepting every type as Q4_0 is RED.
+  test: cargo test -p aprender-serve --features cuda --lib gpu_q4_upload
+  if_fails: 'a Q8_0, Q4_K or Q6_K APR-Q4 weight is uploaded labelled Q4_0 and run through the Q4_0 GPU kernel, giving garbage logits with no error.'
+  evidence: |
+    Quorum 2026-10-13 (sonnet+haiku, planted fact F3 caught by both): 2/2 a.
 
 kani_harnesses:
 - id: KANI-GGMLT-001

@@ -445,3 +445,83 @@ fn test_create_model_no_layers() {
 }
 
 include!("layer_norms_tests.rs");
+
+// ============================================================================
+// FT-GGMLT-029 (#3418): every GPU upload is typed by the tensor's own qtype
+// ============================================================================
+
+fn q4_layer(hidden: usize, inter: usize, gate: bool) -> QuantizedAprLayerQ4 {
+    QuantizedAprLayerQ4 {
+        attn_norm_weight: vec![1.0; hidden],
+        qkv_weight: QuantizedAprTensorQ4::zeros(hidden, 3 * hidden),
+        attn_output_weight: QuantizedAprTensorQ4::zeros(hidden, hidden),
+        ffn_up_weight: QuantizedAprTensorQ4::zeros(hidden, inter),
+        ffn_down_weight: QuantizedAprTensorQ4::zeros(inter, hidden),
+        ffn_gate_weight: gate.then(|| QuantizedAprTensorQ4::zeros(hidden, inter)),
+        ffn_norm_weight: None,
+    }
+}
+
+fn q4_model(layers: Vec<QuantizedAprLayerQ4>) -> QuantizedAprTransformerQ4 {
+    QuantizedAprTransformerQ4 {
+        config: AprTransformerConfig {
+            hidden_dim: 32,
+            num_layers: layers.len(),
+            num_heads: 1,
+            num_kv_heads: 1,
+            vocab_size: 8,
+            intermediate_dim: 64,
+            ..Default::default()
+        },
+        token_embedding: vec![0.0; 32 * 8],
+        layers,
+        output_norm_weight: vec![1.0; 32],
+        lm_head_weight: QuantizedAprTensorQ4::zeros(32, 8),
+    }
+}
+
+#[test]
+fn gpu_q4_upload_types_every_weight_by_its_own_qtype_3418() {
+    let apr = q4_model(vec![q4_layer(32, 64, true), q4_layer(32, 64, false)]);
+    let typed = AprQ4ToGpuAdapter::typed_weights(&apr).expect("all Q4_0");
+    let names: Vec<&str> = typed.iter().map(|(n, _, _)| n.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "layer_0.attn.qkv",
+            "layer_0.attn.out",
+            "layer_0.ffn.up",
+            "layer_0.ffn.down",
+            "layer_0.ffn.gate",
+            "layer_1.attn.qkv",
+            "layer_1.attn.out",
+            "layer_1.ffn.up",
+            "layer_1.ffn.down",
+            "lm_head",
+        ]
+    );
+    assert!(typed
+        .iter()
+        .all(|(_, _, t)| *t == crate::gguf::GGUF_TYPE_Q4_0));
+    assert!(std::ptr::eq(typed[9].1, apr.lm_head_weight.data.as_slice()));
+}
+
+#[test]
+fn gpu_q4_upload_refuses_a_non_q4_0_weight_3418() {
+    let mut layer = q4_layer(32, 64, true);
+    layer.ffn_down_weight =
+        QuantizedAprTensorQ4::with_qtype(vec![0; 34 * 64], 64, 32, crate::gguf::GGUF_TYPE_Q8_0);
+    let err = AprQ4ToGpuAdapter::typed_weights(&q4_model(vec![layer]))
+        .expect_err("a Q8_0 weight must not be uploaded as Q4_0")
+        .to_string();
+    assert!(
+        err.contains("layer_0.ffn.down") && err.contains("Q8_0"),
+        "{err}"
+    );
+
+    let mixed = QuantizedAprTensorQ4::with_qtype(vec![], 32, 96, u32::MAX);
+    let err = AprQ4ToGpuAdapter::gpu_q4_weight_type("qkv", &mixed)
+        .expect_err("a mixed-type QKV has no kernel")
+        .to_string();
+    assert!(err.contains("no table row"), "{err}");
+}

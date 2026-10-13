@@ -23,16 +23,14 @@
 
 #![allow(clippy::similar_names)]
 
-use crate::apr_transformer::{AprTransformerConfig, QuantizedAprTransformerQ4};
+use crate::apr_transformer::{
+    AprTransformerConfig, QuantizedAprTensorQ4, QuantizedAprTransformerQ4,
+};
 #[cfg(feature = "cuda")]
 use crate::cuda::CudaExecutor;
 use crate::error::{RealizarError, Result};
 #[cfg(feature = "cuda")]
 use trueno_gpu::driver::GpuBuffer;
-
-/// Q4_0 quantization type ID (GGML format)
-#[cfg(feature = "cuda")]
-const Q4_0_TYPE: u32 = 2;
 
 /// Adapter for uploading Q4_0 APR models to GPU
 ///
@@ -40,6 +38,62 @@ const Q4_0_TYPE: u32 = 2;
 pub struct AprQ4ToGpuAdapter;
 
 impl AprQ4ToGpuAdapter {
+    /// #3418 (FT-GGMLT-029): the GGML type to upload `tensor` as, read from
+    /// the tensor's own `qtype`. The GPU Q4 forward runs only the Q4_0 gemv,
+    /// so any other type is refused here, before a byte is uploaded, instead
+    /// of being labelled and run as Q4_0.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if `tensor` is not Q4_0.
+    pub fn gpu_q4_weight_type(name: &str, tensor: &QuantizedAprTensorQ4) -> Result<u32> {
+        if tensor.qtype == crate::gguf::GGUF_TYPE_Q4_0 {
+            return Ok(tensor.qtype);
+        }
+        Err(RealizarError::FormatError {
+            reason: format!(
+                "GPU Q4 adapter: {name} is GGML type {} ({}); the GPU forward runs only \
+                 the Q4_0 kernel (#3418)",
+                tensor.qtype,
+                crate::gguf::ggml_type_table::name(tensor.qtype).unwrap_or("no table row")
+            ),
+        })
+    }
+
+    /// Every weight `upload_weights` sends, with its cache name, in upload
+    /// order, each typed by [`Self::gpu_q4_weight_type`]; the first refusal
+    /// stops the whole upload.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if any weight is not Q4_0.
+    pub fn typed_weights(apr: &QuantizedAprTransformerQ4) -> Result<Vec<(String, &[u8], u32)>> {
+        let mut named: Vec<(String, &QuantizedAprTensorQ4)> = Vec::new();
+        for (layer_idx, layer) in apr.layers.iter().enumerate() {
+            named.push((format!("layer_{layer_idx}.attn.qkv"), &layer.qkv_weight));
+            named.push((
+                format!("layer_{layer_idx}.attn.out"),
+                &layer.attn_output_weight,
+            ));
+            named.push((format!("layer_{layer_idx}.ffn.up"), &layer.ffn_up_weight));
+            named.push((
+                format!("layer_{layer_idx}.ffn.down"),
+                &layer.ffn_down_weight,
+            ));
+            if let Some(ref gate_weight) = layer.ffn_gate_weight {
+                named.push((format!("layer_{layer_idx}.ffn.gate"), gate_weight));
+            }
+        }
+        named.push(("lm_head".to_string(), &apr.lm_head_weight));
+        named
+            .into_iter()
+            .map(|(name, t)| {
+                let qtype = Self::gpu_q4_weight_type(&name, t)?;
+                Ok((name, t.data.as_slice(), qtype))
+            })
+            .collect()
+    }
+
     /// Upload Q4_0 weights to CUDA executor
     ///
     /// Weights are cached on GPU by layer name for reuse across forward passes.
@@ -56,7 +110,7 @@ impl AprQ4ToGpuAdapter {
     ///
     /// # Errors
     ///
-    /// Returns error if GPU upload fails.
+    /// Returns error if a weight is not Q4_0 or GPU upload fails.
     #[cfg(feature = "cuda")]
     pub fn upload_weights(
         apr: &QuantizedAprTransformerQ4,
@@ -64,71 +118,15 @@ impl AprQ4ToGpuAdapter {
     ) -> Result<usize> {
         let mut total_bytes = 0;
 
-        // Upload layer weights (Q4_0 only - norms are kept on CPU)
-        for (layer_idx, layer) in apr.layers.iter().enumerate() {
-            // QKV projection
-            let qkv_name = format!("layer_{layer_idx}.attn.qkv");
-            let qkv_bytes = executor
-                .load_quantized_weights_with_type(&qkv_name, &layer.qkv_weight.data, Q4_0_TYPE)
+        // #3418 (FT-GGMLT-029): every weight is typed (and a non-Q4_0 one
+        // refused) before anything is uploaded; norms are kept on CPU.
+        for (name, data, qtype) in Self::typed_weights(apr)? {
+            total_bytes += executor
+                .load_quantized_weights_with_type(&name, data, qtype)
                 .map_err(|e| RealizarError::GpuError {
-                    reason: format!("Failed to upload {qkv_name}: {e}"),
+                    reason: format!("Failed to upload {name}: {e}"),
                 })?;
-            total_bytes += qkv_bytes;
-
-            // Output projection
-            let out_name = format!("layer_{layer_idx}.attn.out");
-            let out_bytes = executor
-                .load_quantized_weights_with_type(
-                    &out_name,
-                    &layer.attn_output_weight.data,
-                    Q4_0_TYPE,
-                )
-                .map_err(|e| RealizarError::GpuError {
-                    reason: format!("Failed to upload {out_name}: {e}"),
-                })?;
-            total_bytes += out_bytes;
-
-            // FFN up projection
-            let up_name = format!("layer_{layer_idx}.ffn.up");
-            let up_bytes = executor
-                .load_quantized_weights_with_type(&up_name, &layer.ffn_up_weight.data, Q4_0_TYPE)
-                .map_err(|e| RealizarError::GpuError {
-                    reason: format!("Failed to upload {up_name}: {e}"),
-                })?;
-            total_bytes += up_bytes;
-
-            // FFN down projection
-            let down_name = format!("layer_{layer_idx}.ffn.down");
-            let down_bytes = executor
-                .load_quantized_weights_with_type(
-                    &down_name,
-                    &layer.ffn_down_weight.data,
-                    Q4_0_TYPE,
-                )
-                .map_err(|e| RealizarError::GpuError {
-                    reason: format!("Failed to upload {down_name}: {e}"),
-                })?;
-            total_bytes += down_bytes;
-
-            // FFN gate projection (optional, for SwiGLU)
-            if let Some(ref gate_weight) = layer.ffn_gate_weight {
-                let gate_name = format!("layer_{layer_idx}.ffn.gate");
-                let gate_bytes = executor
-                    .load_quantized_weights_with_type(&gate_name, &gate_weight.data, Q4_0_TYPE)
-                    .map_err(|e| RealizarError::GpuError {
-                        reason: format!("Failed to upload {gate_name}: {e}"),
-                    })?;
-                total_bytes += gate_bytes;
-            }
         }
-
-        // Upload LM head (Q4_0)
-        let lm_head_bytes = executor
-            .load_quantized_weights_with_type("lm_head", &apr.lm_head_weight.data, Q4_0_TYPE)
-            .map_err(|e| RealizarError::GpuError {
-                reason: format!("Failed to upload lm_head: {e}"),
-            })?;
-        total_bytes += lm_head_bytes;
 
         // PAR-023: Upload norm weights to GPU for GPU-resident RMSNorm
         // This eliminates CPU roundtrips for normalization operations
