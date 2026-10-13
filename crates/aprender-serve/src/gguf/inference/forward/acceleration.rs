@@ -87,14 +87,7 @@ impl OwnedQuantizedModel {
     #[cfg(feature = "gpu")]
     pub(crate) fn dequantize_weight(&self, weight: &OwnedQuantizedTensor) -> Result<Vec<f32>> {
         use crate::gguf::types::{
-            APR_TYPE_Q4, APR_TYPE_Q8, GGUF_TYPE_BF16, GGUF_TYPE_F16, GGUF_TYPE_F32, GGUF_TYPE_Q2_K,
-            GGUF_TYPE_Q3_K, GGUF_TYPE_Q4_0, GGUF_TYPE_Q4_1, GGUF_TYPE_Q5_0, GGUF_TYPE_Q5_1,
-            GGUF_TYPE_Q8_0,
-        };
-        use crate::quantize::{
-            dequantize_q2_k, dequantize_q3_k, dequantize_q4_0, dequantize_q4_1, dequantize_q4_k_simd,
-            dequantize_q5_0, dequantize_q5_1, dequantize_q5_k, dequantize_q6_k, dequantize_q8_0,
-            QK_K,
+            APR_TYPE_Q4, APR_TYPE_Q8, GGUF_TYPE_BF16, GGUF_TYPE_F16, GGUF_TYPE_F32, GGUF_TYPE_Q4_K,
         };
 
         let in_dim = weight.in_dim;
@@ -102,43 +95,6 @@ impl OwnedQuantizedModel {
         let total_elements = in_dim * out_dim;
 
         match weight.qtype {
-            GGUF_TYPE_Q4_K => {
-                let super_blocks_per_row = in_dim.div_ceil(QK_K);
-                let mut output = Vec::with_capacity(total_elements);
-                for row in 0..out_dim {
-                    let row_start = row * super_blocks_per_row * 144;
-                    let row_end = row_start + super_blocks_per_row * 144;
-                    let row_data = &weight.data[row_start..row_end];
-                    let row_dequant = dequantize_q4_k_simd(row_data)?;
-                    // Take only in_dim values (may have padding due to super-block alignment)
-                    output.extend_from_slice(&row_dequant[..in_dim.min(row_dequant.len())]);
-                }
-                Ok(output)
-            },
-            GGUF_TYPE_Q5_K => {
-                let super_blocks_per_row = in_dim.div_ceil(QK_K);
-                let mut output = Vec::with_capacity(total_elements);
-                for row in 0..out_dim {
-                    let row_start = row * super_blocks_per_row * 176;
-                    let row_end = row_start + super_blocks_per_row * 176;
-                    let row_data = &weight.data[row_start..row_end];
-                    let row_dequant = dequantize_q5_k(row_data)?;
-                    output.extend_from_slice(&row_dequant[..in_dim.min(row_dequant.len())]);
-                }
-                Ok(output)
-            },
-            GGUF_TYPE_Q6_K => {
-                let super_blocks_per_row = in_dim.div_ceil(QK_K);
-                let mut output = Vec::with_capacity(total_elements);
-                for row in 0..out_dim {
-                    let row_start = row * super_blocks_per_row * 210;
-                    let row_end = row_start + super_blocks_per_row * 210;
-                    let row_data = &weight.data[row_start..row_end];
-                    let row_dequant = dequantize_q6_k(row_data)?;
-                    output.extend_from_slice(&row_dequant[..in_dim.min(row_dequant.len())]);
-                }
-                Ok(output)
-            },
             // F32 weights are already dequantized — reinterpret raw LE bytes.
             // This is the ONLY type for which the raw-f32 path is correct.
             GGUF_TYPE_F32 => {
@@ -168,16 +124,6 @@ impl OwnedQuantizedModel {
                     f32::from_bits((bits as u32) << 16)
                 })
                 .collect()),
-            // Legacy block quants (block size 32) — dispatch to the real
-            // dequantizer instead of treating the packed bytes as raw f32.
-            GGUF_TYPE_Q4_0 => dequantize_q4_0(&weight.data),
-            GGUF_TYPE_Q4_1 => dequantize_q4_1(&weight.data),
-            GGUF_TYPE_Q5_0 => dequantize_q5_0(&weight.data),
-            GGUF_TYPE_Q5_1 => dequantize_q5_1(&weight.data),
-            GGUF_TYPE_Q8_0 => dequantize_q8_0(&weight.data),
-            // Remaining K-quants (super-block size 256).
-            GGUF_TYPE_Q2_K => dequantize_q2_k(&weight.data),
-            GGUF_TYPE_Q3_K => dequantize_q3_k(&weight.data),
             // Native APR q4/q8 — per-tensor scratch dequant.
             APR_TYPE_Q4 => Ok(crate::apr::dequant::dequantize_apr_q4(
                 &weight.data,
@@ -187,19 +133,37 @@ impl OwnedQuantizedModel {
                 &weight.data,
                 total_elements,
             )),
-            // PMAT-3477 / #3091: the IQ formats (block 256, row-padded like the
-            // K-quants) real unsloth GGUFs ship. Row-wise so a padded row does
-            // not leak its padding into the next row.
-            iq if crate::quantize::iq_block_bytes(iq).is_some() => {
-                let block_bytes =
-                    crate::quantize::iq_block_bytes(iq).expect("guarded by iq_block_bytes above");
-                let super_blocks_per_row = in_dim.div_ceil(QK_K);
-                let row_bytes = super_blocks_per_row * block_bytes;
+            // #3418 (FT-GGMLT-017): every block type decodes through the one
+            // table's to_float column, with its block size and bytes from the
+            // same row. 2-D rows are padded to whole blocks (GH-202), so a
+            // padded row is decoded on its own and its padding dropped.
+            id if crate::gguf::ggml_type_table::to_float(id).is_some() => {
+                let t = crate::gguf::ggml_type_table::traits(id)
+                    .expect("a to_float row is a sized ggml type");
+                // Q4_K keeps its AVX2 kernel on this per-call path; it agrees
+                // with the column's scalar row to 1e-4 (dequantize_05.rs).
+                let decode: crate::gguf::ggml_type_table::ToFloat = if id == GGUF_TYPE_Q4_K {
+                    crate::quantize::dequantize_q4_k_simd
+                } else {
+                    crate::gguf::ggml_type_table::to_float(id).expect("guarded above")
+                };
+                let row_bytes = in_dim.div_ceil(t.blck_size) * t.type_size;
+                let Some(data) = weight.data.get(..row_bytes * out_dim) else {
+                    return Err(RealizarError::FormatError {
+                        reason: format!(
+                            "{} weight [{out_dim}, {in_dim}] needs {} bytes, has {}",
+                            t.name,
+                            row_bytes * out_dim,
+                            weight.data.len()
+                        ),
+                    });
+                };
+                if in_dim.is_multiple_of(t.blck_size) {
+                    return decode(data);
+                }
                 let mut output = Vec::with_capacity(total_elements);
-                for row in 0..out_dim {
-                    let row_data = &weight.data[row * row_bytes..(row + 1) * row_bytes];
-                    let row_dequant = crate::quantize::dequantize_iq_tensor(iq, row_data)?;
-                    output.extend_from_slice(&row_dequant[..in_dim.min(row_dequant.len())]);
+                for row in data.chunks_exact(row_bytes) {
+                    output.extend_from_slice(&decode(row)?[..in_dim]);
                 }
                 Ok(output)
             },

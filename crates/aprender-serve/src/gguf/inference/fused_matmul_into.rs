@@ -580,12 +580,10 @@ impl OwnedQuantizedModel {
 
     /// Helper to dequantize weights for CUDA GEMM
     #[cfg(feature = "cuda")]
-    fn dequantize_weight_for_cuda(&self, weight: &OwnedQuantizedTensor) -> Result<Vec<f32>> {
-        use crate::quantize::{
-            dequantize_q4_0, dequantize_q4_1, dequantize_q4_k, dequantize_q5_0, dequantize_q5_k,
-            dequantize_q6_k, dequantize_q8_0,
-        };
-
+    pub(crate) fn dequantize_weight_for_cuda(
+        &self,
+        weight: &OwnedQuantizedTensor,
+    ) -> Result<Vec<f32>> {
         match weight.qtype {
             // GH-242: F32 weights are already dequantized — reinterpret bytes
             GGUF_TYPE_F32 => {
@@ -620,13 +618,10 @@ impl OwnedQuantizedModel {
                     .collect();
                 Ok(floats)
             },
-            GGUF_TYPE_Q4_0 => dequantize_q4_0(&weight.data),
-            GGUF_TYPE_Q4_1 => dequantize_q4_1(&weight.data),
-            GGUF_TYPE_Q5_0 => dequantize_q5_0(&weight.data),
-            GGUF_TYPE_Q8_0 => dequantize_q8_0(&weight.data),
-            GGUF_TYPE_Q4_K => dequantize_q4_k(&weight.data),
-            GGUF_TYPE_Q5_K => dequantize_q5_k(&weight.data),
-            GGUF_TYPE_Q6_K => dequantize_q6_k(&weight.data),
+            // #3418 (FT-GGMLT-017): every block type through the one table.
+            id if crate::gguf::ggml_type_table::to_float(id).is_some() => {
+                crate::gguf::ggml_type_table::to_float(id).expect("guarded above")(&weight.data)
+            },
             // GH-478: Native APR q4/q8 — per-tensor scratch dequant
             APR_TYPE_Q4 => Ok(crate::apr::dequant::dequantize_apr_q4(
                 &weight.data,

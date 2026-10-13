@@ -299,17 +299,15 @@ pub fn raw_q4k_weights(model: &OwnedQuantizedModel) -> Vec<(String, Vec<u8>, usi
 /// Dequantize a single OwnedQuantizedTensor to F32
 /// GH-560: Public per-tensor dequantization for streaming wgpu weight upload.
 pub fn dequant_tensor_public(tensor: &crate::gguf::OwnedQuantizedTensor) -> Result<Vec<f32>> {
-    const GGUF_TYPE_Q4_K: u32 = 12;
-    const GGUF_TYPE_Q6_K: u32 = 14;
-    const GGUF_TYPE_Q5_K: u32 = 13;
     const GGUF_TYPE_F32: u32 = 0;
     const GGUF_TYPE_F16: u32 = 1;
     use crate::gguf::{APR_TYPE_Q4, APR_TYPE_Q8};
 
     match tensor.qtype {
-        GGUF_TYPE_Q4_K => dequantize_q4_k(&tensor.data),
-        GGUF_TYPE_Q6_K => dequantize_q6_k(&tensor.data),
-        GGUF_TYPE_Q5_K => dequantize_q5_k(&tensor.data),
+        // #3418 (FT-GGMLT-017): every block type through the one table.
+        id if crate::gguf::ggml_type_table::to_float(id).is_some() => {
+            crate::gguf::ggml_type_table::to_float(id).expect("guarded above")(&tensor.data)
+        },
         GGUF_TYPE_F32 => Ok(tensor
             .data
             .as_chunks::<4>()
@@ -502,5 +500,32 @@ mod dequant_skip_2378 {
         let b = dequant_model_weights_except(&model, &std::collections::HashSet::new()).expect("b");
         assert_eq!(a.len(), b.len());
         assert_eq!(f32_elements(&a), f32_elements(&b));
+    }
+}
+
+#[cfg(test)]
+mod to_float_site_3418 {
+    use crate::gguf::ggml_type_table::{to_float, to_float_tests_3418::blocks, GGML_TYPES};
+
+    /// FT-GGMLT-017: the wgpu upload decodes every type the one table decodes.
+    #[test]
+    fn wgpu_dequant_reads_the_to_float_column_3418() {
+        for t in GGML_TYPES.iter().filter(|t| to_float(t.id).is_some()) {
+            let data = blocks(t.id, 2);
+            let tensor = crate::gguf::OwnedQuantizedTensor {
+                data: data.clone(),
+                in_dim: 2 * t.blck_size,
+                out_dim: 1,
+                qtype: t.id,
+            };
+            let got = super::dequant_tensor_public(&tensor)
+                .unwrap_or_else(|e| panic!("wgpu refused {} ({}): {e}", t.name, t.id));
+            assert_eq!(
+                got,
+                to_float(t.id).expect("row")(&data).expect("decode"),
+                "{}",
+                t.name
+            );
+        }
     }
 }

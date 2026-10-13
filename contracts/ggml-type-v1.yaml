@@ -1,5 +1,5 @@
 metadata:
-  version: 1.11.0
+  version: 1.12.0
   created: '2026-09-20'
   author: PAIML Engineering
   description: |
@@ -44,7 +44,7 @@ metadata:
   - 'GitHub #3418 (serve sizes from TRAITS, one table), #3430 (M1), #3431 (M2 reconciliation), #3421 (epic), #3563 (pin-derived artifacts, general case)'
 
 name: ggml-type
-version: 1.11.0
+version: 1.12.0
 scope: aprender-quant (trueno_quant) ggml tensor-type enum and TRAITS table
 
 description: |
@@ -365,6 +365,19 @@ falsification_tests:
   if_fails: 'an APR F64, I8 or U8 tensor is decoded as ggml Q4_1, Q5_0 or Q5_1 block data.'
   evidence: |
     Quorum 2026-10-12 (sonnet+haiku, planted fact caught by both): 2/2 a.
+    Measured 2026-10-12/13 on intel (no GPU, no ptxas), la-74/3418 on
+    7a736088b. Before, `--features cuda _3418`: 18 passed, 4 RED (wgpu
+    refused Q4_0 (2); the embedding refused Q3_K (11); the CUDA helper
+    refused Q5_1 (7); dequantize_weight decoded IQ4_NL (20) as 256-value
+    blocks). After: 23 passed (with the padded-row test). Mutants, each
+    RED then restored by cmp: Q5_1 row wired to dequantize_q5_0 (table and
+    site tests RED); CUDA helper's to_float arm dropped (its site test
+    RED); dequantize_weight decoding padded rows flat (padded-row test RED
+    at Q4_0). Full lib default: 16211 passed. Full lib --features cuda:
+    17955 passed, 8 RED, all cuda::/PTX tests that need the NVIDIA driver
+    or ptxas (absent on intel). clippy --lib --tests -D warnings default
+    and cuda: clean; fmt --check: clean. Q4_K on dequantize_weight's
+    per-call path keeps its AVX2 kernel (agrees with the column to 1e-4).
     Before, on 22dba9bb2: RED, dtype 3 F64 bytes came back as Q4_1 values and
     a 24-byte U8 tensor loaded. After: GREEN; apr_transformer:: 754 passed;
     aprender-serve --lib (--skip qwen35) 16203 passed, 0 failed; clippy rc 0.
@@ -393,6 +406,27 @@ falsification_tests:
     apr_transformer_coverage) 410 passed, pins moved to 34 / 8.5; clippy and
     fmt rc 0. Mutants: Q8_0 mapped to ggml id 9 (Q8_1, really 36 bytes) RED
     (Q8_0 ggml id); a hand-written 36 for Q8_0 RED (bytes per block).
+
+- id: FT-GGMLT-017
+  rule: the serve ggml table carries ggml's to_float column - to_float(id) is the one id-to-block-decoder map, and every serve site that decodes a ggml block tensor by id or name (dequantize_weight, dequantize_weight_for_cuda, dequant_tensor_public, dequantize_embedding) reads it instead of its own arms (#3418, quorum handoff/quorum-la074-a1-tofloat.md 2/2 a)
+  prediction: |
+    every_to_float_row_decodes_whole_blocks_3418: each row is a sized ggml
+    block type, and its decoder turns k whole blocks of that id into
+    k*blck_size values. to_float_k_quants_match_the_quant_crate_3418: rows
+    12/13/14 equal aprender-quant's independent Q4_K/Q5_K/Q6_K decoders.
+    to_float_iq_rows_pass_their_own_id_3418: each IQ row equals
+    dequantize_iq_tensor(id). Site tests: each of the four sites decodes
+    every to_float id exactly as to_float does;
+    dequantize_weight_drops_row_padding_3418: rows padded to
+    whole blocks (GH-202) decode row by row with the padding dropped, for
+    every to_float type. RED before the change for
+    the ids a site's own arms lacked (Q5_1/Q2_K/Q3_K/IQ on the CUDA helper,
+    all but Q4_K/Q5_K/Q6_K on wgpu, Q3_K/IQ on the embedding); a row wired
+    to another type's decoder turns the table tests RED.
+  test: cargo test -p aprender-serve --lib _3418
+  if_fails: 'one serve path decodes a ggml block type that another path refuses (#3869 class), or two paths decode one id differently.'
+  evidence: |
+    Quorum 2026-10-12 (sonnet+haiku, planted fact caught by both): 2/2 a.
 
 kani_harnesses:
 - id: KANI-GGMLT-001

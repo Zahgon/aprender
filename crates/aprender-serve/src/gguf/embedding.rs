@@ -96,16 +96,6 @@ fn dequantize_embedding(
             embed_data,
             num_elements,
         )),
-        // GGML quant types (from GGUF-sourced APR files)
-        "Q4_0" => crate::quantize::dequantize_q4_0(embed_data),
-        "Q4_1" => crate::quantize::dequantize_q4_1(embed_data),
-        "Q5_0" => crate::quantize::dequantize_q5_0(embed_data),
-        "Q5_1" => crate::quantize::dequantize_q5_1(embed_data),
-        "Q8_0" => crate::quantize::dequantize_q8_0(embed_data),
-        "Q2_K" => crate::quantize::dequantize_q2_k(embed_data),
-        "Q4_K" => crate::quantize::dequantize_q4_k(embed_data),
-        "Q5_K" => crate::quantize::dequantize_q5_k(embed_data),
-        "Q6_K" => crate::quantize::dequantize_q6_k(embed_data),
         // APR native quant types
         "q8" => Ok(crate::apr::dequant::dequantize_apr_q8(
             embed_data,
@@ -115,6 +105,11 @@ fn dequantize_embedding(
             embed_data,
             num_elements,
         )),
+        // #3418 (FT-GGMLT-017): GGML block types (from GGUF-sourced APR files)
+        // by their table name, through the one table.
+        name if crate::gguf::ggml_type_table::to_float_by_name(name).is_some() => {
+            crate::gguf::ggml_type_table::to_float_by_name(name).expect("guarded above")(embed_data)
+        },
         other => Err(RealizarError::FormatError {
             reason: format!("APR: unsupported embedding dtype: {other}"),
         }),
@@ -435,5 +430,22 @@ mod quant_block_layout_tests {
         let short = vec![0u8; 17];
         assert_eq!(quant_scale_first_nonfinite(&short, GGUF_TYPE_Q4_0), None);
         assert_eq!(quant_scale_first_nonfinite(&[], GGUF_TYPE_Q4_0), None);
+    }
+}
+
+#[cfg(test)]
+mod to_float_site_3418 {
+    use crate::gguf::ggml_type_table::{to_float, to_float_tests_3418::blocks, GGML_TYPES};
+
+    /// FT-GGMLT-017: an APR embedding of any type the one table decodes,
+    /// named by the table's type name, decodes exactly as the table does.
+    #[test]
+    fn embedding_reads_the_to_float_column_3418() {
+        for t in GGML_TYPES.iter().filter(|t| to_float(t.id).is_some()) {
+            let data = blocks(t.id, 2);
+            let got = super::dequantize_embedding(&data, t.name, 2 * t.blck_size)
+                .unwrap_or_else(|e| panic!("embedding refused {} ({}): {e}", t.name, t.id));
+            assert_eq!(got, to_float(t.id).expect("row")(&data).expect("decode"), "{}", t.name);
+        }
     }
 }

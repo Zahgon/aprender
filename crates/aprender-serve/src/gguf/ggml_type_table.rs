@@ -100,6 +100,62 @@ pub fn name(id: u32) -> Option<&'static str> {
         .map(|t| t.name)
 }
 
+/// A ggml block decoder: whole blocks of one type in, f32 values out. This is
+/// ggml's `type_traits[id].to_float`.
+pub type ToFloat = fn(&[u8]) -> crate::error::Result<Vec<f32>>;
+
+/// #3418 (FT-GGMLT-017): the `to_float` column of the one table, one row per
+/// ggml block type serve can decode. Every site that decodes a block tensor by
+/// id reads this instead of keeping its own arms, so no path can refuse a type
+/// another path decodes (#3869). Float types (F32/F16/BF16) stay with each site.
+const TO_FLOAT: &[(u32, ToFloat)] = {
+    use crate::gguf::types::{
+        GGUF_TYPE_Q2_K, GGUF_TYPE_Q3_K, GGUF_TYPE_Q4_0, GGUF_TYPE_Q4_1, GGUF_TYPE_Q4_K,
+        GGUF_TYPE_Q5_0, GGUF_TYPE_Q5_1, GGUF_TYPE_Q5_K, GGUF_TYPE_Q6_K, GGUF_TYPE_Q8_0,
+    };
+    use crate::quantize::iq2_s::GGML_TYPE_IQ2_S;
+    use crate::quantize::iq2_xxs::GGML_TYPE_IQ2_XXS;
+    use crate::quantize::iq3_s::GGML_TYPE_IQ3_S;
+    use crate::quantize::iq3_xxs::GGML_TYPE_IQ3_XXS;
+    use crate::quantize::iq4_nl::GGML_TYPE_IQ4_NL;
+    use crate::quantize::iq4_xs::GGML_TYPE_IQ4_XS;
+    use crate::quantize::{self as q, dequantize_iq_tensor as iq};
+    &[
+        (GGUF_TYPE_Q4_0, q::dequantize_q4_0),
+        (GGUF_TYPE_Q4_1, q::dequantize_q4_1),
+        (GGUF_TYPE_Q5_0, q::dequantize_q5_0),
+        (GGUF_TYPE_Q5_1, q::dequantize_q5_1),
+        (GGUF_TYPE_Q8_0, q::dequantize_q8_0),
+        (GGUF_TYPE_Q2_K, q::dequantize_q2_k),
+        (GGUF_TYPE_Q3_K, q::dequantize_q3_k),
+        (GGUF_TYPE_Q4_K, q::dequantize_q4_k),
+        (GGUF_TYPE_Q5_K, q::dequantize_q5_k),
+        (GGUF_TYPE_Q6_K, q::dequantize_q6_k),
+        (GGML_TYPE_IQ2_XXS, |d| iq(GGML_TYPE_IQ2_XXS, d)),
+        (GGML_TYPE_IQ3_XXS, |d| iq(GGML_TYPE_IQ3_XXS, d)),
+        (GGML_TYPE_IQ4_NL, |d| iq(GGML_TYPE_IQ4_NL, d)),
+        (GGML_TYPE_IQ3_S, |d| iq(GGML_TYPE_IQ3_S, d)),
+        (GGML_TYPE_IQ2_S, |d| iq(GGML_TYPE_IQ2_S, d)),
+        (GGML_TYPE_IQ4_XS, |d| iq(GGML_TYPE_IQ4_XS, d)),
+    ]
+};
+
+/// The block decoder for ggml type `id`, or `None` if serve has none.
+#[must_use]
+pub fn to_float(id: u32) -> Option<ToFloat> {
+    TO_FLOAT.iter().find(|(row, _)| *row == id).map(|(_, f)| *f)
+}
+
+/// [`to_float`] by the table's type name (`"Q4_K"`, `"IQ4_XS"`, ...), for
+/// sites that carry a dtype string instead of an id.
+#[must_use]
+pub fn to_float_by_name(name: &str) -> Option<ToFloat> {
+    GGML_TYPES
+        .iter()
+        .find(|t| t.name == name)
+        .and_then(|t| to_float(t.id))
+}
+
 /// The refusal text for an id with no size in this table. Every id that
 /// [`TRAITS`] names but does not size is one upstream removed.
 fn unsupported(id: u32) -> String {
@@ -319,5 +375,71 @@ mod ggml_type_table_tests {
             diffs.len(),
             diffs.join("\n")
         );
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod to_float_tests_3418 {
+    use super::{to_float, traits, TO_FLOAT};
+
+    /// `k` whole blocks of type `id` with a 1.0 f16 scale at the head of
+    /// each block and a fixed byte pattern after it.
+    pub(crate) fn blocks(id: u32, k: usize) -> Vec<u8> {
+        let t = traits(id).expect("a to_float row is a sized ggml type");
+        let mut data: Vec<u8> = (0..k * t.type_size)
+            .map(|i| ((i * 37 + 11) % 256) as u8)
+            .collect();
+        for b in data.chunks_exact_mut(t.type_size) {
+            b[..2].copy_from_slice(&[0x00, 0x3C]);
+        }
+        data
+    }
+
+    #[test]
+    fn every_to_float_row_decodes_whole_blocks_3418() {
+        for &(id, decode) in TO_FLOAT {
+            let t = traits(id).expect("a to_float row is a sized ggml type");
+            assert!(t.blck_size > 1, "{} ({id}) is not a block type", t.name);
+            let got = decode(&blocks(id, 3)).unwrap_or_else(|e| panic!("{} ({id}): {e}", t.name));
+            assert_eq!(
+                got.len(),
+                3 * t.blck_size,
+                "{} ({id}) decoded to the wrong length",
+                t.name
+            );
+        }
+    }
+
+    #[test]
+    fn to_float_k_quants_match_the_quant_crate_3418() {
+        let independent: [(u32, fn(&[u8], usize) -> Vec<f32>); 3] = [
+            (12, trueno_quant::dequantize_q4_k_to_f32),
+            (13, trueno_quant::dequantize_q5_k_to_f32),
+            (14, trueno_quant::dequantize_q6_k_to_f32),
+        ];
+        for (id, reference) in independent {
+            let data = blocks(id, 2);
+            let got = to_float(id).expect("K-quant row")(&data).expect("whole blocks");
+            assert_eq!(
+                got,
+                reference(&data, 512),
+                "ggml id {id} differs from aprender-quant"
+            );
+        }
+    }
+
+    #[test]
+    fn to_float_iq_rows_pass_their_own_id_3418() {
+        for &(id, decode) in TO_FLOAT {
+            if crate::quantize::iq_block_bytes(id).is_none() {
+                continue;
+            }
+            let data = blocks(id, 2);
+            assert_eq!(
+                decode(&data).expect("whole IQ blocks"),
+                crate::quantize::dequantize_iq_tensor(id, &data).expect("whole IQ blocks"),
+                "IQ row {id} does not decode as IQ type {id}"
+            );
+        }
     }
 }

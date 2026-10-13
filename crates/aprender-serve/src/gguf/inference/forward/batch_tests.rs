@@ -488,4 +488,80 @@ fn test_dequantize_weight_unsupported_type_errors_loud() {
     );
 }
 
+/// FT-GGMLT-017: the GPU-path and CUDA-path dequant helpers decode every type
+/// the one table decodes, exactly as the table does.
+#[cfg(any(feature = "gpu", feature = "cuda"))]
+fn to_float_cases_3418() -> Vec<(crate::gguf::OwnedQuantizedTensor, Vec<f32>)> {
+    use crate::gguf::ggml_type_table::{to_float, to_float_tests_3418::blocks, GGML_TYPES};
+    GGML_TYPES
+        .iter()
+        .filter(|t| to_float(t.id).is_some())
+        .map(|t| {
+            let data = blocks(t.id, 2);
+            let want = to_float(t.id).expect("row")(&data).expect("decode");
+            let tensor = crate::gguf::OwnedQuantizedTensor {
+                data,
+                in_dim: 2 * t.blck_size,
+                out_dim: 1,
+                qtype: t.id,
+            };
+            (tensor, want)
+        })
+        .collect()
+}
+
+#[test]
+#[cfg(feature = "gpu")]
+fn dequantize_weight_reads_the_to_float_column_3418() {
+    let model = create_test_model_with_config(&test_config());
+    for (tensor, want) in to_float_cases_3418() {
+        let got = model
+            .dequantize_weight(&tensor)
+            .unwrap_or_else(|e| panic!("dequantize_weight refused {}: {e}", tensor.qtype));
+        assert_eq!(got, want, "ggml id {}", tensor.qtype);
+    }
+}
+
+#[test]
+#[cfg(feature = "cuda")]
+fn dequantize_weight_for_cuda_reads_the_to_float_column_3418() {
+    let model = create_test_model_with_config(&test_config());
+    for (tensor, want) in to_float_cases_3418() {
+        let got = model
+            .dequantize_weight_for_cuda(&tensor)
+            .unwrap_or_else(|e| panic!("dequantize_weight_for_cuda refused {}: {e}", tensor.qtype));
+        assert_eq!(got, want, "ggml id {}", tensor.qtype);
+    }
+}
+
+/// FT-GGMLT-017: a row whose length is not a whole number of blocks is
+/// padded to whole blocks (GH-202); dequantize_weight decodes each row on
+/// its own and drops its padding, for every type the one table decodes.
+#[test]
+#[cfg(feature = "gpu")]
+fn dequantize_weight_drops_row_padding_3418() {
+    use crate::gguf::ggml_type_table::{to_float, to_float_tests_3418::blocks, GGML_TYPES};
+    let model = create_test_model_with_config(&test_config());
+    for t in GGML_TYPES.iter().filter(|t| to_float(t.id).is_some()) {
+        let in_dim = t.blck_size + t.blck_size / 2;
+        let data = blocks(t.id, 4);
+        let want: Vec<f32> = data
+            .chunks_exact(2 * t.type_size)
+            .flat_map(|row| to_float(t.id).expect("row")(row).expect("decode")[..in_dim].to_vec())
+            .collect();
+        let tensor = crate::gguf::OwnedQuantizedTensor {
+            data,
+            in_dim,
+            out_dim: 2,
+            qtype: t.id,
+        };
+        let got = model
+            .dequantize_weight(&tensor)
+            .unwrap_or_else(|e| panic!("dequantize_weight refused {}: {e}", t.name));
+        // Bits, not values: a scale byte in the pattern can decode to NaN.
+        let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(&got), bits(&want), "{} ({}) padded rows", t.name, t.id);
+    }
+}
+
 include!("batch_tests_tiled_single.rs");
