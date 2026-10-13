@@ -1991,4 +1991,41 @@ mod to_float_matmul_tests_3418 {
         }
         assert!(refused > 0, "no sized id without a to_float row was tried");
     }
+
+    /// #3418 (FT-GGMLT-024): Q4_0 and Q8_0 take the one table's matvec row,
+    /// bit for bit what their non-into fused kernels give per input row.
+    #[test]
+    fn q4_0_and_q8_0_matmul_through_the_matvec_column_3418() {
+        use crate::gguf::types::{GGUF_TYPE_Q4_0, GGUF_TYPE_Q8_0};
+        use crate::quantize::{fused_q4_0_q8_0_parallel_matvec, fused_q8_0_q8_0_parallel_matvec};
+        let model = create_test_model(64, 100);
+        let (in_dim, out_dim) = (256, 6);
+        for id in [GGUF_TYPE_Q4_0, GGUF_TYPE_Q8_0] {
+            let t = traits(id).expect("a sized ggml type");
+            let data = finite_blocks(id, t.type_size, in_dim * out_dim / t.blck_size);
+            let weight = OwnedQuantizedTensor {
+                data: data.clone(),
+                in_dim,
+                out_dim,
+                qtype: id,
+            };
+            for seq_len in [1usize, 3] {
+                let input: Vec<f32> = (0..seq_len * in_dim)
+                    .map(|i| ((i % 19) as f32 - 9.0) / 8.0)
+                    .collect();
+                let mut want = Vec::new();
+                for x in input.chunks_exact(in_dim) {
+                    let row = if id == GGUF_TYPE_Q4_0 {
+                        fused_q4_0_q8_0_parallel_matvec(&data, x, in_dim, out_dim)
+                    } else {
+                        fused_q8_0_q8_0_parallel_matvec(&data, x, in_dim, out_dim)
+                    };
+                    want.extend(row.expect("the non-into kernel"));
+                }
+                let got = model.fused_matmul(&input, &weight).expect("fused_matmul");
+                let bits = |v: &[f32]| v.iter().map(|f| f.to_bits()).collect::<Vec<_>>();
+                assert_eq!(bits(&got), bits(&want), "{} seq {seq_len}", t.name);
+            }
+        }
+    }
 }

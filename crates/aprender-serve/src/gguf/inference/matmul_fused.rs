@@ -158,10 +158,10 @@ impl OwnedQuantizedModel {
         // CPU paths, one arm per storage format:
         //   F32        rayon parallel dot products, zero-copy on the raw bytes
         //   BF16/F16   GH-368: decode 2-byte floats, BF16 = f32::from_bits(bits << 16)
-        //   Q4_0/Q8_0  fused integer SIMD matmul
         //   APR Q4/Q8  GH-478: per-tensor scratch dequant (F32 expansion bounded to
         //              one tensor's working set, not 4 × num_params at load time)
-        //   Q4_K/Q5_K/Q6_K  fused K-quant kernels
+        //   Q4_0/Q8_0/Q4_K/Q5_K/Q6_K  #3418 (FT-GGMLT-020/024): the one ggml
+        //              table's fused matvec_into row
         //   otherwise  #3418 (FT-GGMLT-019): any id with a to_float row in the one
         //              ggml table (Q4_1/Q5_0/Q5_1/Q2_K/Q3_K, IQ*) takes the dequant
         //              fallback, once per call; anything else is refused by id
@@ -184,9 +184,6 @@ impl OwnedQuantizedModel {
                 seq_len,
                 Float16Kind::F16,
             )),
-            GGUF_TYPE_Q4_0 | GGUF_TYPE_Q8_0 => {
-                self.fused_matmul_q4_q8(input, weight, in_dim, out_dim, seq_len)
-            },
             APR_TYPE_Q4 => {
                 let w = crate::apr::dequant::dequantize_apr_q4(data, in_dim * out_dim);
                 dequant_f32_matmul(input, w, "APR-Q4", in_dim, out_dim, seq_len)
@@ -195,8 +192,8 @@ impl OwnedQuantizedModel {
                 let w = crate::apr::dequant::dequantize_apr_q8(data, in_dim * out_dim);
                 dequant_f32_matmul(input, w, "APR-Q8", in_dim, out_dim, seq_len)
             },
-            GGUF_TYPE_Q4_K | GGUF_TYPE_Q5_K | GGUF_TYPE_Q6_K => {
-                self.fused_matmul_k_quants(input, weight, in_dim, out_dim, seq_len)
+            GGUF_TYPE_Q4_0 | GGUF_TYPE_Q8_0 | GGUF_TYPE_Q4_K | GGUF_TYPE_Q5_K | GGUF_TYPE_Q6_K => {
+                self.fused_matmul_table(input, weight, in_dim, out_dim, seq_len)
             },
             _ => self.dequant_fallback_or_refuse(input, weight, in_dim, out_dim, seq_len),
         }
@@ -273,40 +270,11 @@ impl OwnedQuantizedModel {
         all_output
     }
 
-    /// Fused integer SIMD matmul for Q4_0 and Q8_0
-    fn fused_matmul_q4_q8(
-        &self,
-        input: &[f32],
-        weight: &OwnedQuantizedTensor,
-        in_dim: usize,
-        out_dim: usize,
-        seq_len: usize,
-    ) -> Result<Vec<f32>> {
-        use crate::quantize::{fused_q4_0_q8_0_parallel_matvec, fused_q8_0_q8_0_parallel_matvec};
-
-        let matvec_fn = if weight.qtype == GGUF_TYPE_Q4_0 {
-            fused_q4_0_q8_0_parallel_matvec
-        } else {
-            fused_q8_0_q8_0_parallel_matvec
-        };
-
-        if seq_len == 1 {
-            return matvec_fn(&weight.data, input, in_dim, out_dim);
-        }
-        let mut output = Vec::with_capacity(seq_len * out_dim);
-        for s in 0..seq_len {
-            let x = &input[s * in_dim..(s + 1) * in_dim];
-            let row_output = matvec_fn(&weight.data, x, in_dim, out_dim)?;
-            output.extend_from_slice(&row_output);
-        }
-        Ok(output)
-    }
-
-    /// Fused K-quant kernels for Q4_K, Q5_K, Q6_K. #3418 (FT-GGMLT-020): the
-    /// kernel is the one ggml table's `matvec_into` row, the same `_into`
-    /// kernel the per-id match's non-into wrappers called, so output is
-    /// bitwise unchanged. An id with no row takes the dequant fallback.
-    fn fused_matmul_k_quants(
+    /// Fused kernels for Q4_0, Q8_0, Q4_K, Q5_K, Q6_K. #3418 (FT-GGMLT-020,
+    /// 024): the kernel is the one ggml table's `matvec_into` row, the same
+    /// per-row dot kernel the per-id choices' non-into wrappers ran, so output
+    /// is bitwise unchanged. An id with no row takes the dequant fallback.
+    fn fused_matmul_table(
         &self,
         input: &[f32],
         weight: &OwnedQuantizedTensor,
