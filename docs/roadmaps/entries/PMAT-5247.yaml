@@ -1,0 +1,18 @@
+- id: PMAT-5247
+  github_issue: 5247
+  item_type: task
+  title: check_runner_labels.sh matches label tokens only, not comments or substrings
+  status: planned
+  priority: high
+  assigned_to: null
+  created: 2026-10-13T09:08:10Z
+  updated: 2026-10-13T09:08:10Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 3998
