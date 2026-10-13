@@ -33,7 +33,12 @@ impl QuantizedAprTransformerQ4 {
                     // Extract QKV weight data
                     let qkv_weight = match &l.qkv_weight {
                         OwnedQKVWeights::Fused(t) => {
-                            QuantizedAprTensorQ4::new(t.data.clone(), t.in_dim, t.out_dim)
+                            QuantizedAprTensorQ4::with_qtype(
+                                t.data.clone(),
+                                t.in_dim,
+                                t.out_dim,
+                                t.qtype,
+                            )
                         },
                         OwnedQKVWeights::Separate { q, k, v } => {
                             // Concatenate Q, K, V for fused format
@@ -42,10 +47,18 @@ impl QuantizedAprTransformerQ4 {
                             data.extend_from_slice(&q.data);
                             data.extend_from_slice(&k.data);
                             data.extend_from_slice(&v.data);
-                            QuantizedAprTensorQ4::new(
+                            // #3418: a mixed-type Q/K/V cannot share one fused tensor;
+                            // u32::MAX has no table row, so forward refuses it.
+                            let qtype = if q.qtype == k.qtype && q.qtype == v.qtype {
+                                q.qtype
+                            } else {
+                                u32::MAX
+                            };
+                            QuantizedAprTensorQ4::with_qtype(
                                 data,
                                 q.in_dim,                          // hidden_dim
                                 q.out_dim + k.out_dim + v.out_dim, // qkv_dim
+                                qtype,
                             )
                         },
                     };
@@ -53,33 +66,42 @@ impl QuantizedAprTransformerQ4 {
                     QuantizedAprLayerQ4 {
                         attn_norm_weight: l.attn_norm_weight.clone(),
                         qkv_weight,
-                        attn_output_weight: QuantizedAprTensorQ4::new(
+                        attn_output_weight: QuantizedAprTensorQ4::with_qtype(
                             l.attn_output_weight.data.clone(),
                             l.attn_output_weight.in_dim,
                             l.attn_output_weight.out_dim,
+                            l.attn_output_weight.qtype,
                         ),
-                        ffn_up_weight: QuantizedAprTensorQ4::new(
+                        ffn_up_weight: QuantizedAprTensorQ4::with_qtype(
                             l.ffn_up_weight.data.clone(),
                             l.ffn_up_weight.in_dim,
                             l.ffn_up_weight.out_dim,
+                            l.ffn_up_weight.qtype,
                         ),
-                        ffn_down_weight: QuantizedAprTensorQ4::new(
+                        ffn_down_weight: QuantizedAprTensorQ4::with_qtype(
                             l.ffn_down_weight.data.clone(),
                             l.ffn_down_weight.in_dim,
                             l.ffn_down_weight.out_dim,
+                            l.ffn_down_weight.qtype,
                         ),
                         ffn_gate_weight: l.ffn_gate_weight.as_ref().map(|g| {
-                            QuantizedAprTensorQ4::new(g.data.clone(), g.in_dim, g.out_dim)
+                            QuantizedAprTensorQ4::with_qtype(
+                                g.data.clone(),
+                                g.in_dim,
+                                g.out_dim,
+                                g.qtype,
+                            )
                         }),
                         ffn_norm_weight: l.ffn_norm_weight.clone(),
                     }
                 })
                 .collect();
 
-        let lm_head_weight = QuantizedAprTensorQ4::new(
+        let lm_head_weight = QuantizedAprTensorQ4::with_qtype(
             gguf.lm_head_weight.data.clone(),
             gguf.lm_head_weight.in_dim,
             gguf.lm_head_weight.out_dim,
+            gguf.lm_head_weight.qtype,
         );
 
         Self {
@@ -125,7 +147,6 @@ impl QuantizedAprTransformerQ4 {
     ///
     /// Logits over vocabulary
     pub fn forward(&self, token_ids: &[u32]) -> Result<Vec<f32>> {
-        use crate::quantize::fused_q4_0_q8_0_parallel_matvec;
 
         if token_ids.is_empty() {
             return Err(RealizarError::InvalidShape {
@@ -170,12 +191,7 @@ impl QuantizedAprTransformerQ4 {
             let mut qkv_out = Vec::with_capacity(seq_len * qkv_dim);
             for s in 0..seq_len {
                 let input = &normed[s * hidden_dim..(s + 1) * hidden_dim];
-                let qkv = fused_q4_0_q8_0_parallel_matvec(
-                    &layer.qkv_weight.data,
-                    input,
-                    hidden_dim,
-                    qkv_dim,
-                )?;
+                let qkv = layer.qkv_weight.matvec(input, hidden_dim, qkv_dim)?;
                 qkv_out.extend(qkv);
             }
 
@@ -212,11 +228,8 @@ impl QuantizedAprTransformerQ4 {
             let mut proj_out = Vec::with_capacity(seq_len * hidden_dim);
             for s in 0..seq_len {
                 let input = &attn_output[s * hidden_dim..(s + 1) * hidden_dim];
-                let proj = fused_q4_0_q8_0_parallel_matvec(
-                    &layer.attn_output_weight.data,
-                    input,
-                    layer.attn_output_weight.in_dim,
-                    layer.attn_output_weight.out_dim,
+                let proj = layer.attn_output_weight.matvec(
+                    input, layer.attn_output_weight.in_dim, layer.attn_output_weight.out_dim,
                 )?;
                 proj_out.extend(proj);
             }
@@ -254,21 +267,11 @@ impl QuantizedAprTransformerQ4 {
                     let input = &ffn_input[s * hidden_dim..(s + 1) * hidden_dim];
 
                     // Up projection
-                    let u = fused_q4_0_q8_0_parallel_matvec(
-                        &layer.ffn_up_weight.data,
-                        input,
-                        hidden_dim,
-                        intermediate_dim,
-                    )?;
+                    let u = layer.ffn_up_weight.matvec(input, hidden_dim, intermediate_dim)?;
                     ffn_up_out.extend(u);
 
                     // Gate projection
-                    let g = fused_q4_0_q8_0_parallel_matvec(
-                        &gate.data,
-                        input,
-                        hidden_dim,
-                        intermediate_dim,
-                    )?;
+                    let g = gate.matvec(input, hidden_dim, intermediate_dim)?;
                     ffn_gate_out.extend(g);
                 }
 
@@ -283,12 +286,7 @@ impl QuantizedAprTransformerQ4 {
                 let mut up = Vec::with_capacity(seq_len * intermediate_dim);
                 for s in 0..seq_len {
                     let input = &ffn_input[s * hidden_dim..(s + 1) * hidden_dim];
-                    let u = fused_q4_0_q8_0_parallel_matvec(
-                        &layer.ffn_up_weight.data,
-                        input,
-                        hidden_dim,
-                        intermediate_dim,
-                    )?;
+                    let u = layer.ffn_up_weight.matvec(input, hidden_dim, intermediate_dim)?;
                     up.extend(u);
                 }
                 // GELU activation (tanh approximation)
@@ -305,12 +303,7 @@ impl QuantizedAprTransformerQ4 {
             let mut ffn_down = Vec::with_capacity(seq_len * hidden_dim);
             for s in 0..seq_len {
                 let input = &ffn_up[s * intermediate_dim..(s + 1) * intermediate_dim];
-                let down = fused_q4_0_q8_0_parallel_matvec(
-                    &layer.ffn_down_weight.data,
-                    input,
-                    intermediate_dim,
-                    hidden_dim,
-                )?;
+                let down = layer.ffn_down_weight.matvec(input, intermediate_dim, hidden_dim)?;
                 ffn_down.extend(down);
             }
 
@@ -333,12 +326,7 @@ impl QuantizedAprTransformerQ4 {
 
         // 4. LM head projection using SIMD matmul
         let vocab_size = self.config.vocab_size;
-        let logits = fused_q4_0_q8_0_parallel_matvec(
-            &self.lm_head_weight.data,
-            &normed_final,
-            hidden_dim,
-            vocab_size,
-        )?;
+        let logits = self.lm_head_weight.matvec(&normed_final, hidden_dim, vocab_size)?;
 
         Ok(logits)
     }

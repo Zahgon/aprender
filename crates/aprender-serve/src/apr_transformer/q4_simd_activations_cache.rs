@@ -69,7 +69,6 @@ impl QuantizedAprTransformerQ4 {
         token_id: u32,
         scratch: &mut AprInferenceScratch,
     ) -> Result<Vec<f32>> {
-        use crate::quantize::fused_q4_0_q8_0_parallel_matvec_into;
 
         let hidden_dim = self.config.hidden_dim;
         let num_heads = self.config.num_heads;
@@ -91,9 +90,8 @@ impl QuantizedAprTransformerQ4 {
             rms_norm_weighted(&scratch.hidden, &layer.attn_norm_weight, &mut scratch.normed, eps);
 
             let qkv_dim = layer.qkv_weight.out_dim;
-            fused_q4_0_q8_0_parallel_matvec_into(
-                &layer.qkv_weight.data, &scratch.normed[..hidden_dim],
-                hidden_dim, &mut scratch.qkv_out[..qkv_dim],
+            layer.qkv_weight.matvec_into(
+                &scratch.normed[..hidden_dim], hidden_dim, &mut scratch.qkv_out[..qkv_dim],
             )?;
 
             let q_dim = num_heads * head_dim;
@@ -114,8 +112,8 @@ impl QuantizedAprTransformerQ4 {
                     .copy_from_slice(&scratch.v[kv_head * head_dim..(kv_head + 1) * head_dim]);
             }
 
-            fused_q4_0_q8_0_parallel_matvec_into(
-                &layer.attn_output_weight.data, &scratch.attn_out[..hidden_dim],
+            layer.attn_output_weight.matvec_into(
+                &scratch.attn_out[..hidden_dim],
                 layer.attn_output_weight.in_dim,
                 &mut scratch.ffn_out[..layer.attn_output_weight.out_dim],
             )?;
@@ -130,23 +128,26 @@ impl QuantizedAprTransformerQ4 {
 
             // FFN
             let intermediate_dim = layer.ffn_up_weight.out_dim;
-            fused_q4_0_q8_0_parallel_matvec_into(
-                &layer.ffn_up_weight.data, &scratch.ffn_input[..hidden_dim],
-                hidden_dim, &mut scratch.ffn_up[..intermediate_dim],
+            layer.ffn_up_weight.matvec_into(
+                &scratch.ffn_input[..hidden_dim],
+                hidden_dim,
+                &mut scratch.ffn_up[..intermediate_dim],
             )?;
             if let Some(gate) = &layer.ffn_gate_weight {
-                fused_q4_0_q8_0_parallel_matvec_into(
-                    &gate.data, &scratch.ffn_input[..hidden_dim],
-                    hidden_dim, &mut scratch.ffn_gate[..intermediate_dim],
+                gate.matvec_into(
+                    &scratch.ffn_input[..hidden_dim],
+                    hidden_dim,
+                    &mut scratch.ffn_gate[..intermediate_dim],
                 )?;
                 apply_swiglu(&mut scratch.ffn_up[..intermediate_dim], &scratch.ffn_gate[..intermediate_dim]);
             } else {
                 apply_gelu(&mut scratch.ffn_up[..intermediate_dim]);
             }
 
-            fused_q4_0_q8_0_parallel_matvec_into(
-                &layer.ffn_down_weight.data, &scratch.ffn_up[..intermediate_dim],
-                intermediate_dim, &mut scratch.ffn_out[..hidden_dim],
+            layer.ffn_down_weight.matvec_into(
+                &scratch.ffn_up[..intermediate_dim],
+                intermediate_dim,
+                &mut scratch.ffn_out[..hidden_dim],
             )?;
             residual_add(&mut scratch.hidden[..hidden_dim], &scratch.ffn_out[..hidden_dim]);
         }
@@ -157,10 +158,7 @@ impl QuantizedAprTransformerQ4 {
         // 4. LM head projection
         let vocab_size = self.config.vocab_size;
         let mut logits = vec![0.0f32; vocab_size];
-        fused_q4_0_q8_0_parallel_matvec_into(
-            &self.lm_head_weight.data, &scratch.normed[..hidden_dim],
-            hidden_dim, &mut logits,
-        )?;
+        self.lm_head_weight.matvec_into(&scratch.normed[..hidden_dim], hidden_dim, &mut logits)?;
 
         Ok(logits)
     }
@@ -209,10 +207,7 @@ impl QuantizedAprTransformerQ4 {
         let mut normed_final = vec![0.0f32; hidden_dim];
         rms_norm_weighted(last_hidden, &self.output_norm_weight, &mut normed_final, eps);
 
-        use crate::quantize::fused_q4_0_q8_0_parallel_matvec;
-        fused_q4_0_q8_0_parallel_matvec(
-            &self.lm_head_weight.data, &normed_final, hidden_dim, self.config.vocab_size,
-        )
+        self.lm_head_weight.matvec(&normed_final, hidden_dim, self.config.vocab_size)
     }
 
     /// Attention sublayer for cached forward pass.
@@ -225,7 +220,6 @@ impl QuantizedAprTransformerQ4 {
         cache_len: usize,
         new_seq_len: usize,
     ) -> Result<Vec<f32>> {
-        use crate::quantize::fused_q4_0_q8_0_parallel_matvec;
 
         let hidden_dim = self.config.hidden_dim;
         let num_heads = self.config.num_heads;
@@ -238,9 +232,7 @@ impl QuantizedAprTransformerQ4 {
         let mut qkv_out = Vec::with_capacity(new_seq_len * qkv_dim);
         for s in 0..new_seq_len {
             let input = &normed[s * hidden_dim..(s + 1) * hidden_dim];
-            let qkv = fused_q4_0_q8_0_parallel_matvec(
-                &layer.qkv_weight.data, input, hidden_dim, qkv_dim,
-            )?;
+            let qkv = layer.qkv_weight.matvec(input, hidden_dim, qkv_dim)?;
             qkv_out.extend(qkv);
         }
 
@@ -291,13 +283,12 @@ impl QuantizedAprTransformerQ4 {
         input: &[f32],
         seq_len: usize,
     ) -> Result<Vec<f32>> {
-        use crate::quantize::fused_q4_0_q8_0_parallel_matvec;
         let in_dim = weight.in_dim;
         let out_dim = weight.out_dim;
         let mut out = Vec::with_capacity(seq_len * out_dim);
         for s in 0..seq_len {
             let slice = &input[s * in_dim..(s + 1) * in_dim];
-            let row = fused_q4_0_q8_0_parallel_matvec(&weight.data, slice, in_dim, out_dim)?;
+            let row = weight.matvec(slice, in_dim, out_dim)?;
             out.extend(row);
         }
         Ok(out)
@@ -312,11 +303,10 @@ impl QuantizedAprTransformerQ4 {
         in_dim: usize,
         out_dim: usize,
     ) -> Result<Vec<f32>> {
-        use crate::quantize::fused_q4_0_q8_0_parallel_matvec;
         let mut out = Vec::with_capacity(seq_len * out_dim);
         for s in 0..seq_len {
             let slice = &input[s * in_dim..(s + 1) * in_dim];
-            let row = fused_q4_0_q8_0_parallel_matvec(&weight.data, slice, in_dim, out_dim)?;
+            let row = weight.matvec(slice, in_dim, out_dim)?;
             out.extend(row);
         }
         Ok(out)

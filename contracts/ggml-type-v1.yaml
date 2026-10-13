@@ -1,5 +1,5 @@
 metadata:
-  version: 1.21.0
+  version: 1.22.0
   created: '2026-09-20'
   author: PAIML Engineering
   description: |
@@ -44,7 +44,7 @@ metadata:
   - 'GitHub #3418 (serve sizes from TRAITS, one table), #3430 (M1), #3431 (M2 reconciliation), #3421 (epic), #3563 (pin-derived artifacts, general case)'
 
 name: ggml-type
-version: 1.21.0
+version: 1.22.0
 scope: aprender-quant (trueno_quant) ggml tensor-type enum and TRAITS table
 
 description: |
@@ -550,6 +550,20 @@ falsification_tests:
     exactly as the table's to_float row. Decoding the padded bytes flat is RED.
   test: cargo test -p aprender-serve --lib _3418
   if_fails: 'an APR embedding whose hidden size is not a whole number of blocks is decoded flat, so token row 1 on reads the previous row''s padding.'
+  evidence: |
+    Quorum 2026-10-13 (sonnet+haiku, planted fact F5 caught by both): 2/2 a.
+
+- id: FT-GGMLT-027
+  rule: the Q4 SIMD APR transformer (QuantizedAprTransformerQ4) keeps each tensor's GGML type (QuantizedAprTensorQ4.qtype, carried by from_gguf) and every forward matvec reads the one table's matvec column by it, so a non-Q4_0 GGUF is no longer decoded as Q4_0 and a mixed-type Q/K/V (no table row) is refused at forward (#3418, quorum handoff/quorum-la074-a1-q4simd.md 2/2 a)
+  prediction: |
+    q4_tensor_matvec_reads_the_table_by_qtype_3418: a Q8_0 tensor's matvec equals
+    the table's Q8_0 row bit for bit and differs from the Q4_0 kernel on the same
+    bytes; a Q4_0 tensor still equals fused_q4_0_q8_0_parallel_matvec bit for bit.
+    from_gguf_carries_each_tensors_qtype_3418: from_gguf keeps every type.
+    from_gguf_mixed_qkv_types_are_refused_at_forward_3418: forward errs. Calling
+    the Q4_0 kernel directly is RED.
+  test: cargo test -p aprender-serve --lib _3418
+  if_fails: 'a Q4_K, Q6_K or Q8_0 GGUF loaded into the Q4 SIMD transformer is decoded as Q4_0 and returns garbage logits with no error.'
   evidence: |
     Quorum 2026-10-13 (sonnet+haiku, planted fact F5 caught by both): 2/2 a.
 

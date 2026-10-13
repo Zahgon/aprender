@@ -216,3 +216,120 @@ fn test_from_gguf_with_ffn_gate() {
     assert_eq!(layer.ffn_down_weight.in_dim, 128);
     assert_eq!(layer.ffn_down_weight.out_dim, hidden_dim);
 }
+
+/// #3418 (FT-GGMLT-027): a Q/K/V of mixed GGML types cannot share one fused
+/// tensor; forward refuses it instead of decoding all of it as Q4_0.
+#[test]
+fn from_gguf_mixed_qkv_types_are_refused_at_forward_3418() {
+    use crate::gguf::test_helpers::{create_q4k_test_data, create_test_model_with_config};
+    use crate::gguf::{GGUFConfig, OwnedQKVWeights};
+
+    let hidden_dim = 128;
+    let kv_dim = 2 * (hidden_dim / 8);
+    let config = GGUFConfig {
+        architecture: "llama".to_string(),
+        constraints: crate::gguf::ArchConstraints::from_architecture("llama"),
+        hidden_dim,
+        intermediate_dim: 256,
+        num_heads: 8,
+        num_kv_heads: 2,
+        num_layers: 1,
+        vocab_size: 200,
+        context_length: 512,
+        rope_theta: 10000.0,
+        eps: 1e-5,
+        rope_type: 0,
+        explicit_head_dim: None,
+        query_pre_attn_scalar: None,
+        bos_token_id: None,
+        eos_token_id: None,
+    };
+    let mut model = create_test_model_with_config(&config);
+    let mut k = create_q4k_test_data(hidden_dim, kv_dim);
+    k.qtype = crate::gguf::GGUF_TYPE_Q6_K;
+    model.layers[0].qkv_weight = OwnedQKVWeights::Separate {
+        q: create_q4k_test_data(hidden_dim, hidden_dim),
+        k,
+        v: create_q4k_test_data(hidden_dim, kv_dim),
+    };
+
+    let q4_model = QuantizedAprTransformerQ4::from_gguf(&model);
+    let err = q4_model
+        .forward(&[0])
+        .expect_err("a mixed-type QKV must be refused, not decoded as Q4_0 (#3418)");
+    assert!(err.to_string().contains("#3418"), "{err}");
+}
+
+/// #3418 (FT-GGMLT-027): the Q4 SIMD tensor's matvec is the one table's
+/// matvec row for its `qtype`, bit for bit; Q4_0 (the default) stays on the
+/// kernel it always called, and Q8_0 bytes are no longer read as Q4_0.
+#[test]
+fn q4_tensor_matvec_reads_the_table_by_qtype_3418() {
+    use crate::gguf::ggml_type_table::matvec_into;
+    use crate::gguf::{GGUF_TYPE_Q4_0, GGUF_TYPE_Q8_0};
+    use crate::quantize::fused_q4_0_q8_0_parallel_matvec;
+
+    let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+    let (in_dim, out_dim) = (64, 3);
+    let input: Vec<f32> = (0..in_dim).map(|i| (i as f32 * 0.37).sin()).collect();
+    // Each block: f16 scale 0.5 (0x3800), then the quants.
+    let block = |b: usize, n: usize| {
+        let mut v = vec![0x00, 0x38];
+        v.extend((0..n).map(|i| ((i * 7 + b * 13) % 251) as u8));
+        v
+    };
+    let q8: Vec<u8> = (0..out_dim * 2).flat_map(|b| block(b, 32)).collect();
+    let q4: Vec<u8> = (0..out_dim * 2).flat_map(|b| block(b, 16)).collect();
+
+    let mut want = vec![0.0f32; out_dim];
+    matvec_into(GGUF_TYPE_Q8_0).expect("Q8_0 row")(&q8, &input, in_dim, out_dim, &mut want)
+        .expect("table Q8_0");
+    let t8 = QuantizedAprTensorQ4::with_qtype(q8.clone(), in_dim, out_dim, GGUF_TYPE_Q8_0);
+    assert_eq!(bits(&t8.matvec(&input, in_dim, out_dim).expect("Q8_0")), bits(&want));
+    let as_q4_0 = fused_q4_0_q8_0_parallel_matvec(&q8, &input, in_dim, out_dim).expect("Q4_0");
+    assert_ne!(bits(&as_q4_0), bits(&want));
+
+    let t4 = QuantizedAprTensorQ4::new(q4.clone(), in_dim, out_dim);
+    assert_eq!(t4.qtype, GGUF_TYPE_Q4_0);
+    let old = fused_q4_0_q8_0_parallel_matvec(&q4, &input, in_dim, out_dim).expect("Q4_0");
+    assert_eq!(bits(&t4.matvec(&input, in_dim, out_dim).expect("Q4_0")), bits(&old));
+}
+
+/// #3418 (FT-GGMLT-027): from_gguf keeps each GGUF tensor's type, so a
+/// K-quant model's weights reach their own kernels through the one table.
+#[test]
+fn from_gguf_carries_each_tensors_qtype_3418() {
+    use crate::gguf::test_helpers::create_q4k_test_data;
+    use crate::gguf::GGUF_TYPE_Q4_K;
+
+    let mut model = crate::gguf::test_helpers::create_test_model_with_config(
+        &crate::gguf::GGUFConfig {
+            architecture: "llama".to_string(),
+            constraints: crate::gguf::ArchConstraints::from_architecture("llama"),
+            hidden_dim: 256,
+            intermediate_dim: 256,
+            num_heads: 8,
+            num_kv_heads: 8,
+            num_layers: 1,
+            vocab_size: 64,
+            context_length: 64,
+            rope_theta: 10000.0,
+            eps: 1e-5,
+            rope_type: 0,
+            explicit_head_dim: None,
+            query_pre_attn_scalar: None,
+            bos_token_id: None,
+            eos_token_id: None,
+        },
+    );
+    model.lm_head_weight = create_q4k_test_data(256, 64);
+    let want = model.lm_head_weight.qtype;
+    assert_eq!(want, GGUF_TYPE_Q4_K);
+    let q4_model = QuantizedAprTransformerQ4::from_gguf(&model);
+    assert_eq!(q4_model.lm_head_weight.qtype, want);
+    let l = &model.layers[0];
+    let q = &q4_model.layers[0];
+    assert_eq!(q.attn_output_weight.qtype, l.attn_output_weight.qtype);
+    assert_eq!(q.ffn_up_weight.qtype, l.ffn_up_weight.qtype);
+    assert_eq!(q.ffn_down_weight.qtype, l.ffn_down_weight.qtype);
+}

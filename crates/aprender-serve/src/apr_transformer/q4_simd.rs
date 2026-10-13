@@ -16,12 +16,14 @@ use crate::error::{RealizarError, Result};
 /// Stores raw Q4_0 bytes (18 bytes per 32 values) with dimensions for matmul.
 #[derive(Debug, Clone)]
 pub struct QuantizedAprTensorQ4 {
-    /// Raw Q4_0 quantized data
+    /// Raw quantized data (GGML type `qtype`, Q4_0 unless set)
     pub data: Vec<u8>,
     /// Input dimension (columns in weight matrix)
     pub in_dim: usize,
     /// Output dimension (rows in weight matrix)
     pub out_dim: usize,
+    /// GGML type id of `data` (#3418): every matvec reads the one table by it
+    pub qtype: u32,
 }
 
 impl QuantizedAprTensorQ4 {
@@ -32,7 +34,41 @@ impl QuantizedAprTensorQ4 {
             data,
             in_dim,
             out_dim,
+            qtype: crate::gguf::GGUF_TYPE_Q4_0,
         }
+    }
+
+    /// Create a tensor of GGML type `qtype` from raw data (#3418)
+    #[must_use]
+    pub fn with_qtype(data: Vec<u8>, in_dim: usize, out_dim: usize, qtype: u32) -> Self {
+        Self {
+            data,
+            in_dim,
+            out_dim,
+            qtype,
+        }
+    }
+
+    /// #3418 (FT-GGMLT-027): one row of activations against this weight,
+    /// through the one table's matvec column by `qtype`, into `out`. A type
+    /// with no row (or a mixed-type QKV) is refused, never decoded as Q4_0.
+    pub fn matvec_into(&self, input: &[f32], in_dim: usize, out: &mut [f32]) -> Result<()> {
+        let matvec = crate::gguf::ggml_type_table::matvec_into(self.qtype).ok_or_else(|| {
+            RealizarError::FormatError {
+                reason: format!(
+                    "Q4 SIMD transformer: no fused matvec for GGML type {} (#3418)",
+                    self.qtype
+                ),
+            }
+        })?;
+        matvec(&self.data, input, in_dim, out.len(), out)
+    }
+
+    /// [`Self::matvec_into`] into a new `out_dim` vector.
+    pub fn matvec(&self, input: &[f32], in_dim: usize, out_dim: usize) -> Result<Vec<f32>> {
+        let mut out = vec![0.0f32; out_dim];
+        self.matvec_into(input, in_dim, &mut out)?;
+        Ok(out)
     }
 
     /// Create empty tensor with proper Q4_0 allocation
@@ -47,6 +83,7 @@ impl QuantizedAprTensorQ4 {
             data,
             in_dim,
             out_dim,
+            qtype: crate::gguf::GGUF_TYPE_Q4_0,
         }
     }
 
@@ -63,7 +100,7 @@ impl QuantizedAprTensorQ4 {
 /// Q4_0 quantized layer for SIMD-accelerated inference
 ///
 /// Stores individual Q4_0 tensors for each weight matrix, enabling
-/// direct use of `fused_q4_0_q8_0_parallel_matvec`.
+/// a fused matvec per tensor through the one ggml table (#3418).
 #[derive(Debug, Clone)]
 pub struct QuantizedAprLayerQ4 {
     /// Attention norm weight (F32, small)
