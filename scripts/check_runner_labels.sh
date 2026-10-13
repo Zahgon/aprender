@@ -53,8 +53,8 @@ while IFS=$'\t' read -r want sel; do
     cases_bad=1
   fi
 done <<'CASES'
-FAIL	    runs-on: [self-hosted, Linux, X64, mutants] # never the ARM64 gpu runner
-FAIL	    runs-on: [self-hosted, Linux, X64, mutants]   # clean-room is not this pool
+FAIL	    runs-on: [self-hosted, Linux, X64, docker] # never the ARM64 gpu runner
+FAIL	    runs-on: [self-hosted, Linux, X64, docker]   # clean-room is not this pool
 FAIL	    runs-on: [self-hosted, Linux, X64, not-gpu]
 FAIL	    runs-on: [self-hosted, Linux, X64, xm4y]
 FAIL	    runs-on: [self-hosted, X64, Linux]
