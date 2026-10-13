@@ -236,7 +236,20 @@ fn planted_regressions_turn_red() {
         1,
         "the git retry call site moved; re-anchor the plant"
     );
-    let w3 = table(&shipped.replace(retry, ""), "plant_no_retry");
+    // #5256: the `.git` read prints the same --short=9 digits the retry does, so with the retry
+    // gone it answers the foreign-owner row byte-for-byte. Before #5256 this plant went red only
+    // because the two rungs printed different lengths. Remove both, so the row can only be
+    // answered by the retry.
+    let dot_git = "\n        .or_else(read_head_sha_from_dot_git)";
+    assert_eq!(
+        shipped.matches(dot_git).count(),
+        1,
+        "the .git read call site moved; re-anchor the plant"
+    );
+    let w3 = table(
+        &shipped.replace(retry, "").replace(dot_git, ""),
+        "plant_no_retry",
+    );
     assert!(
         w3.iter().any(|r| r.starts_with("foreign-owner:")),
         "no-retry plant survived: {w3:#?}"
