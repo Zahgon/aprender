@@ -73,11 +73,11 @@ impl OwnedQuantizedModel {
         }
     }
 
-    /// The K-quant matcher's default arm (PMAT-3477 / #3091): a type with a
-    /// dequantize path (IQ*, Q2_K, Q3_K) takes it; anything else is refused by
-    /// id, exactly as the arm used to. Lives here, not as an early return in
-    /// `fused_matmul`, so that function's complexity does not rise (the
-    /// per-function ratchet is shrink-only).
+    /// `fused_matmul`'s default arm (PMAT-3477 / #3091, #3418 FT-GGMLT-019):
+    /// a type with a to_float row in the one ggml table takes the dequant
+    /// path; anything else is refused by id. Admission is the table, so a type
+    /// the table can decode cannot be refused here for a missing hand arm
+    /// (#3869: Q5_1 was, as "got type 7", while its decoder already existed).
     pub(crate) fn dequant_fallback_or_refuse(
         &self,
         input: &[f32],
@@ -86,14 +86,11 @@ impl OwnedQuantizedModel {
         out_dim: usize,
         seq_len: usize,
     ) -> Result<Vec<f32>> {
-        let has_dequant = crate::quantize::iq_block_bytes(weight.qtype).is_some()
-            || weight.qtype == crate::gguf::types::GGUF_TYPE_Q2_K
-            || weight.qtype == crate::gguf::types::GGUF_TYPE_Q3_K;
-        if !has_dequant {
+        if crate::gguf::ggml_type_table::to_float(weight.qtype).is_none() {
             return Err(RealizarError::UnsupportedOperation {
                 operation: "owned_fused_matmul".to_string(),
                 reason: format!(
-                    "Fused matmul only supports F32/BF16/F16/Q4_0/Q4_1/Q5_0/Q8_0/Q4_K/Q5_K/Q6_K and the dequant path for IQ*/Q2_K/Q3_K, got type {}",
+                    "Fused matmul only supports F32/BF16/F16, the fused Q4_0/Q8_0/Q4_K/Q5_K/Q6_K kernels, APR Q4/Q8 and the dequant path for the ggml types with a to_float row, got type {}",
                     weight.qtype
                 ),
             });
@@ -102,13 +99,12 @@ impl OwnedQuantizedModel {
     }
 
     /// Dequantize-then-dot CPU path for the types with no fused kernel here
-    /// (PMAT-3477 / #3091).
+    /// (PMAT-3477 / #3091, #3418 FT-GGMLT-019).
     ///
-    /// The IQ formats (IQ2_XXS/IQ2_S/IQ3_XXS/IQ3_S/IQ4_XS) that real unsloth
-    /// GGUFs ship, plus Q2_K/Q3_K, used to fall through to the K-quant matcher
-    /// and come back as `owned_fused_matmul … got type 16`. They are correct
-    /// here, not fast: one row is dequantized into a 256-element scratch at a
-    /// time and dotted with the activation.
+    /// The IQ formats keep their row-streaming matvec: one row is dequantized
+    /// into a 256-element scratch at a time and dotted with the activation.
+    /// Every other type (Q4_1/Q5_0/Q5_1/Q2_K/Q3_K) is decoded once per call
+    /// through the table's to_float column and multiplied by SIMD matvec.
     pub(crate) fn dequant_fallback_matmul(
         &self,
         input: &[f32],
@@ -117,42 +113,56 @@ impl OwnedQuantizedModel {
         out_dim: usize,
         seq_len: usize,
     ) -> Result<Vec<f32>> {
+        if crate::quantize::iq_block_bytes(weight.qtype).is_none() {
+            return self.to_float_matmul(input, weight, in_dim, out_dim, seq_len);
+        }
         let mut output = vec![0.0f32; seq_len * out_dim];
         for s in 0..seq_len {
             let x = &input[s * in_dim..(s + 1) * in_dim];
             let dst = &mut output[s * out_dim..(s + 1) * out_dim];
-            if crate::quantize::iq_block_bytes(weight.qtype).is_some() {
-                crate::quantize::iq_parallel_matvec_into(
-                    weight.qtype,
-                    &weight.data,
-                    x,
-                    in_dim,
-                    out_dim,
-                    dst,
-                )?;
-            } else {
-                // Q2_K / Q3_K: dequantize the tensor once per call and dot.
-                let weights_f32 = if weight.qtype == crate::gguf::types::GGUF_TYPE_Q2_K {
-                    crate::quantize::dequantize_q2_k(&weight.data)?
-                } else {
-                    crate::quantize::dequantize_q3_k(&weight.data)?
-                };
-                if weights_f32.len() < in_dim * out_dim {
-                    return Err(RealizarError::InvalidShape {
-                        reason: format!(
-                            "dequantized weight has {} values, needs {} for {out_dim}x{in_dim}",
-                            weights_f32.len(),
-                            in_dim * out_dim
-                        ),
-                    });
-                }
-                for (row, slot) in dst.iter_mut().enumerate() {
-                    let w = &weights_f32[row * in_dim..(row + 1) * in_dim];
-                    *slot = w.iter().zip(x.iter()).map(|(a, b)| a * b).sum();
-                }
-            }
+            crate::quantize::iq_parallel_matvec_into(
+                weight.qtype,
+                &weight.data,
+                x,
+                in_dim,
+                out_dim,
+                dst,
+            )?;
         }
         Ok(output)
+    }
+
+    /// The non-IQ half of [`Self::dequant_fallback_matmul`]: decode the whole
+    /// tensor once with `ggml_type_table::to_float` and run every input row
+    /// through one SIMD matvec. A decode longer than `out_dim x in_dim` (whole
+    /// trailing blocks) is cut to it; a shorter one is refused.
+    fn to_float_matmul(
+        &self,
+        input: &[f32],
+        weight: &OwnedQuantizedTensor,
+        in_dim: usize,
+        out_dim: usize,
+        seq_len: usize,
+    ) -> Result<Vec<f32>> {
+        let name = crate::gguf::ggml_type_table::traits(weight.qtype).map_or("?", |t| t.name);
+        let decode = crate::gguf::ggml_type_table::to_float(weight.qtype).ok_or_else(|| {
+            RealizarError::UnsupportedOperation {
+                operation: "owned_fused_matmul".to_string(),
+                reason: format!("no to_float row for type {}", weight.qtype),
+            }
+        })?;
+        let mut weights_f32 = decode(&weight.data)?;
+        if weights_f32.len() < in_dim * out_dim {
+            return Err(RealizarError::InvalidShape {
+                reason: format!(
+                    "dequantized {name} weight has {} values, needs {} for {out_dim}x{in_dim}",
+                    weights_f32.len(),
+                    in_dim * out_dim
+                ),
+            });
+        }
+        weights_f32.truncate(in_dim * out_dim);
+        dequant_f32_matmul(input, weights_f32, name, in_dim, out_dim, seq_len)
     }
 
     /// Fused gate+up matmul into pre-allocated output buffers (PMAT-FFN-FUSION)

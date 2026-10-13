@@ -1873,3 +1873,122 @@ fn falsify_pipe_001_embed_lm_head_softmax_pipeline() {
 }
 
 include!("matmul_qkv_norm_tests.rs");
+
+/// #3418 (FT-GGMLT-019): `fused_matmul`'s dequant fallback is admitted by,
+/// and decodes through, the one ggml table's to_float column.
+mod to_float_matmul_tests_3418 {
+    use super::create_test_model;
+    use crate::error::RealizarError;
+    use crate::gguf::ggml_type_table::{
+        scale_offsets, to_float, to_float_tests_3418::blocks, traits,
+    };
+    use crate::gguf::quantized::OwnedQuantizedTensor;
+
+    /// Ids with a fused kernel arm or their own float arm ahead of the fallback.
+    const OWN_ARM: [u32; 8] = [0, 1, 30, 2, 8, 12, 13, 14];
+
+    /// `blocks` with every f16 scale field the table lists set to 1.0, so the
+    /// fixed byte pattern cannot land a NaN or Inf in a scale.
+    fn finite_blocks(id: u32, block_bytes: usize, k: usize) -> Vec<u8> {
+        let mut data = blocks(id, k);
+        for b in data.chunks_exact_mut(block_bytes) {
+            for &o in scale_offsets(id).unwrap_or(&[0]) {
+                b[o..o + 2].copy_from_slice(&[0x00, 0x3C]);
+            }
+        }
+        data
+    }
+
+    fn reference(id: u32, data: &[u8], input: &[f32], in_dim: usize, out_dim: usize) -> Vec<f32> {
+        let w = to_float(id).expect("a to_float row")(data).expect("whole blocks decode");
+        let mut out = Vec::new();
+        for x in input.chunks_exact(in_dim) {
+            for row in w[..in_dim * out_dim].chunks_exact(in_dim) {
+                let dot: f64 = row
+                    .iter()
+                    .zip(x)
+                    .map(|(a, b)| f64::from(*a) * f64::from(*b))
+                    .sum();
+                out.push(dot as f32);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn every_to_float_id_without_its_own_arm_matmuls_through_the_table_3418() {
+        let model = create_test_model(64, 100);
+        let (in_dim, out_dim) = (256, 4);
+        let mut seen = Vec::new();
+        for id in (0..64).filter(|id| to_float(*id).is_some() && !OWN_ARM.contains(id)) {
+            let t = traits(id).expect("a to_float row is a sized ggml type");
+            let data = finite_blocks(id, t.type_size, in_dim * out_dim / t.blck_size);
+            let weight = OwnedQuantizedTensor {
+                data: data.clone(),
+                in_dim,
+                out_dim,
+                qtype: id,
+            };
+            for seq_len in [1usize, 3] {
+                let input: Vec<f32> = (0..seq_len * in_dim)
+                    .map(|i| ((i % 17) as f32 - 8.0) / 8.0)
+                    .collect();
+                let want = reference(id, &data, &input, in_dim, out_dim);
+                assert!(
+                    want.iter().all(|v| v.is_finite()),
+                    "{} reference is not finite",
+                    t.name
+                );
+                let got = model
+                    .fused_matmul(&input, &weight)
+                    .unwrap_or_else(|e| panic!("{} ({id}) seq {seq_len}: {e}", t.name));
+                assert_eq!(got.len(), want.len(), "{} ({id}) seq {seq_len}", t.name);
+                for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+                    let tol = 1e-3 * w.abs().max(1.0);
+                    assert!(
+                        (g - w).abs() <= tol,
+                        "{} ({id}) seq {seq_len} [{i}]: {g} vs {w}",
+                        t.name
+                    );
+                }
+            }
+            seen.push(t.name);
+        }
+        for name in [
+            "Q4_1", "Q5_0", "Q5_1", "Q2_K", "Q3_K", "IQ2_XXS", "IQ4_NL", "IQ4_XS",
+        ] {
+            assert!(
+                seen.contains(&name),
+                "{name} did not take the to_float fallback: {seen:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_sized_id_without_a_to_float_row_is_refused_by_id_3418() {
+        let model = create_test_model(64, 100);
+        let mut refused = 0;
+        for id in (0..64).filter(|id| traits(*id).is_some() && to_float(*id).is_none()) {
+            if OWN_ARM.contains(&id) {
+                continue;
+            }
+            let weight = OwnedQuantizedTensor {
+                data: vec![0u8; 4096],
+                in_dim: 256,
+                out_dim: 4,
+                qtype: id,
+            };
+            match model.fused_matmul(&[0.5f32; 256], &weight) {
+                Err(RealizarError::UnsupportedOperation { reason, .. }) => {
+                    assert!(
+                        reason.ends_with(&format!("got type {id}")),
+                        "{id}: {reason}"
+                    );
+                    refused += 1;
+                },
+                other => panic!("type {id} was not refused by id: {other:?}"),
+            }
+        }
+        assert!(refused > 0, "no sized id without a to_float row was tried");
+    }
+}

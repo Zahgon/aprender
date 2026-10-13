@@ -129,15 +129,14 @@ impl OwnedQuantizedModel {
 
     /// Fused dequantize + matmul for quantized weights
     ///
-    /// Supports F32, BF16, F16, Q4_0, Q8_0, Q4_1, Q5_0, Q5_1, Q4_K, Q5_K, Q6_K formats.
+    /// Supports F32, BF16, F16, the fused Q4_0/Q8_0 and Q4_K/Q5_K/Q6_K kernels, APR Q4/Q8,
+    /// and every other ggml type the one table can decode (`ggml_type_table::to_float`).
     /// Uses SIMD-accelerated implementations for optimal performance.
     pub(crate) fn fused_matmul(
         &self,
         input: &[f32],
         weight: &OwnedQuantizedTensor,
     ) -> Result<Vec<f32>> {
-        use crate::quantize::{dequantize_q4_1, dequantize_q5_0, dequantize_q5_1};
-
         let in_dim = weight.in_dim;
         let out_dim = weight.out_dim;
         let seq_len = input.len() / in_dim;
@@ -160,11 +159,12 @@ impl OwnedQuantizedModel {
         //   F32        rayon parallel dot products, zero-copy on the raw bytes
         //   BF16/F16   GH-368: decode 2-byte floats, BF16 = f32::from_bits(bits << 16)
         //   Q4_0/Q8_0  fused integer SIMD matmul
-        //   Q4_1/Q5_0  dequantize + SIMD matvec
         //   APR Q4/Q8  GH-478: per-tensor scratch dequant (F32 expansion bounded to
         //              one tensor's working set, not 4 × num_params at load time)
-        //   otherwise  the K-quant kernels (Q4_K/Q5_K/Q6_K) and, in their default
-        //              arm, the IQ*/Q2_K/Q3_K dequant fallback (PMAT-3477 / #3091)
+        //   Q4_K/Q5_K/Q6_K  fused K-quant kernels
+        //   otherwise  #3418 (FT-GGMLT-019): any id with a to_float row in the one
+        //              ggml table (Q4_1/Q5_0/Q5_1/Q2_K/Q3_K, IQ*) takes the dequant
+        //              fallback, once per call; anything else is refused by id
         let data = &weight.data;
         match weight.qtype {
             GGUF_TYPE_F32 => Ok(self.fused_matmul_f32(input, data, in_dim, out_dim, seq_len)),
@@ -187,41 +187,6 @@ impl OwnedQuantizedModel {
             GGUF_TYPE_Q4_0 | GGUF_TYPE_Q8_0 => {
                 self.fused_matmul_q4_q8(input, weight, in_dim, out_dim, seq_len)
             },
-            GGUF_TYPE_Q4_1 => dequant_f32_matmul(
-                input,
-                dequantize_q4_1(data)?,
-                "Q4_1",
-                in_dim,
-                out_dim,
-                seq_len,
-            ),
-            GGUF_TYPE_Q5_0 => dequant_f32_matmul(
-                input,
-                dequantize_q5_0(data)?,
-                "Q5_0",
-                in_dim,
-                out_dim,
-                seq_len,
-            ),
-            // #3869: Q5_1 sat in the gap between its two siblings. The
-            // dequantizer has always been here (`quantize::dequantize_q5_1`,
-            // `pub`), and the GPU-side `acceleration.rs::dequantize_weight`
-            // already dispatched to it — only this CPU arm was missing, so a
-            // Q5_1 tensor fell through to `dequant_fallback_or_refuse`, whose
-            // admission is `iq_block_bytes.is_some() || Q2_K || Q3_K`, and was
-            // refused as "got type 7".
-            //
-            // Real cost: Qwen2.5-0.5B-Instruct-IQ4_XS.gguf carries 24 Q5_1
-            // tensors, so the whole file was unrunnable on CPU for one missing
-            // three-line arm while its other 266 tensors were all supported.
-            GGUF_TYPE_Q5_1 => dequant_f32_matmul(
-                input,
-                dequantize_q5_1(data)?,
-                "Q5_1",
-                in_dim,
-                out_dim,
-                seq_len,
-            ),
             APR_TYPE_Q4 => {
                 let w = crate::apr::dequant::dequantize_apr_q4(data, in_dim * out_dim);
                 dequant_f32_matmul(input, w, "APR-Q4", in_dim, out_dim, seq_len)
@@ -230,7 +195,10 @@ impl OwnedQuantizedModel {
                 let w = crate::apr::dequant::dequantize_apr_q8(data, in_dim * out_dim);
                 dequant_f32_matmul(input, w, "APR-Q8", in_dim, out_dim, seq_len)
             },
-            _ => self.fused_matmul_k_quants(input, weight, in_dim, out_dim, seq_len),
+            GGUF_TYPE_Q4_K | GGUF_TYPE_Q5_K | GGUF_TYPE_Q6_K => {
+                self.fused_matmul_k_quants(input, weight, in_dim, out_dim, seq_len)
+            },
+            _ => self.dequant_fallback_or_refuse(input, weight, in_dim, out_dim, seq_len),
         }
     }
 
