@@ -767,7 +767,9 @@ dependencies = [
 name = "aprender-decide-train"
 version = "0.71.1"
 dependencies = [
+ "aprender-contrastive-data",
  "aprender-decide",
+ "serde_json",
 ]
 
 [[package]]

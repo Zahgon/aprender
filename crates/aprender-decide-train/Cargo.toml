@@ -23,5 +23,11 @@ path = "src/lib.rs"
 # publish = false and has no workspace alias.
 aprender-decide = { path = "../aprender-decide" }
 
+[dev-dependencies]
+# examples/prepare_demo_data.rs only: reopen the attested prepared dataset and replay
+# the selection manifest through the data crate's own checks.
+aprender-contrastive-data = { workspace = true }
+serde_json = { workspace = true }
+
 [lints]
 workspace = true
