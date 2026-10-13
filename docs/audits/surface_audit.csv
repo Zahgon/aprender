@@ -72,8 +72,8 @@ apr,POST /stream/generate,2,x86_64-linux,llama.cpp,yes,3,http-apr-serve,crates/a
 apr,POST /tokenize,2,x86_64-linux,llama.cpp,yes,3,http-apr-serve,crates/aprender-serve/src/api/router.rs:96,high
 apr,POST /v1/batch/completions,9,x86_64-linux,vllm,yes,3,http-apr-serve,crates/aprender-serve/src/api/router.rs:157,medium
 apr,POST /v1/chat/completions,4,x86_64-linux;nvidia-cuda,llama.cpp,yes,3,http-apr-serve,crates/aprender-serve/src/api/router.rs:134,high
-apr,"POST /v1/chat/completions (stream:true, SSE)",4,x86_64-linux;nvidia-cuda,llama.cpp,no,3,http-apr-serve,"crates/aprender-serve/src/api/openai_handlers.rs:913-983,1052-1186 (stream:true branches 1282,1380; cuda stream branches crates/aprender-serve/src/api/cuda_chat_backend.rs:147,441,602,755,1395,1426; ignore_eos fail-closed 16,561,712)",high
-apr,POST /v1/chat/completions/stream,4,x86_64-linux,llama.cpp,yes,3,http-apr-serve,crates/aprender-serve/src/api/router.rs:141,high
+apr,"POST /v1/chat/completions (stream:true, SSE)",4,x86_64-linux;nvidia-cuda,llama.cpp,no,3,http-apr-serve,"crates/aprender-serve/src/api/openai_handlers.rs:919-989,1058-1240 (stream:true branches 1336,1435; cuda stream branches crates/aprender-serve/src/api/cuda_chat_backend.rs:147,441,602,755,1335,1366; ignore_eos fail-closed 16,561,712)",high
+apr,POST /v1/chat/completions/stream,4,x86_64-linux,llama.cpp,yes,3,http-apr-serve,crates/aprender-serve/src/api/router.rs:139,high
 apr,POST /v1/completions,2,x86_64-linux,llama.cpp,yes,3,http-apr-serve,crates/aprender-serve/src/api/router.rs:131,high
 apr,"POST /v1/completions (stream:true, SSE)",2,x86_64-linux,llama.cpp,no,3,http-apr-serve,crates/aprender-serve/src/api/gpu_completions_handler.rs:405 (SSE :340-378),high
 apr,POST /v1/embeddings,4,x86_64-linux,llama.cpp,yes,3,http-apr-serve,crates/aprender-serve/src/api/router.rs:144,high
