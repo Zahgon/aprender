@@ -1,5 +1,5 @@
 metadata:
-  version: 1.24.0
+  version: 1.25.0
   created: '2026-09-20'
   author: PAIML Engineering
   description: |
@@ -44,7 +44,7 @@ metadata:
   - 'GitHub #3418 (serve sizes from TRAITS, one table), #3430 (M1), #3431 (M2 reconciliation), #3421 (epic), #3563 (pin-derived artifacts, general case)'
 
 name: ggml-type
-version: 1.24.0
+version: 1.25.0
 scope: aprender-quant (trueno_quant) ggml tensor-type enum and TRAITS table
 
 description: |
@@ -588,6 +588,17 @@ falsification_tests:
   if_fails: 'a Q8_0, Q4_K or Q6_K APR-Q4 weight is uploaded labelled Q4_0 and run through the Q4_0 GPU kernel, giving garbage logits with no error.'
   evidence: |
     Quorum 2026-10-13 (sonnet+haiku, planted fact F3 caught by both): 2/2 a.
+- id: FT-GGMLT-030
+  rule: the Qwen3-MoE CPU expert matvec (qwen3_moe_load.rs matvec_for_qtype) runs the one table's matvec_into row for the expert tensor's qtype, with no hand match arm per type; SUPPORTED_EXPERT_QTYPES stays the explicit, measured admission list [Q4_K, Q6_K] (#3341), and every admitted id must have a table row (#3418, quorum handoff/quorum-la074-a1-moe.md 2/2 a)
+  prediction: |
+    moe_expert_matvec_runs_the_table_row_for_its_qtype_3418: every admitted qtype has a
+    matvec_into row, and on non-zero blocks matvec_for_qtype equals the qtype's own
+    fused kernel bit for bit. Pinning the lookup to the Q4_K row is RED (Q6_K drifts).
+  test: cargo test -p aprender-serve --lib moe_expert_matvec_runs
+  if_fails: 'a Q6_K (or Q4_K) expert tensor runs through another type''s kernel, giving wrong expert outputs with no error, or an admitted type has no kernel and refuses at the first token.'
+  evidence: |
+    Quorum 2026-10-13 (sonnet+haiku, planted fact F4 caught by haiku): 2/2 a.
+    Wrong-row mutant killed on intel 2026-10-14.
 
 kani_harnesses:
 - id: KANI-GGMLT-001

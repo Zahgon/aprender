@@ -446,15 +446,16 @@ fn matvec_for_qtype(
     in_dim: usize,
     out_dim: usize,
 ) -> Result<Vec<f32>> {
-    use crate::quantize::{fused_q4k_parallel_matvec, fused_q6k_parallel_matvec};
     if !SUPPORTED_EXPERT_QTYPES.contains(&qtype) {
         return Err(unsupported_expert_matvec(qtype));
     }
-    match qtype {
-        GGUF_TYPE_Q4_K => fused_q4k_parallel_matvec(weight_data, activations, in_dim, out_dim),
-        GGUF_TYPE_Q6_K => fused_q6k_parallel_matvec(weight_data, activations, in_dim, out_dim),
-        other => Err(unsupported_expert_matvec(other)),
-    }
+    // #3418 (FT-GGMLT-030): the kernel is the one table's matvec row for
+    // `qtype`; the admission list above stays the measured set.
+    let matvec = crate::gguf::ggml_type_table::matvec_into(qtype)
+        .ok_or_else(|| unsupported_expert_matvec(qtype))?;
+    let mut out = vec![0.0f32; out_dim];
+    matvec(weight_data, activations, in_dim, out_dim, &mut out)?;
+    Ok(out)
 }
 
 /// The forward-path refusal for an expert tensor qtype with no kernel.

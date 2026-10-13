@@ -265,6 +265,56 @@ mod moe_load_contract_tests {
         }
     }
 
+    /// #3418 (FT-GGMLT-030): every admitted expert qtype has a row in the one
+    /// table's matvec column, and the MoE expert matvec returns exactly what
+    /// the qtype's own fused kernel returns, bit for bit, on non-zero blocks.
+    #[test]
+    fn moe_expert_matvec_runs_the_table_row_for_its_qtype_3418() {
+        use crate::quantize::{fused_q4k_parallel_matvec, fused_q6k_parallel_matvec};
+        let (in_dim, out_dim) = (256usize, 4usize);
+        let activations: Vec<f32> = (0..in_dim).map(|i| (i as f32 * 0.37).sin()).collect();
+        // one super-block per 256 weights: d = 1.0 (f16), dmin = 0, unit
+        // scales, patterned quants, so the output cannot be all zero
+        let pat = |n: usize, k: usize| (0..n).map(move |i| ((i * 7 + k) % 256) as u8);
+        for &qtype in SUPPORTED_EXPERT_QTYPES {
+            assert!(
+                crate::gguf::ggml_type_table::matvec_into(qtype).is_some(),
+                "admitted expert qtype {qtype} has no matvec row in the one table"
+            );
+            let block: Vec<u8> = match qtype {
+                GGUF_TYPE_Q4_K => [0x00, 0x3C, 0, 0]
+                    .into_iter()
+                    .chain([1u8; 12])
+                    .chain(pat(128, 3))
+                    .collect(),
+                GGUF_TYPE_Q6_K => pat(128, 3)
+                    .chain(pat(64, 5))
+                    .chain([1u8; 16])
+                    .chain([0x00, 0x3C])
+                    .collect(),
+                other => panic!("test has no block layout for admitted qtype {other}"),
+            };
+            let weights = block.repeat(in_dim * out_dim / 256);
+            assert_eq!(weights.len(), expert_bytes(qtype, in_dim * out_dim).len());
+            let got = matvec_for_qtype(qtype, &weights, &activations, in_dim, out_dim)
+                .expect("admitted qtype must run");
+            let want = match qtype {
+                GGUF_TYPE_Q4_K => {
+                    fused_q4k_parallel_matvec(&weights, &activations, in_dim, out_dim)
+                },
+                GGUF_TYPE_Q6_K => {
+                    fused_q6k_parallel_matvec(&weights, &activations, in_dim, out_dim)
+                },
+                other => panic!("test has no reference kernel for admitted qtype {other}"),
+            }
+            .expect("reference kernel");
+            assert!(got.iter().any(|v| *v != 0.0), "qtype {qtype}: all-zero output is vacuous");
+            let got_bits: Vec<u32> = got.iter().map(|v| v.to_bits()).collect();
+            let want_bits: Vec<u32> = want.iter().map(|v| v.to_bits()).collect();
+            assert_eq!(got_bits, want_bits, "qtype {qtype}: MoE expert matvec drifted");
+        }
+    }
+
     /// The loader's accepted set IS the dispatcher's set — asserted against
     /// the real load path, not just the kernel: Q5_K and Q8_0 are readable
     /// tensor types (`tensor_byte_size` sizes them) that the MoE forward has
