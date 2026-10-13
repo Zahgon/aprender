@@ -133,13 +133,9 @@ impl OwnedQuantizedModel {
                 &weight.data,
                 total_elements,
             )),
-            // #3418 (FT-GGMLT-017): every block type decodes through the one
-            // table's to_float column, with its block size and bytes from the
-            // same row. 2-D rows are padded to whole blocks (GH-202), so a
-            // padded row is decoded on its own and its padding dropped.
+            // #3418 (FT-GGMLT-017, 025): every block type decodes through the
+            // one table's to_float column, padded rows (GH-202) one by one.
             id if crate::gguf::ggml_type_table::to_float(id).is_some() => {
-                let t = crate::gguf::ggml_type_table::traits(id)
-                    .expect("a to_float row is a sized ggml type");
                 // Q4_K keeps its AVX2 kernel on this per-call path; it agrees
                 // with the column's scalar row to 1e-4 (dequantize_05.rs).
                 let decode: crate::gguf::ggml_type_table::ToFloat = if id == GGUF_TYPE_Q4_K {
@@ -147,25 +143,13 @@ impl OwnedQuantizedModel {
                 } else {
                     crate::gguf::ggml_type_table::to_float(id).expect("guarded above")
                 };
-                let row_bytes = in_dim.div_ceil(t.blck_size) * t.type_size;
-                let Some(data) = weight.data.get(..row_bytes * out_dim) else {
-                    return Err(RealizarError::FormatError {
-                        reason: format!(
-                            "{} weight [{out_dim}, {in_dim}] needs {} bytes, has {}",
-                            t.name,
-                            row_bytes * out_dim,
-                            weight.data.len()
-                        ),
-                    });
-                };
-                if in_dim.is_multiple_of(t.blck_size) {
-                    return decode(data);
-                }
-                let mut output = Vec::with_capacity(total_elements);
-                for row in data.chunks_exact(row_bytes) {
-                    output.extend_from_slice(&decode(row)?[..in_dim]);
-                }
-                Ok(output)
+                crate::gguf::ggml_type_table::to_float_rows_with(
+                    id,
+                    decode,
+                    &weight.data,
+                    in_dim,
+                    out_dim,
+                )
             },
             // Fail-closed + loud: an unknown type is NEVER silently reinterpreted
             // as raw f32 (that produced garbage weights). Hard-error instead.

@@ -1,5 +1,5 @@
 metadata:
-  version: 1.19.0
+  version: 1.20.0
   created: '2026-09-20'
   author: PAIML Engineering
   description: |
@@ -44,7 +44,7 @@ metadata:
   - 'GitHub #3418 (serve sizes from TRAITS, one table), #3430 (M1), #3431 (M2 reconciliation), #3421 (epic), #3563 (pin-derived artifacts, general case)'
 
 name: ggml-type
-version: 1.19.0
+version: 1.20.0
 scope: aprender-quant (trueno_quant) ggml tensor-type enum and TRAITS table
 
 description: |
@@ -526,6 +526,20 @@ falsification_tests:
   if_fails: 'a Q4_0 or Q8_0 GGUF weight matmuls through another type''s kernel, or the fused matmul keeps a per-id kernel choice beside the table.'
   evidence: |
     Quorum 2026-10-13 (sonnet+haiku, planted fact F5 caught by both): 2/2 a.
+
+- id: FT-GGMLT-025
+  rule: the one table's to_float_rows decodes a [out_dim, in_dim] weight whose rows are padded to whole blocks (GH-202) row by row, keeping in_dim values per row, and refuses short data; the CPU dequantize_weight (with its Q4_K SIMD override), the to_float fused-matmul fallback, the CUDA dequantize_weight_for_cuda and the wgpu dequant_tensor_public all decode through it instead of each decoding the bytes flat (#3418, quorum handoff/quorum-la074-a1-rows.md 2/2 a)
+  prediction: |
+    to_float_fallback_matmuls_padded_rows_3418: every non-IQ to_float type
+    without its own arm, at in_dim = 1.5 blocks and out_dim 4, matmuls equal
+    to a per-row decode reference. wgpu_dequant_drops_row_padding_3418: the
+    wgpu dequant of a 1.5-block-row weight equals the per-row decode, bit for
+    bit. to_float_rows_keeps_each_rows_values_3418: the table function itself.
+    Decoding the padded bytes flat is RED.
+  test: cargo test -p aprender-serve --lib _3418
+  if_fails: 'a GGUF weight whose in_dim is not a whole number of blocks is decoded flat on some path, so row 1 on reads the previous row''s padding.'
+  evidence: |
+    Quorum 2026-10-13 (sonnet+haiku, planted fact F3 caught by both): 2/2 a.
 
 kani_harnesses:
 - id: KANI-GGMLT-001

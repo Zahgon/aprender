@@ -304,9 +304,15 @@ pub fn dequant_tensor_public(tensor: &crate::gguf::OwnedQuantizedTensor) -> Resu
     use crate::gguf::{APR_TYPE_Q4, APR_TYPE_Q8};
 
     match tensor.qtype {
-        // #3418 (FT-GGMLT-017): every block type through the one table.
+        // #3418 (FT-GGMLT-017, 025): every block type through the one table,
+        // padded rows (GH-202) one by one.
         id if crate::gguf::ggml_type_table::to_float(id).is_some() => {
-            crate::gguf::ggml_type_table::to_float(id).expect("guarded above")(&tensor.data)
+            crate::gguf::ggml_type_table::to_float_rows(
+                id,
+                &tensor.data,
+                tensor.in_dim,
+                tensor.out_dim,
+            )
         },
         GGUF_TYPE_F32 => Ok(tensor
             .data
@@ -526,6 +532,35 @@ mod to_float_site_3418 {
                 "{}",
                 t.name
             );
+        }
+    }
+
+    /// FT-GGMLT-025: a weight whose rows are 1.5 blocks wide (GH-202 padding)
+    /// uploads each row's own values, its padding dropped.
+    #[test]
+    fn wgpu_dequant_drops_row_padding_3418() {
+        for t in GGML_TYPES.iter().filter(|t| to_float(t.id).is_some()) {
+            let in_dim = t.blck_size + t.blck_size / 2;
+            let data = blocks(t.id, 4);
+            let want: Vec<u32> = data
+                .chunks_exact(2 * t.type_size)
+                .flat_map(|row| {
+                    to_float(t.id).expect("row")(row).expect("decode")[..in_dim].to_vec()
+                })
+                .map(f32::to_bits)
+                .collect();
+            let tensor = crate::gguf::OwnedQuantizedTensor {
+                data,
+                in_dim,
+                out_dim: 2,
+                qtype: t.id,
+            };
+            let got: Vec<u32> = super::dequant_tensor_public(&tensor)
+                .unwrap_or_else(|e| panic!("wgpu refused {} ({}): {e}", t.name, t.id))
+                .into_iter()
+                .map(f32::to_bits)
+                .collect();
+            assert_eq!(got, want, "{} ({}) padded rows", t.name, t.id);
         }
     }
 }

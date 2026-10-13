@@ -1992,6 +1992,61 @@ mod to_float_matmul_tests_3418 {
         assert!(refused > 0, "no sized id without a to_float row was tried");
     }
 
+    /// #3418 (FT-GGMLT-025): a weight whose rows are 1.5 blocks wide is padded
+    /// to whole blocks per row (GH-202); the to_float fallback decodes each
+    /// row on its own, so row 1 on is not read from row 0's padding.
+    #[test]
+    fn to_float_fallback_matmuls_padded_rows_3418() {
+        let model = create_test_model(64, 100);
+        let out_dim = 4;
+        let mut seen = 0;
+        for id in (0..64).filter(|id| {
+            to_float(*id).is_some()
+                && !OWN_ARM.contains(id)
+                && crate::quantize::iq_block_bytes(*id).is_none()
+        }) {
+            let t = traits(id).expect("a to_float row is a sized ggml type");
+            let in_dim = t.blck_size + t.blck_size / 2;
+            let data = finite_blocks(id, t.type_size, 2 * out_dim);
+            let weight = OwnedQuantizedTensor {
+                data: data.clone(),
+                in_dim,
+                out_dim,
+                qtype: id,
+            };
+            let input: Vec<f32> = (0..2 * in_dim)
+                .map(|i| ((i % 13) as f32 - 6.0) / 8.0)
+                .collect();
+            let decode = to_float(id).expect("a to_float row");
+            let mut want = Vec::new();
+            for x in input.chunks_exact(in_dim) {
+                for row in data.chunks_exact(2 * t.type_size) {
+                    let w = decode(row).expect("whole blocks decode");
+                    let dot: f64 = w[..in_dim]
+                        .iter()
+                        .zip(x)
+                        .map(|(a, b)| f64::from(*a) * f64::from(*b))
+                        .sum();
+                    want.push(dot as f32);
+                }
+            }
+            let got = model
+                .fused_matmul(&input, &weight)
+                .unwrap_or_else(|e| panic!("{} ({id}): {e}", t.name));
+            assert_eq!(got.len(), want.len(), "{} ({id})", t.name);
+            for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+                let tol = 1e-3 * w.abs().max(1.0);
+                assert!(
+                    (g - w).abs() <= tol,
+                    "{} ({id}) padded [{i}]: {g} vs {w}",
+                    t.name
+                );
+            }
+            seen += 1;
+        }
+        assert!(seen >= 5, "only {seen} fallback types were tried");
+    }
+
     /// #3418 (FT-GGMLT-024): Q4_0 and Q8_0 take the one table's matvec row,
     /// bit for bit what their non-into fused kernels give per input row.
     #[test]

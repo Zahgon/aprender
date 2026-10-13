@@ -95,10 +95,10 @@ impl OwnedQuantizedModel {
         Ok(output)
     }
 
-    /// The non-IQ half of [`Self::dequant_fallback_matmul`]: decode the whole
-    /// tensor once with `ggml_type_table::to_float` and run every input row
-    /// through one SIMD matvec. A decode longer than `out_dim x in_dim` (whole
-    /// trailing blocks) is cut to it; a shorter one is refused.
+    /// The non-IQ half of [`Self::dequant_fallback_matmul`]: decode the
+    /// `[out_dim, in_dim]` weight once with `ggml_type_table::to_float_rows`
+    /// (padded rows one by one, #3418 FT-GGMLT-025) and run every input row
+    /// through one SIMD matvec. Data short of `out_dim` rows is refused.
     fn to_float_matmul(
         &self,
         input: &[f32],
@@ -108,23 +108,8 @@ impl OwnedQuantizedModel {
         seq_len: usize,
     ) -> Result<Vec<f32>> {
         let name = crate::gguf::ggml_type_table::traits(weight.qtype).map_or("?", |t| t.name);
-        let decode = crate::gguf::ggml_type_table::to_float(weight.qtype).ok_or_else(|| {
-            RealizarError::UnsupportedOperation {
-                operation: "owned_fused_matmul".to_string(),
-                reason: format!("no to_float row for type {}", weight.qtype),
-            }
-        })?;
-        let mut weights_f32 = decode(&weight.data)?;
-        if weights_f32.len() < in_dim * out_dim {
-            return Err(RealizarError::InvalidShape {
-                reason: format!(
-                    "dequantized {name} weight has {} values, needs {} for {out_dim}x{in_dim}",
-                    weights_f32.len(),
-                    in_dim * out_dim
-                ),
-            });
-        }
-        weights_f32.truncate(in_dim * out_dim);
+        let weights_f32 =
+            crate::gguf::ggml_type_table::to_float_rows(weight.qtype, &weight.data, in_dim, out_dim)?;
         dequant_f32_matmul(input, weights_f32, name, in_dim, out_dim, seq_len)
     }
 
@@ -591,9 +576,15 @@ impl OwnedQuantizedModel {
                     .collect();
                 Ok(floats)
             },
-            // #3418 (FT-GGMLT-017): every block type through the one table.
+            // #3418 (FT-GGMLT-017, 025): every block type through the one
+            // table, padded rows (GH-202) one by one.
             id if crate::gguf::ggml_type_table::to_float(id).is_some() => {
-                crate::gguf::ggml_type_table::to_float(id).expect("guarded above")(&weight.data)
+                crate::gguf::ggml_type_table::to_float_rows(
+                    id,
+                    &weight.data,
+                    weight.in_dim,
+                    weight.out_dim,
+                )
             },
             // GH-478: Native APR q4/q8 — per-tensor scratch dequant
             APR_TYPE_Q4 => Ok(crate::apr::dequant::dequantize_apr_q4(

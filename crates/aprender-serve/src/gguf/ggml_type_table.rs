@@ -156,6 +156,65 @@ pub fn to_float_by_name(name: &str) -> Option<ToFloat> {
         .and_then(|t| to_float(t.id))
 }
 
+/// #3418 (FT-GGMLT-025): a 2-D `[out_dim, in_dim]` weight of block type `id`,
+/// decoded through its [`to_float`] row. Each GGUF row is padded to whole
+/// blocks (GH-202), so a row whose `in_dim` is not a whole number of blocks is
+/// decoded on its own and its padding dropped. Returns exactly
+/// `in_dim * out_dim` values.
+///
+/// # Errors
+/// `id` has no `to_float` row, `data` is shorter than `out_dim` padded rows,
+/// or a block fails to decode.
+pub fn to_float_rows(
+    id: u32,
+    data: &[u8],
+    in_dim: usize,
+    out_dim: usize,
+) -> crate::error::Result<Vec<f32>> {
+    let decode = to_float(id).ok_or_else(|| crate::error::RealizarError::UnsupportedOperation {
+        operation: "to_float_rows".to_string(),
+        reason: format!("no to_float row for ggml type {id}"),
+    })?;
+    to_float_rows_with(id, decode, data, in_dim, out_dim)
+}
+
+/// [`to_float_rows`] with the caller's `decode` for `id` (a SIMD decoder that
+/// agrees with the column), the block size and bytes still from the table.
+///
+/// # Errors
+/// As [`to_float_rows`].
+pub fn to_float_rows_with(
+    id: u32,
+    decode: ToFloat,
+    data: &[u8],
+    in_dim: usize,
+    out_dim: usize,
+) -> crate::error::Result<Vec<f32>> {
+    let t = traits(id).ok_or_else(|| crate::error::RealizarError::UnsupportedOperation {
+        operation: "to_float_rows".to_string(),
+        reason: format!("ggml type {id} is not a sized block type"),
+    })?;
+    let row_bytes = in_dim.div_ceil(t.blck_size) * t.type_size;
+    let Some(data) = data.get(..row_bytes * out_dim) else {
+        return Err(crate::error::RealizarError::FormatError {
+            reason: format!(
+                "{} weight [{out_dim}, {in_dim}] needs {} bytes, has {}",
+                t.name,
+                row_bytes * out_dim,
+                data.len()
+            ),
+        });
+    };
+    if in_dim.is_multiple_of(t.blck_size) {
+        return decode(data);
+    }
+    let mut output = Vec::with_capacity(in_dim * out_dim);
+    for row in data.chunks_exact(row_bytes) {
+        output.extend_from_slice(&decode(row)?[..in_dim]);
+    }
+    Ok(output)
+}
+
 /// #3418 (FT-GGMLT-018): where each scaled-block type keeps its f16 scale
 /// field(s), as byte offsets inside one block. The load gate's non-finite
 /// scale scan (PMAT-895) reads this instead of its own match. The tests tie
@@ -279,6 +338,45 @@ mod to_float_into_tests_3418 {
             );
         }
         assert_eq!(rows, 3, "Q8_0, Q4_K and Q6_K have in-place rows");
+    }
+
+    /// FT-GGMLT-025: rows 1.5 blocks wide keep each row's own in_dim values;
+    /// whole-block rows decode as one flat run; short data is refused.
+    #[test]
+    fn to_float_rows_keeps_each_rows_values_3418() {
+        for t in GGML_TYPES.iter().filter(|t| to_float(t.id).is_some()) {
+            let decode = to_float(t.id).expect("row");
+            let data = blocks(t.id, 6);
+            let in_dim = t.blck_size + t.blck_size / 2;
+            let want: Vec<u32> = data
+                .chunks_exact(2 * t.type_size)
+                .flat_map(|row| decode(row).expect("decode")[..in_dim].to_vec())
+                .map(f32::to_bits)
+                .collect();
+            let got: Vec<u32> = super::to_float_rows(t.id, &data, in_dim, 3)
+                .expect("padded rows")
+                .into_iter()
+                .map(f32::to_bits)
+                .collect();
+            assert_eq!(got, want, "{} padded rows", t.name);
+
+            let flat = decode(&data).expect("decode");
+            let whole = super::to_float_rows(t.id, &data, 2 * t.blck_size, 3).expect("whole");
+            assert!(
+                whole
+                    .iter()
+                    .zip(&flat)
+                    .all(|(g, w)| g.to_bits() == w.to_bits())
+                    && whole.len() == flat.len(),
+                "{} whole-block rows",
+                t.name
+            );
+            assert!(
+                super::to_float_rows(t.id, &data, in_dim, 4).is_err(),
+                "{} short data accepted",
+                t.name
+            );
+        }
     }
 }
 
