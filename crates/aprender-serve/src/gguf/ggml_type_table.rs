@@ -223,6 +223,65 @@ pub fn matvec_into(id: u32) -> Option<MatvecInto> {
         .map(|(_, f)| *f)
 }
 
+/// A ggml block decoder that writes into a caller's buffer: whole blocks of
+/// one type in, `out` filled, nothing allocated.
+pub type ToFloatInto = fn(&[u8], &mut [f32]) -> crate::error::Result<()>;
+
+/// #3418 (FT-GGMLT-023): the in-place `to_float` column, one row per ggml
+/// block type serve has an in-place decoder for. Each row is the body its
+/// [`TO_FLOAT`] row wraps, so the two decode bit for bit. A per-lookup row
+/// decode (the Qwen3.5 embedding, #4991) reads this instead of its own arms;
+/// a type with no row goes through [`to_float`] and a copy.
+const TO_FLOAT_INTO: &[(u32, ToFloatInto)] = {
+    use crate::gguf::types::{GGUF_TYPE_Q4_K, GGUF_TYPE_Q6_K, GGUF_TYPE_Q8_0};
+    use crate::quantize::dequant as q;
+    &[
+        (GGUF_TYPE_Q8_0, q::dequantize_q8_0_into),
+        (GGUF_TYPE_Q4_K, q::dequantize_q4_k_into),
+        (GGUF_TYPE_Q6_K, q::dequantize_q6_k_into),
+    ]
+};
+
+/// The in-place block decoder for ggml type `id`, or `None` if serve has none.
+#[must_use]
+pub fn to_float_into(id: u32) -> Option<ToFloatInto> {
+    TO_FLOAT_INTO
+        .iter()
+        .find(|(row, _)| *row == id)
+        .map(|(_, f)| *f)
+}
+
+#[cfg(test)]
+mod to_float_into_tests_3418 {
+    use super::{to_float, to_float_into, to_float_tests_3418::blocks, GGML_TYPES};
+
+    /// FT-GGMLT-023: every in-place row decodes exactly as the same type's
+    /// to_float row, and every type with an in-place row has a to_float row.
+    #[test]
+    fn every_into_row_agrees_with_its_to_float_row_3418() {
+        let mut rows = 0;
+        for t in GGML_TYPES {
+            let Some(into) = to_float_into(t.id) else {
+                continue;
+            };
+            rows += 1;
+            let data = blocks(t.id, 2);
+            let want = to_float(t.id).expect("an into row has a to_float row")(&data)
+                .expect("whole blocks");
+            let mut got = vec![f32::NAN; want.len()];
+            into(&data, &mut got).expect("whole blocks");
+            assert!(
+                got.iter()
+                    .zip(&want)
+                    .all(|(g, w)| g.to_bits() == w.to_bits()),
+                "{}: in-place decode differs from the to_float row",
+                t.name
+            );
+        }
+        assert_eq!(rows, 3, "Q8_0, Q4_K and Q6_K have in-place rows");
+    }
+}
+
 /// The refusal text for an id with no size in this table. Every id that
 /// [`TRAITS`] names but does not size is one upstream removed.
 fn unsupported(id: u32) -> String {

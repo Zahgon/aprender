@@ -6,13 +6,10 @@
 //! rows, so the table stays quantized and one row is dequantized per lookup.
 
 use crate::error::{RealizarError, Result};
-use crate::gguf::types::{
-    GGUF_TYPE_F16, GGUF_TYPE_F32, GGUF_TYPE_Q4_K, GGUF_TYPE_Q6_K, GGUF_TYPE_Q8_0,
-};
+use crate::gguf::ggml_type_table::{to_float, to_float_into};
+use crate::gguf::types::{GGUF_TYPE_F16, GGUF_TYPE_F32};
 use crate::gguf::GGUFModel;
-use crate::quantize::dequant::{
-    dequantize_q4_k_into, dequantize_q6_k_into, dequantize_q8_0_into, f16_to_f32,
-};
+use crate::quantize::dequant::f16_to_f32;
 
 /// A `[rows, row_len]` table in its GGUF encoding; [`Self::row`] dequantizes one row.
 pub(crate) struct Qwen35Embedding {
@@ -158,9 +155,24 @@ impl Qwen35Embedding {
                     *o = f16_to_f32(u16::from_le_bytes(*b));
                 }
             },
-            GGUF_TYPE_Q8_0 => dequantize_q8_0_into(bytes, out)?,
-            GGUF_TYPE_Q4_K => dequantize_q4_k_into(bytes, out)?,
-            GGUF_TYPE_Q6_K => dequantize_q6_k_into(bytes, out)?,
+            // #3418 (FT-GGMLT-023): block types decode through the one table,
+            // in place where it has an in-place row, else through to_float.
+            id if to_float_into(id).is_some() => {
+                to_float_into(id).expect("guarded above")(bytes, out)?;
+            },
+            id if to_float(id).is_some() => {
+                let values = to_float(id).expect("guarded above")(bytes)?;
+                let Some(row) = values.get(..out.len()) else {
+                    return Err(RealizarError::InvalidShape {
+                        reason: format!(
+                            "qwen35: row {token} decodes to {} values, needs {}",
+                            values.len(),
+                            out.len()
+                        ),
+                    });
+                };
+                out.copy_from_slice(row);
+            },
             _ => out.copy_from_slice(&GGUFModel::dequantize_at(
                 self.qtype,
                 bytes,
