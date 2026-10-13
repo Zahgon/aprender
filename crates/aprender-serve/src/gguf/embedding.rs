@@ -59,11 +59,15 @@ fn quant_scale_first_nonfinite(data: &[u8], qtype: u32) -> Option<f32> {
 ///
 /// Refs realizar#85: Added BF16/F16 support for aprender's GH-205/GH-353 passthrough.
 /// Refs realizar#86: Added all GGML quant types (Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q2_K, Q5_K, Q6_K).
+///
+/// The tensor is `rows` token rows of `row_len` values (`[vocab, hidden]`).
 fn dequantize_embedding(
     embed_data: &[u8],
     dtype: &str,
-    num_elements: usize,
+    rows: usize,
+    row_len: usize,
 ) -> Result<Vec<f32>> {
+    let num_elements = rows * row_len;
     match dtype {
         "F32" | "f32" => Ok(embed_data
             .as_chunks::<4>()
@@ -85,10 +89,16 @@ fn dequantize_embedding(
             embed_data,
             num_elements,
         )),
-        // #3418 (FT-GGMLT-017): GGML block types (from GGUF-sourced APR files)
-        // by their table name, through the one table.
+        // #3418 (FT-GGMLT-017, 026): GGML block types (from GGUF-sourced APR
+        // files) by their table name, through the one table, each token row
+        // decoded on its own so GH-202 row padding is dropped.
         name if crate::gguf::ggml_type_table::to_float_by_name(name).is_some() => {
-            crate::gguf::ggml_type_table::to_float_by_name(name).expect("guarded above")(embed_data)
+            let id = crate::gguf::ggml_type_table::GGML_TYPES
+                .iter()
+                .find(|t| t.name == name)
+                .expect("guarded above")
+                .id;
+            crate::gguf::ggml_type_table::to_float_rows(id, embed_data, row_len, rows)
         },
         other => Err(RealizarError::FormatError {
             reason: format!("APR: unsupported embedding dtype: {other}"),
@@ -426,9 +436,30 @@ mod to_float_site_3418 {
     fn embedding_reads_the_to_float_column_3418() {
         for t in GGML_TYPES.iter().filter(|t| to_float(t.id).is_some()) {
             let data = blocks(t.id, 2);
-            let got = super::dequantize_embedding(&data, t.name, 2 * t.blck_size)
+            let got = super::dequantize_embedding(&data, t.name, 1, 2 * t.blck_size)
                 .unwrap_or_else(|e| panic!("embedding refused {} ({}): {e}", t.name, t.id));
             assert_eq!(got, to_float(t.id).expect("row")(&data).expect("decode"), "{}", t.name);
+        }
+    }
+
+    /// FT-GGMLT-026: an APR embedding whose rows are 1.5 blocks wide (GH-202
+    /// padding) keeps each token row's own hidden values, its padding dropped.
+    #[test]
+    fn embedding_drops_row_padding_3418() {
+        for t in GGML_TYPES.iter().filter(|t| to_float(t.id).is_some()) {
+            let hidden = t.blck_size + t.blck_size / 2;
+            let data = blocks(t.id, 6);
+            let want: Vec<u32> = data
+                .chunks_exact(2 * t.type_size)
+                .flat_map(|row| to_float(t.id).expect("row")(row).expect("decode")[..hidden].to_vec())
+                .map(f32::to_bits)
+                .collect();
+            let got: Vec<u32> = super::dequantize_embedding(&data, t.name, 3, hidden)
+                .unwrap_or_else(|e| panic!("embedding refused {} ({}): {e}", t.name, t.id))
+                .into_iter()
+                .map(f32::to_bits)
+                .collect();
+            assert_eq!(got, want, "{} padded rows", t.name);
         }
     }
 }

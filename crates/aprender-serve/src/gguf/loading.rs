@@ -325,7 +325,7 @@ impl OwnedQuantizedModel {
             });
         }
         let embed_data = &data[embed_start..embed_end];
-        dequantize_embedding(embed_data, embed_tensor.dtype.as_str(), vocab_size * hidden_dim)
+        dequantize_embedding(embed_data, embed_tensor.dtype.as_str(), vocab_size, hidden_dim)
     }
 
     /// Load a single transformer layer from APR format.
