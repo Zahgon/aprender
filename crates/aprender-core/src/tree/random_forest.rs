@@ -76,7 +76,7 @@ impl RandomForestRegressor {
         x: &crate::primitives::Matrix<f32>,
         y: &crate::primitives::Vector<f32>,
     ) -> Result<()> {
-        let (n_samples, n_features) = x.shape();
+        let n_samples = x.n_rows();
 
         // Validate input
         if n_samples != y.len() {
@@ -86,54 +86,87 @@ impl RandomForestRegressor {
             return Err("Cannot fit with zero samples".into());
         }
 
-        self.trees = Vec::with_capacity(self.n_estimators);
-        self.oob_indices = Vec::with_capacity(self.n_estimators);
-
         // Store training data for OOB evaluation
         self.x_train = Some(x.clone());
         self.y_train = Some(y.clone());
 
-        // Train each tree on a bootstrap sample
-        for i in 0..self.n_estimators {
-            // Get bootstrap sample indices
-            let seed = self.random_state.map(|s| s + i as u64);
-            let bootstrap_indices = bootstrap_sample(n_samples, seed);
+        let max_depth = self.max_depth;
+        let random_state = self.random_state;
+        let seed_for = |i: usize| random_state.map(|s| s + i as u64);
+        let y = y.as_slice();
 
-            // Compute OOB indices (samples NOT in bootstrap sample)
-            let bootstrap_set: HashSet<usize> = bootstrap_indices.iter().copied().collect();
-            let oob_for_tree: Vec<usize> = (0..n_samples)
-                .filter(|idx| !bootstrap_set.contains(idx))
-                .collect();
+        // Each tree's bootstrap sample and fit are independent. This was a plain
+        // sequential loop, one core however many the box has (#5242), while the
+        // classifier already fanned out (#3816). `collect` keeps index order, so
+        // tree `i` still carries seed `random_state + i` and its OOB set
+        // (FALSIFY-RF-007).
+        #[cfg(feature = "parallel")]
+        let built = (0..self.n_estimators)
+            .into_par_iter()
+            .map(|i| Self::build_one_tree(x, y, max_depth, seed_for(i)))
+            .collect::<Result<Vec<_>>>()?;
+
+        // Sequential fallback for builds without rayon (e.g. WASM).
+        #[cfg(not(feature = "parallel"))]
+        let built = (0..self.n_estimators)
+            .map(|i| Self::build_one_tree(x, y, max_depth, seed_for(i)))
+            .collect::<Result<Vec<_>>>()?;
+
+        self.trees = Vec::with_capacity(self.n_estimators);
+        self.oob_indices = Vec::with_capacity(self.n_estimators);
+        for (oob_for_tree, tree) in built {
             self.oob_indices.push(oob_for_tree);
-
-            // Extract bootstrap sample
-            let mut bootstrap_x_data = Vec::with_capacity(n_samples * n_features);
-            let mut bootstrap_y_data = Vec::with_capacity(n_samples);
-
-            for &idx in &bootstrap_indices {
-                for j in 0..n_features {
-                    bootstrap_x_data.push(x.get(idx, j));
-                }
-                bootstrap_y_data.push(y.as_slice()[idx]);
-            }
-
-            let bootstrap_x =
-                crate::primitives::Matrix::from_vec(n_samples, n_features, bootstrap_x_data)
-                    .map_err(|_| "Failed to create bootstrap matrix")?;
-            let bootstrap_y = crate::primitives::Vector::from_slice(&bootstrap_y_data);
-
-            // Create and train a decision tree
-            let mut tree = if let Some(max_depth) = self.max_depth {
-                DecisionTreeRegressor::new().with_max_depth(max_depth)
-            } else {
-                DecisionTreeRegressor::new()
-            };
-
-            tree.fit(&bootstrap_x, &bootstrap_y)?;
             self.trees.push(tree);
         }
 
         Ok(())
+    }
+
+    /// Builds one tree of the ensemble: bootstrap sample, OOB complement, fit.
+    ///
+    /// Free of `&self` so the ensemble loop can hand it to rayon (#5242).
+    /// `seed` is `random_state + i`, so tree `i` gets the same bootstrap sample
+    /// whatever order the trees are built in.
+    fn build_one_tree(
+        x: &crate::primitives::Matrix<f32>,
+        y: &[f32],
+        max_depth: Option<usize>,
+        seed: Option<u64>,
+    ) -> Result<(Vec<usize>, DecisionTreeRegressor)> {
+        let (n_samples, n_features) = x.shape();
+        let bootstrap_indices = bootstrap_sample(n_samples, seed);
+
+        // Compute OOB indices (samples NOT in bootstrap sample)
+        let bootstrap_set: HashSet<usize> = bootstrap_indices.iter().copied().collect();
+        let oob_for_tree: Vec<usize> = (0..n_samples)
+            .filter(|idx| !bootstrap_set.contains(idx))
+            .collect();
+
+        // Extract bootstrap sample
+        let mut bootstrap_x_data = Vec::with_capacity(n_samples * n_features);
+        let mut bootstrap_y_data = Vec::with_capacity(n_samples);
+
+        for &idx in &bootstrap_indices {
+            for j in 0..n_features {
+                bootstrap_x_data.push(x.get(idx, j));
+            }
+            bootstrap_y_data.push(y[idx]);
+        }
+
+        let bootstrap_x =
+            crate::primitives::Matrix::from_vec(n_samples, n_features, bootstrap_x_data)
+                .map_err(|_| "Failed to create bootstrap matrix")?;
+        let bootstrap_y = crate::primitives::Vector::from_slice(&bootstrap_y_data);
+
+        // Create and train a decision tree
+        let mut tree = if let Some(max_depth) = max_depth {
+            DecisionTreeRegressor::new().with_max_depth(max_depth)
+        } else {
+            DecisionTreeRegressor::new()
+        };
+
+        tree.fit(&bootstrap_x, &bootstrap_y)?;
+        Ok((oob_for_tree, tree))
     }
 
     /// Makes predictions for input data by averaging predictions from all trees.

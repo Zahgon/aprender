@@ -245,3 +245,62 @@ fn falsify_rf_006_batched_votes_match_per_sample_votes() {
         }
     }
 }
+
+/// FALSIFY-RF-007: regressor fit preserves the seed→tree binding
+///
+/// #5242 builds the regressor's trees with rayon, as #3816 did for the
+/// classifier. The oracle is the same: `bootstrap_sample` called outside the
+/// forest, so a tree paired with the wrong seed or collected out of order fails
+/// even though every tree individually looks fine.
+#[test]
+fn falsify_rf_007_regressor_fit_preserves_seed_to_tree_binding() {
+    let x = Matrix::from_vec(
+        10,
+        2,
+        vec![
+            0.0, 0.0, 1.0, 0.5, 2.0, 1.0, 3.0, 1.5, 4.0, 2.0, 5.0, 2.5, 6.0, 3.0, 7.0, 3.5, 8.0,
+            4.0, 9.0, 4.5,
+        ],
+    )
+    .expect("valid");
+    let y =
+        crate::primitives::Vector::from_vec(vec![0.1, 0.9, 2.2, 2.8, 4.1, 5.3, 5.9, 7.2, 7.8, 9.4]);
+
+    const SEED: u64 = 11;
+    let mut rf = RandomForestRegressor::new(8)
+        .with_max_depth(3)
+        .with_random_state(SEED);
+    rf.fit(&x, &y).expect("fit");
+
+    assert_eq!(rf.trees.len(), 8, "FALSIFIED RF-007: wrong tree count");
+    assert_eq!(rf.oob_indices.len(), 8, "FALSIFIED RF-007: wrong OOB count");
+
+    for i in 0..8 {
+        let indices = bootstrap_sample(10, Some(SEED + i as u64));
+
+        let expected_oob: Vec<usize> = (0..10).filter(|idx| !indices.contains(idx)).collect();
+        assert_eq!(
+            rf.oob_indices[i], expected_oob,
+            "FALSIFIED RF-007: tree {i} carries the OOB set of a different seed"
+        );
+
+        let mut data = Vec::with_capacity(indices.len() * 2);
+        let mut targets = Vec::with_capacity(indices.len());
+        for &idx in &indices {
+            data.push(x.get(idx, 0));
+            data.push(x.get(idx, 1));
+            targets.push(y.as_slice()[idx]);
+        }
+        let boot_x = Matrix::from_vec(indices.len(), 2, data).expect("valid");
+        let boot_y = crate::primitives::Vector::from_vec(targets);
+        let mut expected_tree = DecisionTreeRegressor::new().with_max_depth(3);
+        expected_tree.fit(&boot_x, &boot_y).expect("fit");
+
+        assert_eq!(
+            rf.trees[i].predict(&x).as_slice(),
+            expected_tree.predict(&x).as_slice(),
+            "FALSIFIED RF-007: tree {i} is not the tree seed {} produces",
+            SEED + i as u64
+        );
+    }
+}
