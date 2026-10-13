@@ -76,14 +76,14 @@
 
 ### §2.1 Lane dispatch and states
 
-Order `[O 2026-09-25, R-9 option b]`: `arm64-cuda → devbox-cuda → cleanroom-wgpu → mac-metal → cleanroom-cpu → NotRun{NoExecutor}`.
+Order `[O 2026-09-25, R-9 option b]`: `gx10-cuda → lambda-cuda → intel-wgpu → mini-metal → intel-cpu → NotRun{NoExecutor}`.
 
-- **devbox-cuda is rung 2 and shadow only.**
+- **lambda-cuda is rung 2 and shadow only.**
   - Dispatch time only, and only when rung 1 returned NotRun **and** `/tmp/apr-gpu.lock` is free.
   - Never a resident serve, VRAM preload, experiment cell, teacher or finetune.
   - If the lock is taken mid-round, the row is `NotRun{Busy}` and the ladder continues.
-  - **Once the lane holds tie-breaker or vote, devbox-cuda leaves the ladder.** A deciding lane runs only on declared, non-contended cells (§4.1).
-- **Rows record the backend that actually ran** (`arm64-cpu` on the F2 fallback).
+  - **Once the lane holds tie-breaker or vote, lambda-cuda leaves the ladder.** A deciding lane runs only on declared, non-contended cells (§4.1).
+- **Rows record the backend that actually ran** (`gx10-cpu` on the F2 fallback).
 - **train-active falls through; it never blocks.**
 - **One typed state enum**, shared by receipt-lint (#436) and the ledger: `Verdict{PASS|FAIL}` · `Refused{removed_by}` · `NotRun{NoExecutor|Busy|Timeout|ContextOverflow|TrainActive}`.
 - **Timeout per rung** = 2 × that cell's p95 once it has ≥ 10 rows; until then 300 s `[U]`.
@@ -143,11 +143,11 @@ almacen:/rex-corpus/v1/items-v1.tar                 the sealed corpus leaves the
 
 | Cell | Host | Backend | Notes |
 |---|---|---|---|
-| C1 `cleanroom-wgpu` | cleanroom | wgpu | `Refused` expected before 0.71; must be observed |
-| C2 `cleanroom-cpu` | cleanroom | cpu | **reference cell** |
-| C3 `devbox-cpu` | devbox | cpu | the GPU is never an experiment cell |
-| C4 `arm64-cuda` | arm64 | cuda sm_121 | primary candidate; `arm64-cpu` on F2 fallback |
-| C5a/C5b | mac | cpu / metal | C5b `Refused` expected before 0.71 |
+| C1 `intel-wgpu` | intel | wgpu | `Refused` expected before 0.71; must be observed |
+| C2 `intel-cpu` | intel | cpu | **reference cell** |
+| C3 `lambda-cpu` | lambda-labs | cpu | the GPU is never an experiment cell |
+| C4 `gx10-cuda` | gx10 | cuda sm_121 | primary candidate; `gx10-cpu` on F2 fallback |
+| C5a/C5b | mini | cpu / metal | C5b `Refused` expected before 0.71 |
 
 - **Arms:** 4B primary; 9B control (test split, reference cell plus top cell).
 - **Evaluation comparators on the reference cell:** Haiku 4.5 and agy, exact ids. Evaluation only; no training.
@@ -192,7 +192,7 @@ almacen:/rex-corpus/v1/items-v1.tar                 the sealed corpus leaves the
 
 ### §4.1 Hardware (lexicographic)
 
-1. **Admissible:** a parity receipt passes against its declared `parity.oracle` (`llama.cpp@d1d3c3396` once it is a declared input; until then `apr-parity-gpu-cpu` plus H1; `ds.yaml` min_cosine 0.98); H1 and H2 hold; the parse rate equals the reference cell's; the executor is forjar-declared; for tie-breaker or vote, the cell is **not** devbox-cuda.
+1. **Admissible:** a parity receipt passes against its declared `parity.oracle` (`llama.cpp@d1d3c3396` once it is a declared input; until then `apr-parity-gpu-cpu` plus H1; `ds.yaml` min_cosine 0.98); H1 and H2 hold; the parse rate equals the reference cell's; the executor is forjar-declared; for tie-breaker or vote, the cell is **not** lambda-cuda.
 2. Rank by replay p95 under natural load.
 3. H6-rejected cells rank last.
 4. Ties go to the larger 7-day idle fraction, then to a host outside the clean-room pool.
@@ -223,7 +223,7 @@ almacen:/rex-corpus/v1/items-v1.tar                 the sealed corpus leaves the
 
 | Lever | Owner | Expected effect |
 |---|---|---|
-| Keep the GPU path on arm64 (F2 guard) | #4313 | CPU → GPU; the largest single step |
+| Keep the GPU path on gx10 (F2 guard) | #4313 | CPU → GPU; the largest single step |
 | Honour `--context-length` | #4443 | right-sized KV |
 | Prefill kernels and batched prefill | E2 → E6 | the dominant term (§0.2) |
 | Resident `apr serve` plus a prefix cache for the fixed system prompt | E2 | TTFT |
@@ -240,7 +240,7 @@ almacen:/rex-corpus/v1/items-v1.tar                 the sealed corpus leaves the
 | Q1 | prompt versions | now |
 | Q2 | retrieval few-shot from **gold** train-pool specimens (never the test split) | now |
 | Q3 | constrained decoding (`--json-schema`) | 0.70 |
-| Q4 | **local logit distillation:** Qwen3.5-27B on arm64 writes `sparse-logits-v1` over G-PROV-eligible inputs; the 4B student trains with forward-KL plus tail-mass correction; reverse-KL/GKD as challengers, using Qwen's own shadow outputs as on-policy samples | qwen35 `apr distill`, per D-7 |
+| Q4 | **local logit distillation:** Qwen3.5-27B on gx10 writes `sparse-logits-v1` over G-PROV-eligible inputs; the 4B student trains with forward-KL plus tail-mass correction; reverse-KL/GKD as challengers, using Qwen's own shadow outputs as on-policy samples | qwen35 `apr distill`, per D-7 |
 | Q5 | QLoRA on gold labels only (`apr finetune`); merge (`apr merge`); re-quantize (`apr quantize`, now) | per D-7 / now |
 
 - Q4/Q5 are aprender acceptance tests: a qwen35 distill/finetune ticket is done only when its challenger passes §5.4.
@@ -265,7 +265,7 @@ A challenger replaces the champion only if all of these hold on the current seal
 |---|---|---|---|
 | **shadow** (default; anything unreadable) | none | — | — |
 | **tripwire** | a dissent against a 3–0 opens an HRQ, capped at D-8/day | replay p95 ≤ queue budget | H4 |
-| **tie-breaker** | decides only a **1–1** split (a counted lane NotRun, or a 2-counted quorum) | queue budget **and** availability ≥ 95% over 7 d `[O cop crit. 4]`, on a non-devbox cell | H4 **and** H5 **and** H7, with H1/H2 on the primary cell |
+| **tie-breaker** | decides only a **1–1** split (a counted lane NotRun, or a 2-counted quorum) | queue budget **and** availability ≥ 95% over 7 d `[O cop crit. 4]`, on a non-lambda cell | H4 **and** H5 **and** H7, with H1/H2 on the primary cell |
 | **vote** | counted voter | same | same, plus ≥ 20 decided tie-breaks `[A]` whose 14 d outcome agreement ≥ the voters' agreement on the same rounds |
 
 - The ladder reads only `prm-001-report-v1` and §5.3 reports carrying the `rex-prereg-v2` sha.
