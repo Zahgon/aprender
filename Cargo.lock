@@ -1352,6 +1352,7 @@ dependencies = [
  "aprender-core",
  "aprender-data",
  "aprender-graph",
+ "aprender-quant",
  "argon2",
  "blake3",
  "chacha20poly1305",

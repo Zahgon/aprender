@@ -15,6 +15,7 @@ readme = "README.md"
 [dependencies]
 # Error handling
 thiserror = "2"
+trueno-quant = { workspace = true } # #3418: bits per weight from the one ggml TRAITS table
 anyhow = "1"
 
 # Content-addressed storage

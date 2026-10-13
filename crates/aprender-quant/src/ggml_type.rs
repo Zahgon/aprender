@@ -690,6 +690,17 @@ impl GgmlType {
         self.traits().blck_size as usize
     }
 
+    /// Bits per weight, `8 * type_size / blck_size`: ggml's own storage cost,
+    /// scales included (`Q8_0` is 8.5: 32 `int8` and one `f16` scale per
+    /// 34-byte block). #3418 FT-GGMLT-021: every `QuantType` bits figure for a
+    /// ggml type reads this instead of a hand-written number.
+    #[must_use]
+    // Block bytes and sizes are at most a few hundred: exact in f32.
+    #[allow(clippy::cast_precision_loss)]
+    pub const fn bits_per_weight(&self) -> f32 {
+        (self.block_bytes() * 8) as f32 / self.block_size() as f32
+    }
+
     /// Bytes for `n_elements` weights, rounding a partial block UP.
     ///
     /// This is compute's arithmetic, unchanged, because its callers depend on
@@ -802,5 +813,26 @@ fn verify_ggml_type_id_space() {
             t.checked_tensor_bytes(t.block_size()),
             Some(t.block_bytes())
         );
+    }
+}
+
+#[cfg(test)]
+mod bits_tests_3418 {
+    use super::{GgmlType, ALL};
+
+    #[test]
+    fn bits_per_weight_is_type_size_over_blck_size_3418() {
+        for t in ALL {
+            let want = 8.0 * t.block_bytes() as f64 / t.block_size() as f64;
+            assert!(
+                (f64::from(t.bits_per_weight()) - want).abs() < 1e-6,
+                "{}: {} bits, want {want}",
+                t.as_str(),
+                t.bits_per_weight()
+            );
+        }
+        assert_eq!(GgmlType::Q8_0.bits_per_weight(), 8.5);
+        assert_eq!(GgmlType::Q6K.bits_per_weight(), 6.5625);
+        assert_eq!(GgmlType::F32.bits_per_weight(), 32.0);
     }
 }

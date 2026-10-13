@@ -32,17 +32,21 @@ pub enum QuantType {
 }
 
 impl QuantType {
-    /// Get bits per element for this quantization type.
+    /// Get bits per element for this quantization type. #3418 (FT-GGMLT-021):
+    /// the block types read ggml's own storage cost from the one TRAITS table
+    /// (Q8_0 is 8.5, scales included), not a hand-written number.
     pub fn bits_per_element(self) -> f32 {
+        use trueno_quant::GgmlType as G;
         match self {
             Self::F32 => 32.0,
             Self::F16 | Self::Bf16 => 16.0,
-            Self::Q8_0 => 8.0,
-            Self::Q6_K => 6.5,
-            Self::Q5_K => 5.5,
-            Self::Q4_0 | Self::Q4_K => 4.5,
-            Self::Q3_K => 3.5,
-            Self::Q2_K => 2.5,
+            Self::Q8_0 => G::Q8_0.bits_per_weight(),
+            Self::Q6_K => G::Q6K.bits_per_weight(),
+            Self::Q5_K => G::Q5K.bits_per_weight(),
+            Self::Q4_0 => G::Q4_0.bits_per_weight(),
+            Self::Q4_K => G::Q4K.bits_per_weight(),
+            Self::Q3_K => G::Q3K.bits_per_weight(),
+            Self::Q2_K => G::Q2K.bits_per_weight(),
         }
     }
 
@@ -60,7 +64,7 @@ mod tests {
     fn test_quant_type_bits() {
         assert_eq!(QuantType::F32.bits_per_element(), 32.0);
         assert_eq!(QuantType::F16.bits_per_element(), 16.0);
-        assert_eq!(QuantType::Q8_0.bits_per_element(), 8.0);
+        assert_eq!(QuantType::Q8_0.bits_per_element(), 8.5);
         assert_eq!(QuantType::Q4_K.bits_per_element(), 4.5);
     }
 

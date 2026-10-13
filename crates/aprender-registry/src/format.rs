@@ -668,22 +668,39 @@ impl QuantType {
         }
     }
 
-    /// Get bits per weight
+    /// Get bits per weight. #3418 (FT-GGMLT-021): a variant that is one ggml
+    /// type reads ggml's own storage cost from the one TRAITS table (Q8_0 is
+    /// 8.5, scales included). The llama.cpp file mixes (Q*_K_S/M/L, IQ3_M,
+    /// IQ3_XS) are not one ggml type; their figures are hand estimates.
     #[must_use]
     pub const fn bits_per_weight(&self) -> f32 {
+        use trueno_quant::GgmlType as G;
         match self {
             Self::F32 => 32.0,
             Self::F16 | Self::BF16 => 16.0,
-            Self::Q8_0 | Self::Q8_K => 8.0,
-            Self::Q6_K => 6.5,
-            Self::Q5_K_S | Self::Q5_K_M | Self::Q5_0 | Self::Q5_1 => 5.5,
-            Self::Q4_K_S | Self::Q4_K_M | Self::Q4_0 | Self::Q4_1 => 4.5,
+            Self::Q8_0 => G::Q8_0.bits_per_weight(),
+            Self::Q8_K => G::Q8K.bits_per_weight(),
+            Self::Q6_K => G::Q6K.bits_per_weight(),
+            Self::Q5_0 => G::Q5_0.bits_per_weight(),
+            Self::Q5_1 => G::Q5_1.bits_per_weight(),
+            Self::Q4_0 => G::Q4_0.bits_per_weight(),
+            Self::Q4_1 => G::Q4_1.bits_per_weight(),
+            Self::Q2_K => G::Q2K.bits_per_weight(),
+            Self::IQ4_NL => G::IQ4NL.bits_per_weight(),
+            Self::IQ4_XS => G::IQ4XS.bits_per_weight(),
+            Self::IQ3_S => G::IQ3S.bits_per_weight(),
+            Self::IQ3_XXS => G::IQ3XXS.bits_per_weight(),
+            Self::IQ2_S => G::IQ2S.bits_per_weight(),
+            Self::IQ2_XS => G::IQ2XS.bits_per_weight(),
+            Self::IQ2_XXS => G::IQ2XXS.bits_per_weight(),
+            Self::IQ1_S => G::IQ1S.bits_per_weight(),
+            Self::IQ1_M => G::IQ1M.bits_per_weight(),
+            // File mixes: hand estimates, not one ggml type.
+            Self::Q5_K_S | Self::Q5_K_M => 5.5,
+            Self::Q4_K_S | Self::Q4_K_M => 4.5,
             Self::Q3_K_S | Self::Q3_K_M | Self::Q3_K_L => 3.5,
-            Self::Q2_K_S | Self::Q2_K => 2.5,
-            Self::IQ4_NL | Self::IQ4_XS => 4.25,
-            Self::IQ3_S | Self::IQ3_M | Self::IQ3_XS | Self::IQ3_XXS => 3.0,
-            Self::IQ2_S | Self::IQ2_XS | Self::IQ2_XXS => 2.0,
-            Self::IQ1_S | Self::IQ1_M => 1.5,
+            Self::Q2_K_S => 2.5,
+            Self::IQ3_M | Self::IQ3_XS => 3.0,
         }
     }
 
@@ -965,8 +982,22 @@ mod tests {
     fn test_quant_type_bits_per_weight() {
         assert!((QuantType::F32.bits_per_weight() - 32.0).abs() < f32::EPSILON);
         assert!((QuantType::F16.bits_per_weight() - 16.0).abs() < f32::EPSILON);
-        assert!((QuantType::Q8_0.bits_per_weight() - 8.0).abs() < f32::EPSILON);
+        assert!((QuantType::Q8_0.bits_per_weight() - 8.5).abs() < f32::EPSILON);
         assert!((QuantType::Q4_K_M.bits_per_weight() - 4.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn ggml_type_variants_read_the_one_traits_table_3418() {
+        const NAMES: [&str; 17] = [
+            "Q8_0", "Q8_K", "Q6_K", "Q5_0", "Q5_1", "Q4_0", "Q4_1", "Q2_K", "IQ4_NL", "IQ4_XS",
+            "IQ3_S", "IQ3_XXS", "IQ2_S", "IQ2_XS", "IQ2_XXS", "IQ1_S", "IQ1_M",
+        ];
+        for name in NAMES {
+            let q = QuantType::from_str(name).expect(name);
+            let g = trueno_quant::GgmlType::from_str_lossy(name).expect(name);
+            assert_eq!(g.as_str(), name, "registry {name} is ggml {}", g.as_str());
+            assert_eq!(q.bits_per_weight(), g.bits_per_weight(), "{name}");
+        }
     }
 
     #[test]

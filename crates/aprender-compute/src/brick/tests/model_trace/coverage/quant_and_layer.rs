@@ -8,24 +8,25 @@ use super::super::super::super::*;
 #[test]
 fn test_f276_quant_type_all_variants() {
     // Test all QuantType variants for bits_per_element
+    // #3418 FT-GGMLT-021: block types are ggml's 8 * type_size / blck_size.
     assert_eq!(QuantType::F32.bits_per_element(), 32.0);
     assert_eq!(QuantType::F16.bits_per_element(), 16.0);
     assert_eq!(QuantType::Bf16.bits_per_element(), 16.0);
-    assert_eq!(QuantType::Q8_0.bits_per_element(), 8.0);
-    assert_eq!(QuantType::Q6_K.bits_per_element(), 6.5);
+    assert_eq!(QuantType::Q8_0.bits_per_element(), 8.5);
+    assert_eq!(QuantType::Q6_K.bits_per_element(), 6.5625);
     assert_eq!(QuantType::Q5_K.bits_per_element(), 5.5);
     assert_eq!(QuantType::Q4_0.bits_per_element(), 4.5);
     assert_eq!(QuantType::Q4_K.bits_per_element(), 4.5);
-    assert_eq!(QuantType::Q3_K.bits_per_element(), 3.5);
-    assert_eq!(QuantType::Q2_K.bits_per_element(), 2.5);
+    assert_eq!(QuantType::Q3_K.bits_per_element(), 3.4375);
+    assert_eq!(QuantType::Q2_K.bits_per_element(), 2.625);
 
     // Compression ratios for all types
     assert!((QuantType::Bf16.compression_ratio() - 2.0).abs() < 0.01);
-    assert!((QuantType::Q8_0.compression_ratio() - 4.0).abs() < 0.01);
+    assert!((QuantType::Q8_0.compression_ratio() - 3.76).abs() < 0.01);
     assert!((QuantType::Q6_K.compression_ratio() - 4.92).abs() < 0.1);
     assert!((QuantType::Q5_K.compression_ratio() - 5.82).abs() < 0.1);
-    assert!((QuantType::Q3_K.compression_ratio() - 9.14).abs() < 0.1);
-    assert!((QuantType::Q2_K.compression_ratio() - 12.8).abs() < 0.1);
+    assert!((QuantType::Q3_K.compression_ratio() - 9.31).abs() < 0.1);
+    assert!((QuantType::Q2_K.compression_ratio() - 12.19).abs() < 0.1);
 }
 
 /// F277: LayerActivationTrace all anomaly paths
