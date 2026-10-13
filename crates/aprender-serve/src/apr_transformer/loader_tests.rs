@@ -324,3 +324,80 @@ mod table_sizes_3418 {
         }
     }
 }
+
+/// FT-GGMLT-028 (#3418): QuantizedAprTransformer's LM head decodes its bytes
+/// through the one ggml table by `ggml_id`, never an empty per-type arm.
+#[cfg(test)]
+mod lm_head_3418 {
+    use super::{AprQuantizationType, AprTransformerConfig, QuantizedAprTransformer};
+
+    fn config(hidden_dim: usize, vocab_size: usize) -> AprTransformerConfig {
+        AprTransformerConfig {
+            hidden_dim,
+            vocab_size,
+            num_layers: 0,
+            num_heads: 1,
+            num_kv_heads: 1,
+            intermediate_dim: hidden_dim,
+            ..Default::default()
+        }
+    }
+
+    /// A model whose token 0 embeds as 0..hidden and whose LM head is `bytes`.
+    fn model(
+        q: AprQuantizationType,
+        bytes: Vec<u8>,
+        hidden: usize,
+        vocab: usize,
+    ) -> QuantizedAprTransformer {
+        let mut m = QuantizedAprTransformer::new(config(hidden, vocab), q);
+        for (i, x) in m.token_embedding[..hidden].iter_mut().enumerate() {
+            *x = i as f32;
+        }
+        assert_eq!(bytes.len(), m.lm_head_weight.len(), "{q:?} LM head size");
+        m.lm_head_weight = bytes;
+        m
+    }
+
+    /// logits[v] = dot(weights row v, final-normed hidden), from `forward`'s own norm.
+    fn expected(m: &QuantizedAprTransformer, weights: &[f32]) -> Vec<f32> {
+        let h = m.config.hidden_dim;
+        let x: Vec<f32> = m.token_embedding[..h].to_vec();
+        let mean = x.iter().sum::<f32>() / h as f32;
+        let var = x.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / h as f32;
+        let sd = (var + m.config.eps).sqrt();
+        let normed: Vec<f32> = x.iter().map(|v| (v - mean) / sd).collect();
+        weights[..m.config.vocab_size * h]
+            .chunks_exact(h)
+            .map(|row| row.iter().zip(&normed).map(|(w, n)| w * n).sum())
+            .collect()
+    }
+
+    #[test]
+    fn q8_0_lm_head_decodes_through_the_table_3418() {
+        let (hidden, vocab) = (32, 4);
+        let mut bytes = Vec::new();
+        for _ in 0..vocab {
+            bytes.extend_from_slice(&[0x00, 0x3C]); // f16 1.0
+            bytes.extend((0..32).map(|j| (j as i8 - 7) as u8));
+        }
+        let m = model(AprQuantizationType::Q8_0, bytes.clone(), hidden, vocab);
+        let decode = crate::gguf::ggml_type_table::to_float(8).expect("Q8_0 row");
+        let want = expected(&m, &decode(&bytes).expect("decode"));
+        assert!(want.iter().any(|l| *l != 0.0), "fixture must give nonzero logits");
+        assert_eq!(m.forward(&[0]).expect("forward"), want);
+        let mut cache = crate::apr_transformer::AprKVCache::new(&m.config);
+        assert_eq!(m.forward_with_cache(0, &mut cache, 0).expect("cached"), want);
+    }
+
+    #[test]
+    fn f32_lm_head_decodes_at_the_site_3418() {
+        let (hidden, vocab) = (8, 3);
+        let weights: Vec<f32> = (0..hidden * vocab).map(|i| (i % 5) as f32 - 2.0).collect();
+        let bytes: Vec<u8> = weights.iter().flat_map(|w| w.to_le_bytes()).collect();
+        let m = model(AprQuantizationType::F32, bytes, hidden, vocab);
+        let want = expected(&m, &weights);
+        assert!(want.iter().any(|l| *l != 0.0), "fixture must give nonzero logits");
+        assert_eq!(m.forward(&[0]).expect("forward"), want);
+    }
+}

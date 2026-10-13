@@ -192,29 +192,47 @@ impl QuantizedAprTransformer {
     }
 
     /// Compute LM head logits (dequantize weight and matmul)
-    fn compute_lm_head_logits(&self, _hidden: &[f32]) -> Result<Vec<f32>> {
+    ///
+    /// #3418 (FT-GGMLT-028): the LM head is one flat `[vocab, hidden]` buffer,
+    /// decoded through the one ggml table's `to_float` column by `ggml_id`.
+    /// F32 has no table row (float types stay with each site) and is read here.
+    fn compute_lm_head_logits(&self, hidden: &[f32]) -> Result<Vec<f32>> {
         let vocab_size = self.config.vocab_size;
-        let _hidden_dim = self.config.hidden_dim;
-
-        // For zero-initialized weights, output is zeros
-        // In production: dequantize self.lm_head_weight and compute
-        let logits = vec![0.0f32; vocab_size];
-
-        // Simple matmul with dequantized weights (placeholder)
-        // Real implementation would use fused_q4k_dot or dequantize_q8_0
-        match self.quant_type {
-            AprQuantizationType::F32 => {
-                // No dequantization needed (but we store as bytes anyway)
-            },
-            AprQuantizationType::Q4_K => {
-                // Would call: fused_q4k_dot for each output
-            },
-            AprQuantizationType::Q8_0 => {
-                // Would call: dequantize_q8_0 then dot product
-            },
+        let hidden_dim = self.config.hidden_dim;
+        let n = vocab_size * hidden_dim;
+        if hidden_dim == 0 {
+            return Ok(vec![0.0f32; vocab_size]);
         }
 
-        Ok(logits)
+        let weights: Vec<f32> = if self.quant_type == AprQuantizationType::F32 {
+            self.lm_head_weight
+                .chunks_exact(4)
+                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .collect()
+        } else {
+            let id = self.quant_type.ggml_id();
+            let decode = crate::gguf::ggml_type_table::to_float(id).ok_or_else(|| {
+                RealizarError::FormatError {
+                    reason: format!(
+                        "quantized APR LM head: no to_float for GGML type {id} (#3418)"
+                    ),
+                }
+            })?;
+            decode(&self.lm_head_weight)?
+        };
+        if weights.len() < n {
+            return Err(RealizarError::FormatError {
+                reason: format!(
+                    "quantized APR LM head: {} values decoded, {vocab_size}x{hidden_dim} needed",
+                    weights.len()
+                ),
+            });
+        }
+
+        Ok(weights[..n]
+            .chunks_exact(hidden_dim)
+            .map(|row| row.iter().zip(hidden).map(|(w, x)| w * x).sum())
+            .collect())
     }
 
     /// Serialize to bytes (APR binary format with quantization)
