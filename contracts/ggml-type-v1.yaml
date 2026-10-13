@@ -1,5 +1,5 @@
 metadata:
-  version: 1.16.0
+  version: 1.17.0
   created: '2026-09-20'
   author: PAIML Engineering
   description: |
@@ -44,7 +44,7 @@ metadata:
   - 'GitHub #3418 (serve sizes from TRAITS, one table), #3430 (M1), #3431 (M2 reconciliation), #3421 (epic), #3563 (pin-derived artifacts, general case)'
 
 name: ggml-type
-version: 1.16.0
+version: 1.17.0
 scope: aprender-quant (trueno_quant) ggml tensor-type enum and TRAITS table
 
 description: |
@@ -492,6 +492,17 @@ falsification_tests:
   if_fails: 'a size estimate or compression ratio drops the per-block scales (Q8_0 reported as 8.0 bits, 4.0x instead of 3.76x).'
   evidence: |
     Quorum 2026-10-13 (sonnet+haiku+sonnet tie-break, planted fact caught by all): 2/3 b.
+- id: FT-GGMLT-022
+  rule: GGUFModel::get_tensor_f32 / dequantize_at take every block type's block size and bytes from the one table (ggml_type_table::traits) and its decoder from the to_float column, so the GGUF whole-tensor load path decodes every type the column decodes (the six IQ types included) instead of refusing them (#3869 class); Q8_0 and Q4_K keep their SIMD loaders as named overrides that agree with the column; F32/F16/BF16 stay with the site (#3418, quorum handoff/quorum-la074-a1-getf32.md 2/2 a)
+  prediction: |
+    get_tensor_f32_reads_the_to_float_column_3418: for every type with a
+    to_float row, dequantize_at over two blocks trimmed by one value returns
+    that many values equal to the column's decode (Q8_0/Q4_K within 1e-4).
+    A hand arm with a wrong size or decoder, or a refused type, is RED.
+  test: cargo test -p aprender-serve --lib get_tensor_f32_reads_the_to_float_column_3418
+  if_fails: 'a GGUF tensor in a type another serve path decodes (IQ4_XS, IQ2_S, ...) fails to load with "Unsupported quantization type", or loads with the wrong block size.'
+  evidence: |
+    Quorum 2026-10-13 (sonnet+haiku, planted fact F7 caught by both): 2/2 a.
 
 kani_harnesses:
 - id: KANI-GGMLT-001

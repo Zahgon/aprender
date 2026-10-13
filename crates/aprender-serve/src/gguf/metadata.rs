@@ -95,11 +95,22 @@ impl GGUFModel {
     /// # Errors
     /// `qtype` is not supported.
     fn dequant_kernel(qtype: u32) -> Result<(usize, usize, Dequantizer)> {
-        use crate::quantize::{
-            dequantize_f16, dequantize_q2_k, dequantize_q3_k, dequantize_q4_0, dequantize_q4_1,
-            dequantize_q4_k_simd, dequantize_q5_0, dequantize_q5_1, dequantize_q5_k,
-            dequantize_q6_k, dequantize_q8_0_simd, QK_K,
-        };
+        use crate::gguf::ggml_type_table::{to_float, traits};
+        use crate::quantize::{dequantize_f16, dequantize_q4_k_simd, dequantize_q8_0_simd};
+        // #3418 (FT-GGMLT-022): every block type takes its block size and
+        // bytes from the one table and its decoder from the table's to_float
+        // column, so this path decodes every type the column does (the IQ
+        // types too). Q8_0 and Q4_K keep their SIMD loaders, which agree with
+        // the column's scalar rows (dequantize_02.rs, dequantize_05.rs).
+        if let (Some(t), Some(column)) = (traits(qtype), to_float(qtype)) {
+            let decode: Dequantizer = match qtype {
+                GGUF_TYPE_Q8_0 => dequantize_q8_0_simd,
+                GGUF_TYPE_Q4_K => dequantize_q4_k_simd,
+                _ => column,
+            };
+            return Ok((t.blck_size, t.type_size, decode));
+        }
+        // Float types stay with the site (the column holds block types only).
         Ok(match qtype {
             GGUF_TYPE_F32 => (1, 4, |b| {
                 Ok(b.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect())
@@ -112,19 +123,6 @@ impl GGUFModel {
             // embeddings/norms/lm_head hit the catch-all "Unsupported
             // quantization type: 30".
             GGUF_TYPE_BF16 => (1, 2, |b| Ok(crate::inference::simd_bf16_to_f32(b))),
-            // 32-value blocks: an f16 scale (+ an f16 min or high bits) and the quants.
-            GGUF_TYPE_Q4_0 => (32, 18, dequantize_q4_0),
-            GGUF_TYPE_Q4_1 => (32, 20, dequantize_q4_1),
-            GGUF_TYPE_Q5_0 => (32, 22, dequantize_q5_0),
-            GGUF_TYPE_Q5_1 => (32, 24, dequantize_q5_1),
-            // Q8_0 uses the SIMD-parallel path for faster loading.
-            GGUF_TYPE_Q8_0 => (32, 34, dequantize_q8_0_simd),
-            // K-quants: 256-value super-blocks.
-            GGUF_TYPE_Q2_K => (QK_K, 84, dequantize_q2_k),
-            GGUF_TYPE_Q3_K => (QK_K, 110, dequantize_q3_k),
-            GGUF_TYPE_Q4_K => (QK_K, 144, dequantize_q4_k_simd),
-            GGUF_TYPE_Q5_K => (QK_K, 176, dequantize_q5_k),
-            GGUF_TYPE_Q6_K => (QK_K, 210, dequantize_q6_k),
             _ => {
                 return Err(RealizarError::UnsupportedOperation {
                     operation: "get_tensor_f32".to_string(),
@@ -321,3 +319,31 @@ impl GGUFModel {
 
 /// One GGUF type's whole-buffer dequantizer, as [`GGUFModel::dequantize_at`] picks it.
 type Dequantizer = fn(&[u8]) -> Result<Vec<f32>>;
+
+#[cfg(test)]
+mod dequant_kernel_tests_3418 {
+    use crate::gguf::ggml_type_table::{to_float, to_float_tests_3418::blocks, GGML_TYPES};
+    use crate::gguf::GGUFModel;
+
+    /// FT-GGMLT-022: `get_tensor_f32` decodes every block type the one table
+    /// decodes, as the table does (Q8_0 and Q4_K through their SIMD loaders,
+    /// within 1e-4), and trims a partial last block to the asked size.
+    #[test]
+    fn get_tensor_f32_reads_the_to_float_column_3418() {
+        for t in GGML_TYPES.iter().filter(|t| to_float(t.id).is_some()) {
+            let data = blocks(t.id, 2);
+            let want = to_float(t.id).expect("row")(&data).expect("decode");
+            let size = 2 * t.blck_size - 1;
+            let got = GGUFModel::dequantize_at(t.id, &data, 0, size)
+                .unwrap_or_else(|e| panic!("get_tensor_f32 refused {} ({}): {e}", t.name, t.id));
+            assert_eq!(got.len(), size, "{}", t.name);
+            for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+                assert!(
+                    g.to_bits() == w.to_bits() || (g - w).abs() <= 1e-4 * w.abs().max(1.0),
+                    "{} value {i}: {g} vs the table's {w}",
+                    t.name
+                );
+            }
+        }
+    }
+}
