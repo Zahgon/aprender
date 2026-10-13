@@ -73,10 +73,10 @@ const ALLOWED_GAPS: &[(&str, &str)] = &[
     ("apr-format-safety-v1", "magic_byte_validation"), // `detect_format` absent at the bound path (PV-ONT-028)
     ("apr-format-safety-v1", "header_integrity"), // `validate_header` absent at the bound path (PV-ONT-028)
     ("apr-gpu-backend-v1", "generation_temperature_zero"), // bound GPU `generate` resolves to no fn (PV-ONT-028)
-    ("../encoder-forward-v1", "cls_pooling"), // `cls_embedding` absent in the workspace (PV-ONT-028)
-    ("../format-parity-v1", "transpose_involution"), // `swap_axes` absent at the bound path (PV-ONT-028)
-    ("../format-parity-v1", "element_count"), // `validate_element_count` absent at the bound path (PV-ONT-028)
-    ("../bidirectional-attention-v1", "bidirectional_attention"), // `bidirectional_attention` fn absent (PV-ONT-028)
+    ("encoder-forward-v1", "cls_pooling"), // `cls_embedding` absent in the workspace (PV-ONT-028)
+    ("format-parity-v1", "transpose_involution"), // `swap_axes` absent at the bound path (PV-ONT-028)
+    ("format-parity-v1", "element_count"), // `validate_element_count` absent at the bound path (PV-ONT-028)
+    ("bidirectional-attention-v1", "bidirectional_attention"), // `bidirectional_attention` fn absent (PV-ONT-028)
     ("linear-probe-classifier-v1", "linear_probe"), // FrozenProbeRun::fit not built yet (binding notes)
     ("setfit-apr-v1", "doc_bundle_bijection"),      // `deserialize` lands with setfit plan 04-05
     ("setfit-apr-v1", "selection_lock_lifecycle"), // `mint_test_token` lock workflow lands with 04-07/04-14
@@ -150,6 +150,162 @@ fn enforce_all_implemented(unallowed_gaps: &[String]) {
     );
 }
 
+/// Load and parse binding.yaml, or emit the `CONTRACT_BINDING_SOURCE=none` fallback and return None.
+fn load_binding_file(binding_path: &std::path::Path) -> Option<BindingFile> {
+    if !binding_path.exists() {
+        // Graceful fallback: CI/crates.io builds won't have the sibling repo.
+        println!(
+            "cargo:warning=provable-contracts binding.yaml not found at {}; \
+             CONTRACT_* env vars will not be set (CI/crates.io build)",
+            binding_path.display()
+        );
+        println!("cargo:rustc-env=CONTRACT_BINDING_SOURCE=none");
+        return None;
+    }
+
+    let yaml_content = match std::fs::read_to_string(binding_path) {
+        Ok(s) => s,
+        Err(e) => {
+            println!(
+                "cargo:warning=Failed to read binding.yaml: {e}; \
+                 CONTRACT_* env vars will not be set"
+            );
+            println!("cargo:rustc-env=CONTRACT_BINDING_SOURCE=none");
+            return None;
+        }
+    };
+
+    match serde_yaml_ng::from_str(&yaml_content) {
+        Ok(b) => Some(b),
+        Err(e) => {
+            println!(
+                "cargo:warning=Failed to parse binding.yaml: {e}; \
+                 CONTRACT_* env vars will not be set"
+            );
+            println!("cargo:rustc-env=CONTRACT_BINDING_SOURCE=none");
+            None
+        }
+    }
+}
+
+/// Per-status counts of the de-duplicated bindings.
+#[derive(Default)]
+struct StatusTally {
+    implemented: u32,
+    partial: u32,
+    not_implemented: u32,
+}
+
+/// Emit one `CONTRACT_*` env var per de-duplicated binding, count statuses, and
+/// collect `not_implemented` bindings that are not in ALLOWED_GAPS.
+fn emit_binding_env_vars(bindings: &[Binding]) -> (StatusTally, Vec<String>) {
+    let (seen, seen_raw) = dedup_bindings(bindings);
+    let mut tally = StatusTally::default();
+    let mut unallowed_gaps: Vec<String> = Vec::new();
+
+    let mut keys: Vec<_> = seen.keys().cloned().collect();
+    keys.sort();
+
+    for var_name in &keys {
+        let status = &seen[var_name];
+        println!("cargo:rustc-env={var_name}={status}");
+
+        match status.as_str() {
+            "implemented" => tally.implemented += 1,
+            "partial" => {
+                tally.partial += 1;
+                let note = bindings
+                    .iter()
+                    .find(|b| &binding_env_var_name(&b.contract, &b.equation) == var_name)
+                    .and_then(|b| b.notes.as_deref())
+                    .unwrap_or("");
+                println!("cargo:warning=[contract] PARTIAL: {var_name} — {note}");
+            }
+            "not_implemented" => {
+                tally.not_implemented += 1;
+                if let Some((stem, eq)) = seen_raw.get(var_name) {
+                    if !is_gap_allowed(stem, eq) {
+                        unallowed_gaps.push(format!("{var_name} ({stem}.yaml / {eq})"));
+                    }
+                }
+            }
+            other => {
+                println!("cargo:warning=[contract] UNKNOWN STATUS '{other}': {var_name}");
+            }
+        }
+    }
+
+    (tally, unallowed_gaps)
+}
+
+/// The lowercased fn name a `pub fn` / `pub async fn` / `pub(crate) fn` line declares, if any.
+fn declared_pub_fn_name(line: &str) -> Option<String> {
+    let t = line.trim();
+    if !(t.starts_with("pub fn ")
+        || t.starts_with("pub async fn ")
+        || t.starts_with("pub(crate) fn "))
+    {
+        return None;
+    }
+    let part = t
+        .trim_start_matches("pub async fn ")
+        .trim_start_matches("pub(crate) fn ")
+        .trim_start_matches("pub fn ");
+    let name = part
+        .split('(')
+        .next()
+        .unwrap_or("")
+        .split('<')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
+    (!name.is_empty()).then_some(name)
+}
+
+/// Recursively collect declared pub fn names from every `.rs` file under `dir`.
+fn scan_rs(dir: &std::path::Path, found: &mut std::collections::HashSet<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            let n = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if n != "target" && n != ".git" {
+                scan_rs(&p, found);
+            }
+        } else if p.extension().and_then(|e| e.to_str()) == Some("rs") {
+            if let Ok(c) = std::fs::read_to_string(&p) {
+                found.extend(c.lines().filter_map(declared_pub_fn_name));
+            }
+        }
+    }
+}
+
+/// Layer 2: soft-warn when an `implemented` binding's bound function is not declared in source.
+fn warn_missing_bound_functions(bindings: &[Binding]) {
+    let expected: std::collections::HashSet<String> = bindings
+        .iter()
+        .filter(|b| b.status == "implemented")
+        .filter_map(|b| b.function.as_ref())
+        .map(|func| func.rsplit("::").next().unwrap_or(func).to_lowercase())
+        .collect();
+    if expected.is_empty() {
+        return;
+    }
+    let mut found: std::collections::HashSet<String> = std::collections::HashSet::new();
+    scan_rs(std::path::Path::new("src"), &mut found);
+    scan_rs(std::path::Path::new("crates"), &mut found);
+    let missing = expected
+        .iter()
+        .filter(|n| !found.contains(n.as_str()))
+        .count();
+    if missing > 0 {
+        println!("cargo:warning=[contract] L2: {missing} bound function(s) not found in source (soft warning)");
+    }
+}
+
 /// Read provable-contracts binding.yaml and set CONTRACT_* env vars.
 ///
 /// Policy: AllImplemented (Step 6.7). Any `not_implemented` binding not in
@@ -162,83 +318,18 @@ fn emit_provable_contract_bindings() {
     // Always tell Cargo to re-run if the file appears or changes
     println!("cargo:rerun-if-changed={}", binding_path.display());
 
-    if !binding_path.exists() {
-        // Graceful fallback: CI/crates.io builds won't have the sibling repo.
-        println!(
-            "cargo:warning=provable-contracts binding.yaml not found at {}; \
-             CONTRACT_* env vars will not be set (CI/crates.io build)",
-            binding_path.display()
-        );
-        println!("cargo:rustc-env=CONTRACT_BINDING_SOURCE=none");
+    let Some(bindings) = load_binding_file(&binding_path) else {
         return;
-    }
-
-    let yaml_content = match std::fs::read_to_string(&binding_path) {
-        Ok(s) => s,
-        Err(e) => {
-            println!(
-                "cargo:warning=Failed to read binding.yaml: {e}; \
-                 CONTRACT_* env vars will not be set"
-            );
-            println!("cargo:rustc-env=CONTRACT_BINDING_SOURCE=none");
-            return;
-        }
     };
 
-    let bindings: BindingFile = match serde_yaml_ng::from_str(&yaml_content) {
-        Ok(b) => b,
-        Err(e) => {
-            println!(
-                "cargo:warning=Failed to parse binding.yaml: {e}; \
-                 CONTRACT_* env vars will not be set"
-            );
-            println!("cargo:rustc-env=CONTRACT_BINDING_SOURCE=none");
-            return;
-        }
-    };
-
-    let (seen, seen_raw) = dedup_bindings(&bindings.bindings);
-
-    let mut implemented = 0u32;
-    let mut partial = 0u32;
-    let mut not_implemented = 0u32;
-    let mut unallowed_gaps: Vec<String> = Vec::new();
-
-    let mut keys: Vec<_> = seen.keys().cloned().collect();
-    keys.sort();
-
-    for var_name in &keys {
-        let status = &seen[var_name];
-        println!("cargo:rustc-env={var_name}={status}");
-
-        match status.as_str() {
-            "implemented" => implemented += 1,
-            "partial" => {
-                partial += 1;
-                let note = bindings
-                    .bindings
-                    .iter()
-                    .find(|b| &binding_env_var_name(&b.contract, &b.equation) == var_name)
-                    .and_then(|b| b.notes.as_deref())
-                    .unwrap_or("");
-                println!("cargo:warning=[contract] PARTIAL: {var_name} — {note}");
-            }
-            "not_implemented" => {
-                not_implemented += 1;
-                if let Some((ref stem, ref eq)) = seen_raw.get(var_name) {
-                    if !is_gap_allowed(stem, eq) {
-                        unallowed_gaps.push(format!("{var_name} ({stem}.yaml / {eq})"));
-                    }
-                }
-            }
-            other => {
-                println!("cargo:warning=[contract] UNKNOWN STATUS '{other}': {var_name}");
-            }
-        }
-    }
-
+    let (tally, unallowed_gaps) = emit_binding_env_vars(&bindings.bindings);
     enforce_all_implemented(&unallowed_gaps);
 
+    let StatusTally {
+        implemented,
+        partial,
+        not_implemented,
+    } = tally;
     let total = implemented + partial + not_implemented;
     println!(
         "cargo:warning=[contract] AllImplemented: {implemented}/{total} implemented, \
@@ -246,70 +337,7 @@ fn emit_provable_contract_bindings() {
     );
 
     // ── Layer 2: Verify bound functions exist in source ──
-    {
-        let mut expected: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for b in &bindings.bindings {
-            if b.status == "implemented" {
-                if let Some(ref func) = b.function {
-                    let short = func.rsplit("::").next().unwrap_or(func).to_lowercase();
-                    expected.insert(short);
-                }
-            }
-        }
-        if !expected.is_empty() {
-            let mut found: std::collections::HashSet<String> = std::collections::HashSet::new();
-            fn scan_rs(dir: &std::path::Path, found: &mut std::collections::HashSet<String>) {
-                let Ok(entries) = std::fs::read_dir(dir) else {
-                    return;
-                };
-                for e in entries.flatten() {
-                    let p = e.path();
-                    if p.is_dir() {
-                        let n = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                        if n != "target" && n != ".git" {
-                            scan_rs(&p, found);
-                        }
-                    } else if p.extension().and_then(|e| e.to_str()) == Some("rs") {
-                        if let Ok(c) = std::fs::read_to_string(&p) {
-                            for line in c.lines() {
-                                let t = line.trim();
-                                if t.starts_with("pub fn ")
-                                    || t.starts_with("pub async fn ")
-                                    || t.starts_with("pub(crate) fn ")
-                                {
-                                    let part = t
-                                        .trim_start_matches("pub async fn ")
-                                        .trim_start_matches("pub(crate) fn ")
-                                        .trim_start_matches("pub fn ");
-                                    let name = part
-                                        .split('(')
-                                        .next()
-                                        .unwrap_or("")
-                                        .split('<')
-                                        .next()
-                                        .unwrap_or("")
-                                        .trim()
-                                        .to_lowercase();
-                                    if !name.is_empty() {
-                                        found.insert(name);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            scan_rs(std::path::Path::new("src"), &mut found);
-            scan_rs(std::path::Path::new("crates"), &mut found);
-            let missing: Vec<_> = expected
-                .iter()
-                .filter(|n| !found.contains(n.as_str()))
-                .collect();
-            if !missing.is_empty() {
-                println!("cargo:warning=[contract] L2: {} bound function(s) not found in source (soft warning)", missing.len());
-            }
-        }
-    }
+    warn_missing_bound_functions(&bindings.bindings);
 
     // Set metadata env vars for the proc macro
     println!("cargo:rustc-env=CONTRACT_BINDING_SOURCE=binding.yaml");
