@@ -302,7 +302,10 @@ impl OwnedQuantizedModel {
         Ok(output)
     }
 
-    /// Fused K-quant kernels for Q4_K, Q5_K, Q6_K
+    /// Fused K-quant kernels for Q4_K, Q5_K, Q6_K. #3418 (FT-GGMLT-020): the
+    /// kernel is the one ggml table's `matvec_into` row, the same `_into`
+    /// kernel the per-id match's non-into wrappers called, so output is
+    /// bitwise unchanged. An id with no row takes the dequant fallback.
     fn fused_matmul_k_quants(
         &self,
         input: &[f32],
@@ -311,34 +314,19 @@ impl OwnedQuantizedModel {
         out_dim: usize,
         seq_len: usize,
     ) -> Result<Vec<f32>> {
-        use crate::quantize::{
-            fused_q4k_parallel_matvec, fused_q5k_parallel_matvec, fused_q6k_parallel_matvec,
+        let Some(matvec) = crate::gguf::ggml_type_table::matvec_into(weight.qtype) else {
+            return self.dequant_fallback_or_refuse(input, weight, in_dim, out_dim, seq_len);
         };
-
+        let mut output = vec![0.0f32; seq_len.max(1) * out_dim];
         if seq_len > 1 {
-            let mut output = Vec::with_capacity(seq_len * out_dim);
-            for s in 0..seq_len {
+            for (s, out) in output.chunks_exact_mut(out_dim).enumerate() {
                 let x = &input[s * in_dim..(s + 1) * in_dim];
-                let row_output = match weight.qtype {
-                    GGUF_TYPE_Q4_K => fused_q4k_parallel_matvec(&weight.data, x, in_dim, out_dim)?,
-                    GGUF_TYPE_Q5_K => fused_q5k_parallel_matvec(&weight.data, x, in_dim, out_dim)?,
-                    GGUF_TYPE_Q6_K => fused_q6k_parallel_matvec(&weight.data, x, in_dim, out_dim)?,
-                    // PMAT-3477 / #3091: the IQ formats real unsloth GGUFs ship (and
-                    // Q2_K/Q3_K) take the dequantize-then-dot path; anything else is
-                    // refused by name, in the same default arm as before.
-                    _ => self.dequant_fallback_or_refuse(x, weight, in_dim, out_dim, 1)?,
-                };
-                output.extend_from_slice(&row_output);
+                matvec(&weight.data, x, in_dim, out_dim, out)?;
             }
-            Ok(output)
         } else {
-            match weight.qtype {
-                GGUF_TYPE_Q4_K => fused_q4k_parallel_matvec(&weight.data, input, in_dim, out_dim),
-                GGUF_TYPE_Q5_K => fused_q5k_parallel_matvec(&weight.data, input, in_dim, out_dim),
-                GGUF_TYPE_Q6_K => fused_q6k_parallel_matvec(&weight.data, input, in_dim, out_dim),
-                _ => self.dequant_fallback_or_refuse(input, weight, in_dim, out_dim, 1),
-            }
+            matvec(&weight.data, input, in_dim, out_dim, &mut output)?;
         }
+        Ok(output)
     }
 }
 

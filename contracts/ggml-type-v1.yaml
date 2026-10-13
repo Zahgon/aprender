@@ -1,5 +1,5 @@
 metadata:
-  version: 1.14.0
+  version: 1.15.0
   created: '2026-09-20'
   author: PAIML Engineering
   description: |
@@ -44,7 +44,7 @@ metadata:
   - 'GitHub #3418 (serve sizes from TRAITS, one table), #3430 (M1), #3431 (M2 reconciliation), #3421 (epic), #3563 (pin-derived artifacts, general case)'
 
 name: ggml-type
-version: 1.14.0
+version: 1.15.0
 scope: aprender-quant (trueno_quant) ggml tensor-type enum and TRAITS table
 
 description: |
@@ -463,6 +463,20 @@ falsification_tests:
   if_fails: 'a ggml type the table can decode is refused on CPU for a missing hand arm (#3869 Q5_1 "got type 7"), or a fallback decodes with the wrong type''s decoder.'
   evidence: |
     Quorum 2026-10-13 (sonnet+haiku, planted fact caught by both): 2/2 b.
+
+- id: FT-GGMLT-020
+  rule: the serve CPU fused matvec is dispatched by the one table's matvec_into column - rows Q4_0 (adapter dropping out_dim), Q8_0, Q4_K, Q5_K, Q6_K point at the existing *_parallel_matvec_into kernels; fused_matmul_into and fused_matmul_k_quants read the column instead of per-id matches, so every call reaches the same kernel body and output is bitwise unchanged; fused_matmul_q4_q8 keeps its own non-into Q4_0/Q8_0 bodies (#3418, quorum handoff/quorum-la074-a1-matvec.md 2/2 a)
+  prediction: |
+    every_matvec_row_agrees_with_its_to_float_row_3418: for every matvec_into
+    row, the kernel on 6 rows x 512 of whole blocks matches an f64 row-dot of
+    the same id's to_float decode within 2% of sum|w*x| (the Q8 activation
+    error). A row pointing at another type's kernel turns it RED.
+    matvec_rows_are_the_five_fused_kernels_3418: ids 0..64 have a row exactly
+    for 2 8 12 13 14. A dropped or added row turns it RED.
+  test: cargo test -p aprender-serve --lib _3418
+  if_fails: 'a ggml type runs through another type''s fused kernel, or a type loses its fused kernel and silently takes the slower dequant path.'
+  evidence: |
+    Quorum 2026-10-13 (sonnet+haiku, planted fact caught by both): 2/2 a.
 
 kani_harnesses:
 - id: KANI-GGMLT-001

@@ -187,6 +187,42 @@ pub fn scale_offsets(id: u32) -> Option<&'static [usize]> {
     SCALES.iter().find(|(row, _)| *row == id).map(|(_, o)| *o)
 }
 
+/// A ggml fused matvec: one row of f32 activations against a whole block
+/// weight of one type, written into `output[..out_dim]`. Arguments are
+/// (weight, activations, in_dim, out_dim, output).
+pub type MatvecInto = fn(&[u8], &[f32], usize, usize, &mut [f32]) -> crate::error::Result<()>;
+
+/// #3418 (FT-GGMLT-020): the fused matvec column of the one table, one row per
+/// ggml block type serve has a fused (quantized-activation) kernel for. The
+/// single-token matmul and the K-quant matcher read this instead of keeping
+/// per-id matches; every row is the kernel those matches already called, so
+/// the switch is bitwise. A type with no row takes the dequantize fallback.
+const MATVEC_INTO: &[(u32, MatvecInto)] = {
+    use crate::gguf::types::{
+        GGUF_TYPE_Q4_0, GGUF_TYPE_Q4_K, GGUF_TYPE_Q5_K, GGUF_TYPE_Q6_K, GGUF_TYPE_Q8_0,
+    };
+    use crate::quantize as q;
+    &[
+        // The Q4_0 kernel takes its out_dim from the output slice.
+        (GGUF_TYPE_Q4_0, |w, a, k, _, out| {
+            q::fused_q4_0_q8_0_parallel_matvec_into(w, a, k, out)
+        }),
+        (GGUF_TYPE_Q8_0, q::fused_q8_0_q8_0_parallel_matvec_into),
+        (GGUF_TYPE_Q4_K, q::fused_q4k_parallel_matvec_into),
+        (GGUF_TYPE_Q5_K, q::fused_q5k_parallel_matvec_into),
+        (GGUF_TYPE_Q6_K, q::fused_q6k_parallel_matvec_into),
+    ]
+};
+
+/// The fused matvec kernel for ggml type `id`, or `None` if serve has none.
+#[must_use]
+pub fn matvec_into(id: u32) -> Option<MatvecInto> {
+    MATVEC_INTO
+        .iter()
+        .find(|(row, _)| *row == id)
+        .map(|(_, f)| *f)
+}
+
 /// The refusal text for an id with no size in this table. Every id that
 /// [`TRAITS`] names but does not size is one upstream removed.
 fn unsupported(id: u32) -> String {
@@ -524,6 +560,70 @@ mod scale_tests_3418 {
                 scale_offsets(id).is_some(),
                 SCALED.contains(&id),
                 "ggml id {id} scale row"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod matvec_tests_3418 {
+    use super::to_float_tests_3418::blocks;
+    use super::{matvec_into, scale_offsets, to_float, traits, MATVEC_INTO};
+
+    /// One row of `in_dim` weights of type `id` per output, every f16 scale
+    /// set to 1/16 so the decode is finite and small.
+    fn weight(id: u32, in_dim: usize, out_dim: usize) -> Vec<u8> {
+        let t = traits(id).expect("a matvec row is a sized ggml type");
+        let mut data = blocks(id, out_dim * in_dim / t.blck_size);
+        for b in data.chunks_exact_mut(t.type_size) {
+            for &off in scale_offsets(id).unwrap_or(&[0]) {
+                b[off..off + 2].copy_from_slice(&[0x00, 0x2C]);
+            }
+        }
+        data
+    }
+
+    #[test]
+    fn every_matvec_row_agrees_with_its_to_float_row_3418() {
+        let (in_dim, out_dim) = (512, 6);
+        let x: Vec<f32> = (0..in_dim)
+            .map(|i| ((i * 13 % 29) as f32 - 14.0) / 7.0)
+            .collect();
+        for &(id, matvec) in MATVEC_INTO {
+            let name = traits(id).expect("sized").name;
+            let w = weight(id, in_dim, out_dim);
+            let decoded = to_float(id).expect("a matvec row has a to_float row")(&w)
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            let mut got = vec![f32::NAN; out_dim];
+            matvec(&w, &x, in_dim, out_dim, &mut got).unwrap_or_else(|e| panic!("{name}: {e}"));
+            for (o, row) in decoded.chunks_exact(in_dim).enumerate() {
+                let exact: f64 = row
+                    .iter()
+                    .zip(&x)
+                    .map(|(a, b)| f64::from(*a) * f64::from(*b))
+                    .sum();
+                let scale: f64 = row
+                    .iter()
+                    .zip(&x)
+                    .map(|(a, b)| f64::from((a * b).abs()))
+                    .sum();
+                assert!(
+                    (f64::from(got[o]) - exact).abs() <= 0.02 * scale + 1e-3,
+                    "{name} ({id}) row {o}: matvec {} vs to_float dot {exact}",
+                    got[o]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn matvec_rows_are_the_five_fused_kernels_3418() {
+        const FUSED: [u32; 5] = [2, 8, 12, 13, 14];
+        for id in 0..64u32 {
+            assert_eq!(
+                matvec_into(id).is_some(),
+                FUSED.contains(&id),
+                "ggml id {id} matvec row"
             );
         }
     }

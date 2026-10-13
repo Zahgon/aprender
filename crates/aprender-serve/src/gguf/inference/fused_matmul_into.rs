@@ -6,12 +6,6 @@ impl OwnedQuantizedModel {
         weight: &OwnedQuantizedTensor,
         output: &mut [f32],
     ) -> Result<()> {
-        use crate::quantize::{
-            fused_q4_0_q8_0_parallel_matvec_into, fused_q4k_parallel_matvec_into,
-            fused_q5k_parallel_matvec_into, fused_q6k_parallel_matvec_into,
-            fused_q8_0_q8_0_parallel_matvec_into,
-        };
-
         let in_dim = weight.in_dim;
         let out_dim = weight.out_dim;
         let seq_len = input.len() / in_dim;
@@ -30,42 +24,11 @@ impl OwnedQuantizedModel {
             out_dim
         );
 
-        match weight.qtype {
-            GGUF_TYPE_Q4_0 => fused_q4_0_q8_0_parallel_matvec_into(
-                &weight.data,
-                input,
-                in_dim,
-                &mut output[..out_dim],
-            ),
-            GGUF_TYPE_Q8_0 => fused_q8_0_q8_0_parallel_matvec_into(
-                &weight.data,
-                input,
-                in_dim,
-                out_dim,
-                &mut output[..out_dim],
-            ),
-            GGUF_TYPE_Q4_K => fused_q4k_parallel_matvec_into(
-                &weight.data,
-                input,
-                in_dim,
-                out_dim,
-                &mut output[..out_dim],
-            ),
-            GGUF_TYPE_Q5_K => fused_q5k_parallel_matvec_into(
-                &weight.data,
-                input,
-                in_dim,
-                out_dim,
-                &mut output[..out_dim],
-            ),
-            GGUF_TYPE_Q6_K => fused_q6k_parallel_matvec_into(
-                &weight.data,
-                input,
-                in_dim,
-                out_dim,
-                &mut output[..out_dim],
-            ),
-            _ => {
+        // #3418 (FT-GGMLT-020): the kernel is the one ggml table's `matvec_into`
+        // row; an id with no row goes through `fused_matmul`.
+        match crate::gguf::ggml_type_table::matvec_into(weight.qtype) {
+            Some(matvec) => matvec(&weight.data, input, in_dim, out_dim, &mut output[..out_dim]),
+            None => {
                 let result = self.fused_matmul(input, weight)?;
                 output[..result.len()].copy_from_slice(&result);
                 Ok(())
