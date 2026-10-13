@@ -2,7 +2,7 @@
 
 **Outcome: acceptance met.** The PRM-001 §9 row reads "H4 only → tripwire; H4+H5+H7 → tie-breaker; devbox primary → refused". All three run through the real binary, `rex ladder`, and not only through unit tests.
 
-The reports below are `prm-001-report-v1` documents (spec PRM-001, version 3). They carry the **live** prereg lock, `docs/audits/prm-001/prereg.lock` `prereg_sha` `f0b4e4ac…`, so they exercise the gate and not the stale-lock refusal. Every run is recorded verbatim in `runs.txt`.
+The reports below are `prm-001-report-v1` documents (spec PRM-001, version 4). They carry the **live** prereg lock, `docs/audits/prm-001/prereg.lock` `prereg_sha` `be2085c0…`, so they exercise the gate and not the stale-lock refusal. Every run is recorded verbatim in `runs.txt`.
 
 | Planted report | sha256 (prefix) | `--current` | mode | why |
 |---|---|---|---|---|

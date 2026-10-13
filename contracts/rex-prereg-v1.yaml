@@ -10,7 +10,7 @@ metadata:
     - rex-prereg-v1 (REX-00, 5f0ae10ac): docs/audits/rex-001/prereg.lock over
       review-experiment-protocol.md. SUPERSEDED, never deleted or edited (operator
       2026-09-25); its spec §2–§5 and plan stay byte-frozen.
-    - rex-prereg-v2 (PRM-00b): docs/audits/prm-001/prereg.lock over PRM-001 v3
+    - rex-prereg-v2 (PRM-00b): docs/audits/prm-001/prereg.lock over PRM-001 v4 (the v3 lock, prereg_sha f0b4e4ac…, is superseded)
       (docs/specifications/PRM-001-prometheus.md) and analysis plan v2. v1 had 0 data rows.
       The 17:09Z v2 draft lock (1f4acb3d) over the v2 ruling was a stray draft and is void.
   references:

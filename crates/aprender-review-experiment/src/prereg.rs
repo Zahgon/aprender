@@ -1,6 +1,6 @@
 //! PRM-00b pre-registration lock (contract `rex-prereg-v1`, scheme `rex-prereg-v2`, rule R-1).
 //!
-//! `rex-prereg-v2` locks PRM-001 v3 (`docs/specifications/PRM-001-prometheus.md`). The v1
+//! `rex-prereg-v2` locks PRM-001 v4 (`docs/specifications/PRM-001-prometheus.md`). The v1
 //! lock (`docs/audits/rex-001/prereg.lock`, prereg_sha `ef51087d…`) is SUPERSEDED, never
 //! deleted or edited (operator, 2026-09-25); its spec and plan stay byte-frozen in-tree and
 //! `falsify_rex_prereg_004` keeps them verifying.
@@ -112,7 +112,7 @@ impl Components {
     #[must_use]
     pub fn render_lock(&self) -> String {
         format!(
-            "# PRM-001 pre-registration lock (rex-prereg-v2) over spec PRM-001 v3. Written by PRM-00b; v1 had 0 data rows.\n\
+            "# PRM-001 pre-registration lock (rex-prereg-v2) over spec PRM-001 v4. Written by PRM-00b; v1 had 0 data rows; the v3 lock f0b4e4ac… is superseded.\n\
              # A mismatch against the tree is a new spec version (R-1), never an edit here.\n\
              spec_s2_s5={}\nstats_rs={}\nanalysis_plan={}\nprompt_v1={}\nprereg_sha={}\n",
             self.spec_s2_s5,
@@ -251,7 +251,7 @@ mod tests {
         let c = Components::of("## §2 a\nb\n## §6 c\n", "stats", "plan", "prompt").expect("span");
         let lock = c.render_lock();
         assert!(lock
-            .starts_with("# PRM-001 pre-registration lock (rex-prereg-v2) over spec PRM-001 v3."));
+            .starts_with("# PRM-001 pre-registration lock (rex-prereg-v2) over spec PRM-001 v4."));
         assert!(lock.contains(&format!("spec_s2_s5={}\n", c.spec_s2_s5)));
         assert!(lock.contains(&format!("stats_rs={}\n", c.stats_rs)));
         assert!(lock.contains(&format!("analysis_plan={}\n", c.analysis_plan)));

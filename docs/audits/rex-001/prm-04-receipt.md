@@ -54,7 +54,7 @@ Positive control: the same receipt with `--min-positions 7` does admit (cosine 0
 
 ## Note
 
-The prereg lock the tool reads today is `f0b4e4ac…`, while the REX-04 rows carry `ef51087d…`. This file uses the current lock. REX-04's file is left untouched.
+The prereg lock the tool reads today is `be2085c0…` (PRM-001 v4). These admission rows were written under the superseded v3 lock `f0b4e4ac…`, and the REX-04 rows carry `ef51087d…`. Neither file is rewritten.
 
 ## Gates
 
