@@ -19927,6 +19927,24 @@ roadmap:
   estimated_effort: null
   labels: []
   notes: null
+- id: PMAT-3559
+  github_issue: 3559
+  item_type: task
+  title: '#3559 slice: binding.yaml ''../x.yaml'' contract refs never match by stem — 12 rows rewritten to bare names (bound-symbols-resolve)'
+  status: planned
+  priority: high
+  assigned_to: null
+  created: 2026-10-13T06:59:51Z
+  updated: 2026-10-13T06:59:51Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 3269
 - id: PMAT-3563
   github_issue: 3563
   item_type: task
