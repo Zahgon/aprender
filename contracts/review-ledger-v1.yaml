@@ -32,11 +32,11 @@ falsification_tests:
     expected_output: "exit 0"
     if_fails: "Quorums could run without the shadow lane and REX-07's 100 % would still read green."
   - id: FALSIFY-RXL-002
-    name: gx10_down_is_unknown_and_keeps_the_width
+    name: arm64_down_is_unknown_and_keeps_the_width
     prediction: "an unavailable lane, or an answered state with no verdict, is Unknown{LaneUnavailable}; the width stays 3"
     test_harness: "cargo test -p aprender-review-experiment --lib falsify_rxl_002"
     expected_output: "exit 0"
-    if_fails: "A gx10 outage would enter the ledger as a verdict and contaminate H4/H5 agreement."
+    if_fails: "A arm64 outage would enter the ledger as a verdict and contaminate H4/H5 agreement."
   - id: FALSIFY-RXL-003
     name: a_counted_or_width_changing_shadow_is_a_violation
     prediction: "counts=true, a missing counts flag, or a width other than the counted lanes fails coverage"

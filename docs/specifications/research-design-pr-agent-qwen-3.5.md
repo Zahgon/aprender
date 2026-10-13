@@ -17,7 +17,7 @@ Every quorum is currently throwing away its training pairs. The fix is to captur
 |---|---|
 | Spec id | **PRA-001** (PR-Review Agent trace corpus) |
 | Title | Research design: collecting PR-review agent data to fine-tune and distill a local Qwen 3.5 reviewer |
-| Author | Noah Gift, Pragmatic AI Labs (paiml), Sovereign AI Stack |
+| Author | Pragmatic AI Labs (paiml), Sovereign AI Stack |
 | Date | 2026-09-25 |
 | Target repo / path | `paiml/aprender` → `docs/specifications/research-design-pr-agent-qwen-3.5.md` |
 | Runner | the aprender traffic cop |
@@ -62,7 +62,7 @@ Every operator-supplied fact is [A] until ticket T0 converts it to [V] by runnin
 | G1 | Quorums/day across paiml repos: 50–200 | [A] | quorum receipts | `make trace-yield WINDOW=7d` |
 | G2 | Counted lanes: Claude Sonnet 5, Claude Haiku 4.5, agy (Antigravity / Gemini 3.1 Pro); shadow: Qwen3.5-4B-Q4_K_M via `apr serve` | [A] | paiml-implement rail config | `pmat quorum lanes --json` |
 | G3 | Qwen row states: Verdict \| Refused \| NotRun{NoExecutor\|Busy\|Timeout\|ContextOverflow\|TrainActive} | [A] | receipt schema | receipt schema test |
-| G4 | Dispatch ladder: gx10-cuda → lambda-cuda (shadow-only, dispatch-time, GPU-lock free, never resident) → intel-wgpu → mini-metal → intel-cpu → NotRun{NoExecutor}; row records the backend that actually ran | [A] | rail dispatcher | `make trace-served-by-audit` |
+| G4 | Dispatch ladder: arm64-cuda → devbox-cuda (shadow-only, dispatch-time, GPU-lock free, never resident) → cleanroom-wgpu → mac-metal → cleanroom-cpu → NotRun{NoExecutor}; row records the backend that actually ran | [A] | rail dispatcher | `make trace-served-by-audit` |
 | G5 | `review-ledger-v1` keeps {family, model, verdict, findings: count} only; text/inputs/outputs discarded | [A] | `crates/aprender-review-experiment/src/ledger.rs` | `grep -n 'findings' crates/aprender-review-experiment/src/ledger.rs` |
 | G6 | S-6: Claude and agy outputs MAY train the local model (silver) | [A] | operator ruling S-6 | n/a (ruling) |
 | G7 | Gold = sealed corpus + outcome joins (merged / reverted ≤ 14 days / `regression`-labelled escape) | [A] | ARB-SELF-001 outcome ledger | `make trace-outcome-join --dry-run` |
@@ -71,8 +71,8 @@ Every operator-supplied fact is [A] until ticket T0 converts it to [V] by runnin
 | G10 | Raw growth ≤ ~0.45 TB/yr | [U] | estimate | `make trace-bytes WINDOW=7d` (replace in week 1) |
 | G11 | A real AWS-key literal has already landed in a diff | [A] | incident record | `make trace-secret-scan-backfill` |
 | G12 | `apr finetune/distill/merge` refuse qwen35 until aprender 0.71; `apr quantize` available; `--json-schema` planned 0.70 | [A] | aprender release notes | `apr --version && apr finetune --model-arch qwen35 --dry-run` (expect refusal) |
-| G13 | Qwen3.5-27B teacher on gx10 can write top-k logits | [A] | apr capability | `make teacher-logit-smoke` |
-| G14 | Claude Code stores transcripts in plaintext under `~/.claude/projects/` "for 30 days by default" (Claude Code docs); Desktop/Cowork sessions exempt by default | [X] | Claude Code docs (App. A.8) | `make transcript-retention-audit` |
+| G13 | Qwen3.5-27B teacher on arm64 can write top-k logits | [A] | apr capability | `make teacher-logit-smoke` |
+| G14 | Claude Code stores transcripts in plaintext under `$CLAUDE_CONFIG_DIR/projects/` "for 30 days by default" (Claude Code docs); Desktop/Cowork sessions exempt by default | [X] | Claude Code docs (App. A.8) | `make transcript-retention-audit` |
 
 ---
 
@@ -83,7 +83,7 @@ T0 (`evidence/pra-001/t0-baseline.yaml`) found that none of the §1 verify comma
 | # | Verify command (real, today) | Until then |
 |---|---|---|
 | G1 | lands with T1: `trace::weekly` row count over the index | [U]-pending-instrument (T1) |
-| G2 | `jq '.quorum' ~/.claude/skills/paiml-implement/config.json` | STOP S-BASE → #436 scope |
+| G2 | `jq '.quorum' $CLAUDE_CONFIG_DIR/skills/paiml-implement/config.json` | STOP S-BASE → #436 scope |
 | G3 | `cargo test -p aprender-review-experiment --lib every_wire_form_round_trips` | — |
 | G4 | the #436 dispatcher's row `served_by` audit; no dispatcher exists yet | STOP S-BASE → #436 R-9 |
 | G5 | `grep -n 'findings' crates/aprender-review-experiment/src/ledger.rs` | — |
@@ -94,8 +94,8 @@ T0 (`evidence/pra-001/t0-baseline.yaml`) found that none of the §1 verify comma
 | G10 | lands with T1: `trace::weekly` `bytes_raw`/`bytes_zstd` over week 1 | [U]-pending-instrument (T1) |
 | G11 | lands with T6 (secret-scan backfill over the index) | [U]-pending-instrument (T6) |
 | G12 | `. scripts/apr_bin.sh && "$APR" --version && "$APR" finetune <qwen35.gguf> --plan` (expect a refusal; `apr` has no `--model-arch`) | STOP S-BASE: `--plan` exits 0 with no refusal on 0.69.3 |
-| G13 | lands with T16 (27B teacher on gx10, infra#1132) | [U]-pending-instrument (T16) |
-| G14 | per host: `jq .cleanupPeriodDays ~/.claude/settings.json` and `find ~/.claude/projects -mtime +30 \| wc -l` | — |
+| G13 | lands with T16 (27B teacher on arm64, infra#1132) | [U]-pending-instrument (T16) |
+| G14 | per host: `jq .cleanupPeriodDays $CLAUDE_CONFIG_DIR/settings.json` and `find $CLAUDE_CONFIG_DIR/projects -mtime +30 \| wc -l` | — |
 
 ---
 
@@ -106,7 +106,7 @@ T0 (`evidence/pra-001/t0-baseline.yaml`) found that none of the §1 verify comma
 | Stream | Where | When | Why here |
 |---|---|---|---|
 | **S1: lane traces** | Inside the quorum rail (paiml-implement, issue #436), at the dispatch boundary of each lane call | Synchronously, before the verdict is parsed and before the receipt is written | This is the only point where the exact input bytes, the raw reply and the actual backend co-exist. Parsing is lossy and receipts are summaries. |
-| **S2: session transcripts** | Claude Code `~/.claude/projects/**/*.jsonl` (including `subagents/`), agy logs | Harvested by a forjar-declared timer on each workstation into almacen; never edited in place | For later agentic (multi-turn, tool-use) distillation. Retention is set by config, not by hope (§2.8). |
+| **S2: session transcripts** | Claude Code `$CLAUDE_CONFIG_DIR/projects/**/*.jsonl` (including `subagents/`), agy logs | Harvested by a forjar-declared timer on each workstation into almacen; never edited in place | For later agentic (multi-turn, tool-use) distillation. Retention is set by config, not by hope (§2.8). |
 
 Mechanism for S1: the rail wraps every lane call in `TraceSpan::open(lane, round)`. The span hashes the request bytes *as serialised to the wire*, not a reconstruction. It streams the response into a blob writer while the lane client reads it. It closes with the parsed verdict and findings. If the blob write fails, the receipt row is written with `trace_status = CaptureFailed` and andon fires. The quorum itself is never blocked (jidoka on the capture line, not on the review line).
 
@@ -133,7 +133,7 @@ Mechanism for S1: the rail wraps every lane call in `TraceSpan::open(lane, round
 | `decoding` | {temperature, top_p, top_k, max_tokens, seed?, json_schema_sha?} | ✔ | provider-reported where available, otherwise as sent |
 | `tokens` | {input, output, reasoning?, cached?} | ✔ | provider-reported; `null` is not the same as 0 |
 | `latency_ms` | {ttft?, total} | ✔ | |
-| `served_by` | string (cell that actually ran, e.g. `gx10-cpu`) | ✔ | records parity-guard fallback |
+| `served_by` | string (cell that actually ran, e.g. `arm64-cpu`) | ✔ | records parity-guard fallback |
 | `lane_state` | enum Verdict \| Refused \| NotRun{…} | ✔ | NotRun rows carry no output blob but are still rows |
 | `verdict` | enum {approve, request_changes, comment, abstain} | if Verdict | |
 | `findings` | [{file, line_start, line_end, severity, category, text}] | if Verdict | **text, not count** |
@@ -343,7 +343,7 @@ Each ticket: `pmat work add`, feature branch, PR, protected main, `ci / gate`, T
 | 14 | T13 Lane κ_err probe + scoreboard | `lane-independence-v1` | M4 baseline [V] recorded for every pair | 120 |
 | 15 | T14 Datacard: Croissant + RAI + datasheet generator | `trace-datacard-v1` | generated file passes Croissant validation; regenerated per snapshot | 90 |
 | 16 | T15 B1 few-shot miner from disagreement/escape rows | (uses `agent-trace-v1`) | prompt_version bump with manifest of exemplar tiers | 120 |
-| 17 | T16 27B teacher re-score job (gx10) | `sparse-logits-v1` (mode topk) | teacher blobs for all admitted local rows of week N | 180 |
+| 17 | T16 27B teacher re-score job (arm64) | `sparse-logits-v1` (mode topk) | teacher blobs for all admitted local rows of week N | 180 |
 
 EV rationale: T1–T5 stop irreversible loss, which is ongoing and compounds daily. T6–T10 make the data *admissible*. T11–T17 make it *useful*. Nothing training-related (B2) is ticketed until aprender 0.71 ships; that is a §8 STOP.
 
@@ -462,7 +462,7 @@ Falsifier catalogue (F-R1…F-R15): each is a `pv` contract test that is committ
 - **Design change:** `access_channel` and `terms_ref` are mandatory. Pools can be rebuilt excluding any provider or channel (P-TERMS). Public releases default to local/gold rows. Terms changes are S-TERMS.
 
 **A.8 Claude Code transcripts.**
-- Official docs: transcripts under `~/.claude/projects/` are plaintext, include everything that passed through tools, and are deleted after `cleanupPeriodDays`. The default is 30 and the minimum is 1; 0 fails validation. Managed settings govern. 
+- Official docs: transcripts under `$CLAUDE_CONFIG_DIR/projects/` are plaintext, include everything that passed through tools, and are deleted after `cleanupPeriodDays`. The default is 30 and the minimum is 1; 0 fails validation. Managed settings govern. 
 - A February 2026 issue (#23710) reported that 0 had silently disabled persistence in an earlier version. Another issue (#58154) reports that `subagents/` transcripts are not swept. 
 - **Design change:** forjar-managed settings with a large explicit value, harvesting that includes `subagents/`, a survival canary, and a secret scan on every transcript.
 

@@ -166,7 +166,7 @@ fn serve_receipt(n: usize, low_at: usize, low: f64) -> serde_json::Value {
         })
         .collect();
     serde_json::json!({
-        "host": "gx10-a5b5", "apr_tag": "v0.69.3",
+        "host": "arm64-host", "apr_tag": "v0.69.3",
         "binary_sha256": h('a'), "weights_sha256": h('b'),
         "comparator": "apr-cpu (apr parity: GPU vs CPU; no llama.cpp comparator in this apr, aprender#3576)",
         "exit": 0, "verdict": "pass",
@@ -252,7 +252,7 @@ fn falsify_rca_005_a_short_or_failing_receipt_does_not_admit() {
         assert!(e.iter().any(|m| m.contains(why)), "{why}: {e:?}");
     };
     let x = expect();
-    // the declared gx10 oneshot measured 7 positions: under the 64 floor
+    // the declared arm64 oneshot measured 7 positions: under the 64 floor
     refuse(&serve_receipt(7, 0, 0.9997), &x, "min_positions");
     refuse(&serve_receipt(63, 0, 0.99), &x, "min_positions");
     refuse(&oracle_receipt(63, 0, 0.99), &x, "min_positions");

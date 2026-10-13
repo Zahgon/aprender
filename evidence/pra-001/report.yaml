@@ -1,4 +1,4 @@
-# PRA-001 §9 final report. Lead: aprender-a2. Updated on every ticket close.
+# PRA-001 §9 final report. Lead: worker. Updated on every ticket close.
 # The cop reads this file; it does not run measurements.
 report: PRA-001
 version: 1
@@ -15,23 +15,23 @@ baseline:  # §1 after T0; full rows in evidence/pra-001/t0-baseline.yaml
   pending_instrument: {G1: T1, G7: T10, G10: T1, G11: T6, G13: T16}
   stop_s_base: {G2: "paiml-implement#436 (T1)", G4: "paiml-implement#436 R-9", G12: "apr finetune --plan exits 0 with no refusal on 0.69.3"}
 tickets:
-  - {id: T0, owner: aprender-60, contract: null, state: DONE, evidence: evidence/pra-001/t0-baseline.yaml}
+  - {id: T0, owner: worker, contract: null, state: DONE, evidence: evidence/pra-001/t0-baseline.yaml}
   - {id: T1, owner: paiml-implement-21, contract: agent-trace-v1, state: IN_PROGRESS}
-  - {id: T2, owner: "aprender-a2 + aprender-84", contract: review-ledger-v2, state: IN_PROGRESS, khat_min: 120}
-  - {id: T3, owner: infra-27, contract: trace-blob-store-v1, state: IN_PROGRESS}
-  - {id: T4, owner: infra-27, contract: transcript-retention-v1, state: IN_PROGRESS, note: "retention done 5/5 hosts, infra#1135"}
-  - {id: T5, owner: infra-27, contract: trace-backup-v1, state: IN_PROGRESS}
-  - {id: T6, owner: aprender-cb, contract: trace-admission-secret-v1, state: IN_PROGRESS}
-  - {id: T7, owner: aprender-cb, contract: review-corpus-contamination-v1, state: BLOCKED_ON, on: T6}
-  - {id: T8, owner: aprender-a2, contract: trace-dedup-v1, state: BLOCKED_ON, on: T2, khat_min: 150}
-  - {id: T9, owner: aprender-a2, contract: trace-split-guard-v1, state: BLOCKED_ON, on: T8, khat_min: 120}
-  - {id: T10, owner: aprender-a2, contract: trace-outcome-join-v1, state: BLOCKED_ON, on: T9, khat_min: 150}
-  - {id: T11, owner: aprender-84, contract: sparse-logits-v1, state: OPEN}
-  - {id: T12, owner: aprender-fb, contract: agent-trace-v1 (terms fields), state: OPEN}
-  - {id: T13, owner: aprender-36, contract: lane-independence-v1, state: OPEN, note: "idle until rc.2"}
-  - {id: T14, owner: aprender-88, contract: trace-datacard-v1, state: IN_PROGRESS}
+  - {id: T2, owner: "worker + worker", contract: review-ledger-v2, state: IN_PROGRESS, khat_min: 120}
+  - {id: T3, owner: worker, contract: trace-blob-store-v1, state: IN_PROGRESS}
+  - {id: T4, owner: worker, contract: transcript-retention-v1, state: IN_PROGRESS, note: "retention done 5/5 hosts, infra#1135"}
+  - {id: T5, owner: worker, contract: trace-backup-v1, state: IN_PROGRESS}
+  - {id: T6, owner: worker, contract: trace-admission-secret-v1, state: IN_PROGRESS}
+  - {id: T7, owner: worker, contract: review-corpus-contamination-v1, state: BLOCKED_ON, on: T6}
+  - {id: T8, owner: worker, contract: trace-dedup-v1, state: BLOCKED_ON, on: T2, khat_min: 150}
+  - {id: T9, owner: worker, contract: trace-split-guard-v1, state: BLOCKED_ON, on: T8, khat_min: 120}
+  - {id: T10, owner: worker, contract: trace-outcome-join-v1, state: BLOCKED_ON, on: T9, khat_min: 150}
+  - {id: T11, owner: worker, contract: sparse-logits-v1, state: OPEN}
+  - {id: T12, owner: worker, contract: agent-trace-v1 (terms fields), state: OPEN}
+  - {id: T13, owner: worker, contract: lane-independence-v1, state: OPEN, note: "idle until rc.2"}
+  - {id: T14, owner: worker, contract: trace-datacard-v1, state: IN_PROGRESS}
   - {id: T15, owner: null, state: NOT_STARTED, note: "not before T1-T10 GREEN"}
-  - {id: T16, owner: null, state: NOT_STARTED, note: "needs gx10 (infra#1132)"}
+  - {id: T16, owner: null, state: NOT_STARTED, note: "needs arm64 (infra#1132)"}
 measurements: []
 gates: []
 falsifiers: []

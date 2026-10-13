@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # PRA-001 §1 G14 / T0: read-only transcript-retention audit, one row per fleet host.
 #
-#   make transcript-retention-audit                 # the five fleet hosts
-#   HOSTS="gx10 mini" make transcript-retention-audit
+#   HOSTS="host-a host-b" make transcript-retention-audit   # HOSTS is required
+#   HOSTS="$(uname -n)" make transcript-retention-audit     # this host only
 #
 # Row: host  cleanupPeriodDays  files_older_30d  files_total  oldest_mtime_utc
-#   cleanupPeriodDays: the value in ~/.claude/settings.json, `unset` (Claude Code's default of 30 applies) or
-#   `no-settings`. Files are regular files under ~/.claude/projects. A host with no ~/.claude/projects reports 0 0 -.
+#   cleanupPeriodDays: the value in $HOME/.claude/settings.json, `unset` (Claude Code's default of 30 applies) or
+#   `no-settings`. Files are regular files under $HOME/.claude/projects. A host with no such dir reports 0 0 -.
 #
 # Nothing is written on any host. Fails closed: a host that cannot be reached, or whose row does not parse,
 # prints `UNREACHABLE` and makes the exit status 1, so a missing row can never read as a compliant one.
-# Portable to macOS (mini): no `find -printf`, no jq, `stat` probed for GNU or BSD form.
+# Portable to macOS: no `find -printf`, no jq, `stat` probed for GNU or BSD form.
 set -euo pipefail
 
-HOSTS="${HOSTS:-lambda-labs intel gx10 mini yoga}"
+HOSTS="${HOSTS:?set HOSTS to the space-separated hosts to audit}"
 SELF="$(uname -n)"
 
 # Runs on the audited host under sh. Prints exactly one line: cpd older total oldest_epoch

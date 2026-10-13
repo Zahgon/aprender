@@ -15,7 +15,7 @@
 //!   paiml-implement#436 wire form, one spelling with receipt-lint); an
 //!   unknown key or value fails to parse, so free text is never a reason;
 //! - the shadow is never counted, and the quorum width is the counted lanes
-//!   alone, so a gx10-down round keeps its width.
+//!   alone, so an arm64-down round keeps its width.
 
 use serde::{Deserialize, Serialize};
 
@@ -125,8 +125,8 @@ pub enum RemovedBy {
 }
 
 /// The apr lane's result on one quorum — the paiml-implement#436 wire form:
-/// `{"Verdict":{"verdict":"PASS","cell":"gx10-cuda","backend":"cuda"}}`,
-/// `{"NotRun":"Busy"}`, `{"Refused":{"cell":"gx10-cuda","removed_by":"gpu-proof"}}`.
+/// `{"Verdict":{"verdict":"PASS","cell":"arm64-cuda","backend":"cuda"}}`,
+/// `{"NotRun":"Busy"}`, `{"Refused":{"cell":"arm64-cuda","removed_by":"gpu-proof"}}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum Shadow {

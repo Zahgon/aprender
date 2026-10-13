@@ -44,7 +44,7 @@
     ]
   },
   "hardware_ruling": {
-    "primary": "lambda-cuda",
+    "primary": "devbox-cuda",
     "rung_eligible": "vote"
   }
 }

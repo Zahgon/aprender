@@ -2452,7 +2452,7 @@ mod tests_4026_refuse_off_engine {
         }
     }
 
-    /// la-0.72 C: the format is refused before the load, not after a full run.
+    /// The format is refused before the load, not after a full run.
     #[test]
     fn logprobs_off_gguf_case_table() {
         use super::{refuse_logprobs_off_gguf, ModelFormat};

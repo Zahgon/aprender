@@ -12,8 +12,8 @@
 //!
 //! H4/H5 are decided by the Holm-adjusted p; the CI is report-only. H1/H2 (count
 //! tests) and H7 (δ-free, outside the Holm family) are decided by their verdict.
-//! `hardware_ruling.rung_eligible` caps the rung. Lambda is rung-2 shadow only
-//! (R-9): a lambda or unnamed primary cell caps the lane at tripwire (S-4).
+//! `hardware_ruling.rung_eligible` caps the rung. Devbox is rung-2 shadow only
+//! (R-9): a devbox or unnamed primary cell caps the lane at tripwire (S-4).
 //!
 //! [`evidence`] is the rung one report grants; [`decide`] steps the lane from
 //! its current rung by at most one rung either way, except that S-4 caps at once.
@@ -205,13 +205,13 @@ fn gates(r: &Report, reasons: &mut Vec<String>) -> Mode {
     }
 }
 
-/// `true` when the primary cell is lambda or unnamed (R-9: lambda may not sit
+/// `true` when the primary cell is devbox or unnamed (R-9: devbox may not sit
 /// at tie-breaker or above).
 fn s4(r: &Report) -> bool {
     r.hardware_ruling
         .as_ref()
         .and_then(|h| h.primary.as_deref())
-        .is_none_or(|p| p.starts_with("lambda"))
+        .is_none_or(|p| p.starts_with("devbox"))
 }
 
 fn read(report_json: &str, prereg_sha: &str) -> Result<Report, Decision> {
@@ -259,7 +259,7 @@ fn capped(r: &Report) -> Decision {
     }
     if s4(r) && mode > Mode::Tripwire {
         reasons.push(format!(
-            "S-4: primary cell {} is lambda or unnamed; lambda is shadow-only (R-9)",
+            "S-4: primary cell {} is devbox or unnamed; devbox is shadow-only (R-9)",
             h.primary.as_deref().unwrap_or("(unnamed)")
         ));
         mode = Mode::Tripwire;
@@ -268,15 +268,15 @@ fn capped(r: &Report) -> Decision {
 }
 
 /// Step the lane from `current` on one report: at most one rung up, and a
-/// demotion drops exactly one rung. A lambda or unnamed primary cell above
+/// demotion drops exactly one rung. A devbox or unnamed primary cell above
 /// tripwire is capped at once (S-4), the one exception to the one-rung rule.
 #[must_use]
 pub fn decide(report_json: &str, prereg_sha: &str, current: Mode) -> Decision {
-    let (mut d, lambda) = match read(report_json, prereg_sha) {
+    let (mut d, devbox) = match read(report_json, prereg_sha) {
         Ok(r) => (capped(&r), s4(&r)),
         Err(d) => (d, false),
     };
-    if lambda && current > Mode::Tripwire {
+    if devbox && current > Mode::Tripwire {
         d.mode = Mode::Tripwire;
         return d;
     }

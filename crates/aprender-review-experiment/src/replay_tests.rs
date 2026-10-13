@@ -163,7 +163,7 @@ fn row(engine: Engine, i: usize, wall_ms: f64) -> Row {
         engine,
         engine_version: "x".into(),
         apr_tag: "v0.70.1".into(),
-        cell: "lambda-4090".into(),
+        cell: "devbox-4090".into(),
         gguf_sha256: "g".repeat(64),
         wall_ms,
         prompt_ms: Some(if engine == Engine::Apr { 300.0 } else { 100.0 }),
@@ -266,7 +266,7 @@ fn falsify_replay_005_inconsistent_runs_are_refused() {
         Err(SummaryError::Mismatch("gguf_sha256"))
     );
     let mut r = base.clone();
-    r[9].cell = "gx10".into();
+    r[9].cell = "arm64".into();
     assert_eq!(
         summarize(&r, &v, None, 1),
         Err(SummaryError::Mismatch("cell"))

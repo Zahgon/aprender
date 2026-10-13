@@ -1,5 +1,5 @@
 {
-  "host": "gx10-a5b5",
+  "host": "arm64-host",
   "at": "20260925T124817Z",
   "apr_tag": "v0.69.3",
   "apr_commit": "ad5d07a182b15e70527d3f33f18ceb1211ba4c80",

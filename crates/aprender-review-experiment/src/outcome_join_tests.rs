@@ -163,9 +163,9 @@ fn falsify_toj_004_hrq_rulings_are_gold() {
     let g = gold(
         &[],
         &[
-            ruling("abc", Verdict::Pass, "noah", "2026-09-25T10:00:00Z"),
-            ruling("abc", Verdict::Fail, "noah", "2026-09-25T11:00:00Z"),
-            ruling("def", Verdict::Pass, "noah", "2026-09-25T09:00:00Z"),
+            ruling("abc", Verdict::Pass, "operator", "2026-09-25T10:00:00Z"),
+            ruling("abc", Verdict::Fail, "operator", "2026-09-25T11:00:00Z"),
+            ruling("def", Verdict::Pass, "operator", "2026-09-25T09:00:00Z"),
         ],
     )
     .expect("gold");
@@ -176,14 +176,14 @@ fn falsify_toj_004_hrq_rulings_are_gold() {
                 group_key: "paiml/aprender#7".into(),
                 head: "abc".into(),
                 verdict: Verdict::Fail,
-                ruled_by: "noah".into(),
+                ruled_by: "operator".into(),
                 at: "2026-09-25T11:00:00Z".into(),
             },
             Label::HrqRuling {
                 group_key: "paiml/aprender#7".into(),
                 head: "def".into(),
                 verdict: Verdict::Pass,
-                ruled_by: "noah".into(),
+                ruled_by: "operator".into(),
                 at: "2026-09-25T09:00:00Z".into(),
             },
         ]
@@ -193,7 +193,7 @@ fn falsify_toj_004_hrq_rulings_are_gold() {
     assert!(crate::pool::GOLD_SOURCES.contains(&v["label_source"].as_str().expect("str")));
     for bad in [
         ruling("abc", Verdict::Pass, " ", "2026-09-25T10:00:00Z"),
-        ruling("abc", Verdict::Pass, "noah", "today"),
+        ruling("abc", Verdict::Pass, "operator", "today"),
     ] {
         assert!(gold(&[], &[bad]).is_err());
     }

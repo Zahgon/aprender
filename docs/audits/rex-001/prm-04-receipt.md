@@ -23,10 +23,10 @@ C4 has a passing declared-oneshot parity receipt, but it measured 7 positions, a
 
 | Cell | State | Why |
 |------|-------|-----|
-| C1 intel/wgpu, C2 intel/cpu, C3 lambda-labs/cpu, C5a mini/cpu, C5b mini/metal | NotRun{NoDeclaredExecutor} | unchanged since REX-04; resumes on infra#1088 |
-| C4 gx10/cuda | NotRun{Inadmissible} | `rex admit` refused: `7 positions < min_positions 64` |
+| C1 cleanroom/wgpu, C2 cleanroom/cpu, C3 devbox/cpu, C5a mac/cpu, C5b mac/metal | NotRun{NoDeclaredExecutor} | unchanged since REX-04; resumes on infra#1088 |
+| C4 arm64/cuda | NotRun{Inadmissible} | `rex admit` refused: `7 positions < min_positions 64` |
 
-The C4 evidence is `prm-04/gx10-parity-20260925T124817Z.json`, sha256 `1f7102e52f974106ebbe9e6c3de49a0d16332ae0faf05d1f7e233034dc88b339`. It was read from gx10's declared state dir `~/.local/state/apr-review-serve/parity/`.
+The C4 evidence is `prm-04/arm64-parity-20260925T124817Z.json`, sha256 `ed189a3fbc83298292f8d2d91612ebce777ea704b5f52c61545730e8672304f7`. It was read from arm64's declared state dir `$XDG_STATE_HOME/apr-review-serve/parity/`.
 - It is the output of the declared oneshot `apr-review-serve parity`.
 - Its two absolute weight paths were redacted to `<models>/Qwen3.5-4B-Q4_K_M.gguf` on 2026-10-10, before it reached main. Nothing else changed. The capture as read hashed to `54e2b72a12f2413e8b82ecb1a93b38a7b01a3ea671c5d4702365328b60844b67`.
 - Binary: apr v0.69.3 `ad5d07a1`, binary sha `2f274f47…`.
@@ -49,7 +49,7 @@ Positive control: the same receipt with `--min-positions 7` does admit (cosine 0
    ```
    rex admit --cell C4 --parity-receipt <new receipt> --threshold 0.98 --threshold-basis "evidence/parity/thresholds.yaml default.min_cosine" --min-positions 64 --apr-sha <binary_sha256> --weights-sha 00fe7986…
    ```
-2. The serve declaration (infra e872544c) and the parity oneshot (infra 3f66d253/3d59dd3e) are live on gx10, but only through the open infra PRs #1142, #1154 and fold #1054. **They are not on infra main**, and infra#1088 is open. An Admitted C4 still rests on a declaration that has not landed.
+2. The serve declaration (infra e872544c) and the parity oneshot (infra 3f66d253/3d59dd3e) are live on arm64, but only through the open infra PRs #1142, #1154 and fold #1054. **They are not on infra main**, and infra#1088 is open. An Admitted C4 still rests on a declaration that has not landed.
 3. H1 (verdict invariance) is evaluated in the analysis (PRM-08), not at admission.
 
 ## Note

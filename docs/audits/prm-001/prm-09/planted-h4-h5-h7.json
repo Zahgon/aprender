@@ -44,7 +44,7 @@
     ]
   },
   "hardware_ruling": {
-    "primary": "gx10-cpu",
+    "primary": "arm64-cpu",
     "rung_eligible": "vote"
   }
 }

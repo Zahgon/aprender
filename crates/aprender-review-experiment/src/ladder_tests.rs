@@ -25,7 +25,7 @@ fn full() -> Value {
             h("H5", 0.04),
             {"id": "H7", "verdict": "holds"},
         ]},
-        "hardware_ruling": {"primary": "gx10-cpu", "rung_eligible": "vote"},
+        "hardware_ruling": {"primary": "arm64-cpu", "rung_eligible": "vote"},
         "promotion": {
             "tie_breaks_decided": 20,
             "tie_break_outcome_agreement": 0.9,
@@ -216,11 +216,11 @@ fn falsify_rxg_005_tie_breaker_needs_h4_h5_h7_h1_h2_and_availability() {
     assert_eq!(rung(&no_avail), Mode::Tripwire);
 }
 
-/// FALSIFY-RXG-006: a lambda primary cell is refused at tie-breaker and above
+/// FALSIFY-RXG-006: a devbox primary cell is refused at tie-breaker and above
 /// (R-9, S-4), whatever the evidence.
 #[test]
-fn falsify_rxg_006_lambda_primary_is_refused_above_tripwire() {
-    let v = set(full(), "/hardware_ruling/primary", json!("lambda-cuda"));
+fn falsify_rxg_006_devbox_primary_is_refused_above_tripwire() {
+    let v = set(full(), "/hardware_ruling/primary", json!("devbox-cuda"));
     let d = evidence(&v.to_string(), PREREG);
     assert_eq!(d.mode, Mode::Tripwire, "{:?}", d.reasons);
     assert!(
@@ -232,11 +232,11 @@ fn falsify_rxg_006_lambda_primary_is_refused_above_tripwire() {
     assert!(
         d.reasons
             .iter()
-            .any(|r| r.contains("primary cell lambda-cuda is") && !r.contains("Some(")),
+            .any(|r| r.contains("primary cell devbox-cuda is") && !r.contains("Some(")),
         "{:?}",
         d.reasons
     );
-    // a missing primary is not a non-lambda cell
+    // a missing primary is not a non-devbox cell
     let mut none = full();
     none["hardware_ruling"]
         .as_object_mut()
@@ -293,21 +293,21 @@ fn falsify_rxg_008_never_skips_a_rung_and_demotes_one() {
     assert_eq!(d.mode, Mode::TieBreaker, "{:?}", d.reasons);
     assert_eq!(decide("{", PREREG, Mode::Tripwire).mode, Mode::Shadow);
     assert_eq!(decide("{", PREREG, Mode::Shadow).mode, Mode::Shadow);
-    let lambda = set(full(), "/hardware_ruling/primary", json!("lambda-cuda")).to_string();
+    let devbox = set(full(), "/hardware_ruling/primary", json!("devbox-cuda")).to_string();
     // S-4 caps a vote lane at tripwire at once, but never promotes past one rung
-    assert_eq!(decide(&lambda, PREREG, Mode::Vote).mode, Mode::Tripwire);
-    assert_eq!(decide(&lambda, PREREG, Mode::Shadow).mode, Mode::Tripwire);
+    assert_eq!(decide(&devbox, PREREG, Mode::Vote).mode, Mode::Tripwire);
+    assert_eq!(decide(&devbox, PREREG, Mode::Shadow).mode, Mode::Tripwire);
     assert_eq!(
-        decide(&lambda, PREREG, Mode::TieBreaker).mode,
+        decide(&devbox, PREREG, Mode::TieBreaker).mode,
         Mode::Tripwire
     );
-    // S-4 never promotes: a lambda lane with no evidence stays in shadow
-    let lambda_h4_fail = drop_h(
-        set(full(), "/hardware_ruling/primary", json!("lambda-cuda")),
+    // S-4 never promotes: a devbox lane with no evidence stays in shadow
+    let devbox_h4_fail = drop_h(
+        set(full(), "/hardware_ruling/primary", json!("devbox-cuda")),
         "H4",
     );
     assert_eq!(
-        decide(&lambda_h4_fail.to_string(), PREREG, Mode::Shadow).mode,
+        decide(&devbox_h4_fail.to_string(), PREREG, Mode::Shadow).mode,
         Mode::Shadow
     );
     // a tripwire-only report demotes a vote lane one rung, not two

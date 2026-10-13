@@ -10,7 +10,7 @@ fn receipt(advisory: Option<&str>, width: u64) -> String {
     )
 }
 
-const ANSWERED: &str = r#"{"state":"answered","row":{"Verdict":{"verdict":"PASS","cell":"gx10-cuda","backend":"cuda"}},"apr":"0.69.3","weights_sha256":"w4b","counted":"PASS","counts":false}"#;
+const ANSWERED: &str = r#"{"state":"answered","row":{"Verdict":{"verdict":"PASS","cell":"arm64-cuda","backend":"cuda"}},"apr":"0.69.3","weights_sha256":"w4b","counted":"PASS","counts":false}"#;
 const DOWN: &str = r#"{"state":"unavailable","row":{"NotRun":"NoExecutor"},"apr":"0.69.3","weights_sha256":"w4b","counted":"PASS","counts":false}"#;
 
 fn one(text: String) -> (Vec<Row>, Coverage) {
@@ -38,7 +38,7 @@ fn an_answered_shadow_becomes_a_ledger_row() {
         r.shadow,
         Shadow::Verdict {
             verdict: Verdict::Pass,
-            cell: "gx10-cuda".into(),
+            cell: "arm64-cuda".into(),
             backend: "cuda".into()
         }
     );
@@ -69,13 +69,13 @@ fn falsify_rxl_001_a_quorum_without_a_shadow_row_is_missing() {
 }
 
 #[test]
-fn falsify_rxl_002_gx10_down_is_unknown_and_keeps_the_width() {
+fn falsify_rxl_002_arm64_down_is_unknown_and_keeps_the_width() {
     let (rows, c) = one(receipt(Some(DOWN), 3));
     assert!(c.holds(), "{c:?}");
     assert_eq!(rows[0].width, 3);
     assert_eq!(rows[0].shadow, Shadow::NotRun(NotRun::NoExecutor));
     // A verdict without its cell is not a verdict.
-    let half = ANSWERED.replace(r#","cell":"gx10-cuda""#, "");
+    let half = ANSWERED.replace(r#","cell":"arm64-cuda""#, "");
     assert!(!one(receipt(Some(&half), 3)).1.holds(), "no cell");
 }
 
@@ -95,15 +95,15 @@ fn falsify_rxl_003_a_counted_or_width_changing_shadow_is_a_violation() {
 #[test]
 fn every_wire_form_round_trips() {
     for row in [
-        r#"{"Verdict":{"verdict":"FAIL","cell":"intel-wgpu","backend":"wgpu"}}"#,
+        r#"{"Verdict":{"verdict":"FAIL","cell":"cleanroom-wgpu","backend":"wgpu"}}"#,
         r#"{"NotRun":"NoExecutor"}"#,
         r#"{"NotRun":"Busy"}"#,
         r#"{"NotRun":"Timeout"}"#,
         r#"{"NotRun":"ContextOverflow"}"#,
         r#"{"NotRun":"TrainActive"}"#,
-        r#"{"Refused":{"cell":"gx10-cuda","removed_by":"ladder"}}"#,
-        r#"{"Refused":{"cell":"gx10-cuda","removed_by":"gpu-proof"}}"#,
-        r#"{"Refused":{"cell":"gx10-cuda","removed_by":"parse"}}"#,
+        r#"{"Refused":{"cell":"arm64-cuda","removed_by":"ladder"}}"#,
+        r#"{"Refused":{"cell":"arm64-cuda","removed_by":"gpu-proof"}}"#,
+        r#"{"Refused":{"cell":"arm64-cuda","removed_by":"parse"}}"#,
     ] {
         let s: Shadow = serde_json::from_str(row).expect(row);
         assert_eq!(serde_json::to_string(&s).expect("ser"), row);
@@ -124,15 +124,15 @@ fn falsify_rxl_004_a_receipt_without_a_weights_sha_does_not_hold() {
 #[test]
 fn falsify_rxl_005_a_free_text_reason_fails_to_parse() {
     for row in [
-        r#"{"NotRun":"gx10 connect refused"}"#,
-        r#"{"LaneUnavailable":{"why":"gx10 connect refused"}}"#,
-        r#"{"Refused":{"cell":"gx10-cuda","removed_by":"aprender#9999: refuses qwen35"}}"#,
-        r#"{"Verdict":{"verdict":"LGTM","cell":"gx10-cuda","backend":"cuda"}}"#,
-        r#"{"Verdict":{"verdict":"PASS","cell":"gx10-cuda","backend":"cuda","why":"x"}}"#,
+        r#"{"NotRun":"arm64 connect refused"}"#,
+        r#"{"LaneUnavailable":{"why":"arm64 connect refused"}}"#,
+        r#"{"Refused":{"cell":"arm64-cuda","removed_by":"aprender#9999: refuses qwen35"}}"#,
+        r#"{"Verdict":{"verdict":"LGTM","cell":"arm64-cuda","backend":"cuda"}}"#,
+        r#"{"Verdict":{"verdict":"PASS","cell":"arm64-cuda","backend":"cuda","why":"x"}}"#,
     ] {
         assert!(serde_json::from_str::<Shadow>(row).is_err(), "{row}");
         let adv = ANSWERED.replace(
-            r#"{"Verdict":{"verdict":"PASS","cell":"gx10-cuda","backend":"cuda"}}"#,
+            r#"{"Verdict":{"verdict":"PASS","cell":"arm64-cuda","backend":"cuda"}}"#,
             row,
         );
         let (rows, c) = one(receipt(Some(&adv), 3));
@@ -177,8 +177,8 @@ fn falsify_rxl_007_an_outcome_join_appends_and_never_rewrites() {
 }
 
 // v1 rows exactly as the two v1 writers serialized them.
-const V1_LEGACY: &str = r#"{"schema":"review-ledger-v1","repo":"paiml/aprender","ticket":"PMAT-1","head":"abc","pr":null,"diff_sha256":"d","agreed":true,"width":3,"lanes":[{"family":"claude","model":"claude-sonnet-5","verdict":"PASS","findings":2}],"shadow":{"state":"Unknown","reason":{"LaneUnavailable":{"why":"gx10 down"}}},"apr_tag":null,"weights_sha256":null,"outcome":"pending"}"#;
-const V1_TYPED: &str = r#"{"schema":"review-ledger-v1","repo":"paiml/aprender","ticket":"PMAT-1","head":"abc","pr":4354,"diff_sha256":"d","agreed":true,"width":3,"lanes":[{"family":"gemini","model":"gemini-3.1-pro-high","verdict":"FAIL","findings":2}],"shadow":{"Verdict":{"verdict":"PASS","cell":"gx10-cuda","backend":"cuda"}},"apr_tag":"0.69.3","weights_sha256":"w4b","outcome":"merged"}"#;
+const V1_LEGACY: &str = r#"{"schema":"review-ledger-v1","repo":"paiml/aprender","ticket":"PMAT-1","head":"abc","pr":null,"diff_sha256":"d","agreed":true,"width":3,"lanes":[{"family":"claude","model":"claude-sonnet-5","verdict":"PASS","findings":2}],"shadow":{"state":"Unknown","reason":{"LaneUnavailable":{"why":"arm64 down"}}},"apr_tag":null,"weights_sha256":null,"outcome":"pending"}"#;
+const V1_TYPED: &str = r#"{"schema":"review-ledger-v1","repo":"paiml/aprender","ticket":"PMAT-1","head":"abc","pr":4354,"diff_sha256":"d","agreed":true,"width":3,"lanes":[{"family":"gemini","model":"gemini-3.1-pro-high","verdict":"FAIL","findings":2}],"shadow":{"Verdict":{"verdict":"PASS","cell":"arm64-cuda","backend":"cuda"}},"apr_tag":"0.69.3","weights_sha256":"w4b","outcome":"merged"}"#;
 
 #[test]
 fn falsify_rxl_008_v1_rows_parse_and_migrate_without_invented_text() {

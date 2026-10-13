@@ -5,7 +5,7 @@ Set: `set-a4910a65.jsonl` (review-replay-v2, seed 4354, 50 items per stratum × 
 Every row below carries that `set_sha`. The diffs themselves are not here: they are the corpus
 items, addressed by `diff_sha256`.
 
-Cell `gx10-cuda` (GB10), GGUF sha256 `00fe7986…ef11a4`. Competitor: llama.cpp `d1d3c3396`, run in
+Cell `arm64-cuda` (GB10), GGUF sha256 `00fe7986…ef11a4`. Competitor: llama.cpp `d1d3c3396`, run in
 the same session on the same GGUF with identical prompt ids (`prompt_ids_sha` `f3c20136…`).
 The rows hold timings, token counts, peak RSS and the parsed verdict state only. There are no
 prompts or completions; transcripts stay private.

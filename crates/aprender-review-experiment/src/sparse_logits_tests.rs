@@ -12,7 +12,7 @@ fn header(k: u8, n: u32) -> Header {
         model_sha256: SHA.into(),
         tokenizer_sha256: SHA.into(),
         apr_tag: "v0.70.0-rc.1".into(),
-        backend: "gx10-cuda".into(),
+        backend: "arm64-cuda".into(),
         temperature_of_record: 0.7,
         k,
         n_tokens: n,

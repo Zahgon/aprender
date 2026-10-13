@@ -2,7 +2,7 @@
   "replay_version": "review-replay-v2",
   "set_sha": "a4910a65ea53e520841b164876d34dead653771226f8a740e6d3408b08b30632",
   "apr_tag": "untagged-96eb79f51",
-  "cell": "gx10-cuda",
+  "cell": "arm64-cuda",
   "gguf_sha256": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
   "n_items": 200,
   "p50_s": 26.607406881,

@@ -50,16 +50,16 @@
 
 | # | Fact | Value | Mark | Source |
 |---|---|---|---|---|
-| G1 | n=1 pilot | 4B Q4_K_M, apr v0.69.3, lambda CPU at load 33–40: **175.8 s**; Haiku 4.5: **17.8 s** (≈ 10×) | [V] | diff `0c6932fd5` |
+| G1 | n=1 pilot | 4B Q4_K_M, apr v0.69.3, devbox CPU at load 33–40: **175.8 s**; Haiku 4.5: **17.8 s** (≈ 10×) | [V] | diff `0c6932fd5` |
 | G2 | Recall and precision of every lane, the voters included | unknown | [C] | — |
 | G3 | apr v0.69.3 sha256 | `8a67a0103cbb036332908cc184d5a8a8ae422fb9025bd5c78e42d65df86cfbd7` | [V] | REX-04 receipt |
 | G4 | Weights sha256 | 4B `00fe7986…69ef11a4` · 9B `03b74727…2b7e8` · 27B `84b5f7f1…d2a806` | [V] | REX-01 receipt |
 | G5 | Train themes | 0.70 fast (`--json-schema`, resident serve) · 0.71 wider + training (qwen35 finetune/distill; WGPU/Metal) | [O 2026-09-20] | `06x-release-schedule.md` |
 | G6 | `apr parity` v0.69.3 | GPU-vs-CPU only; no released llama.cpp comparison | [V] | REX-04 premise check |
-| G7 | rc.1 lane on gx10 | F2 guard (cos 0.8425) → CPU fallback (#4313); `--context-length` ignored, 262144 used (#4443); decode and **32k prefill** both slower than ollama (figures in #4313, #4443); temperature-0 divergence at ≈ 55 tokens | [V] cop report | #4313, #4443, `evidence/4252-promotion.md` |
+| G7 | rc.1 lane on arm64 | F2 guard (cos 0.8425) → CPU fallback (#4313); `--context-length` ignored, 262144 used (#4443); decode and **32k prefill** both slower than ollama (figures in #4313, #4443); temperature-0 divergence at ≈ 55 tokens | [V] cop report | #4313, #4443, `evidence/4252-promotion.md` |
 | G8 | TTFT at 0.68.2 on a 4090 | slower than llama.cpp, TTFT and end-to-end (figures in #3596) | [V] | #3596 |
 | G9 | Epic speed targets | E2 TTFT target ≤ 2× llama.cpp · E6 target ≥ 1.0× llama.cpp for decode, prefill and TTFT across the certified matrix | [O] | APR-EPIC-001 §2 |
-| G10 | Executors | apr pin on gx10, lambda-labs, yoga; no `apr serve` unit, weights or review label anywhere | [V] | infra#1088 |
+| G10 | Executors | apr pin on arm64, devbox, laptop; no `apr serve` unit, weights or review label anywhere | [V] | infra#1088 |
 | G11 | paiml-implement | v1.8.1 has no advisory lane; #420 unreleased | [V] | PRM report |
 | G12 | Ledger | findings stored as a count; `weights_sha256: None` hardcoded; free-text `LaneUnavailable` | [V] | `crates/aprender-review-experiment/src/ledger.rs` |
 | G13 | Sealed corpus | `review-corpus-v1@787d2026256cc08b`: test = 35 P (size S, mutants) + 35 R + 35 G | [V] | REX-02 receipt |
@@ -76,14 +76,14 @@
 
 ### §2.1 Lane dispatch and states
 
-Order `[O 2026-09-25, R-9 option b]`: `gx10-cuda → lambda-cuda → intel-wgpu → mini-metal → intel-cpu → NotRun{NoExecutor}`.
+Order `[O 2026-09-25, R-9 option b]`: `arm64-cuda → devbox-cuda → cleanroom-wgpu → mac-metal → cleanroom-cpu → NotRun{NoExecutor}`.
 
-- **lambda-cuda is rung 2 and shadow only.**
+- **devbox-cuda is rung 2 and shadow only.**
   - Dispatch time only, and only when rung 1 returned NotRun **and** `/tmp/apr-gpu.lock` is free.
   - Never a resident serve, VRAM preload, experiment cell, teacher or finetune.
   - If the lock is taken mid-round, the row is `NotRun{Busy}` and the ladder continues.
-  - **Once the lane holds tie-breaker or vote, lambda-cuda leaves the ladder.** A deciding lane runs only on declared, non-contended cells (§4.1).
-- **Rows record the backend that actually ran** (`gx10-cpu` on the F2 fallback).
+  - **Once the lane holds tie-breaker or vote, devbox-cuda leaves the ladder.** A deciding lane runs only on declared, non-contended cells (§4.1).
+- **Rows record the backend that actually ran** (`arm64-cpu` on the F2 fallback).
 - **train-active falls through; it never blocks.**
 - **One typed state enum**, shared by receipt-lint (#436) and the ledger: `Verdict{PASS|FAIL}` · `Refused{removed_by}` · `NotRun{NoExecutor|Busy|Timeout|ContextOverflow|TrainActive}`.
 - **Timeout per rung** = 2 × that cell's p95 once it has ≥ 10 rows; until then 300 s `[U]`.
@@ -143,11 +143,11 @@ almacen:/rex-corpus/v1/items-v1.tar                 the sealed corpus leaves the
 
 | Cell | Host | Backend | Notes |
 |---|---|---|---|
-| C1 `intel-wgpu` | intel | wgpu | `Refused` expected before 0.71; must be observed |
-| C2 `intel-cpu` | intel | cpu | **reference cell** |
-| C3 `lambda-cpu` | lambda-labs | cpu | the GPU is never an experiment cell |
-| C4 `gx10-cuda` | gx10 | cuda sm_121 | primary candidate; `gx10-cpu` on F2 fallback |
-| C5a/C5b | mini | cpu / metal | C5b `Refused` expected before 0.71 |
+| C1 `cleanroom-wgpu` | cleanroom | wgpu | `Refused` expected before 0.71; must be observed |
+| C2 `cleanroom-cpu` | cleanroom | cpu | **reference cell** |
+| C3 `devbox-cpu` | devbox | cpu | the GPU is never an experiment cell |
+| C4 `arm64-cuda` | arm64 | cuda sm_121 | primary candidate; `arm64-cpu` on F2 fallback |
+| C5a/C5b | mac | cpu / metal | C5b `Refused` expected before 0.71 |
 
 - **Arms:** 4B primary; 9B control (test split, reference cell plus top cell).
 - **Evaluation comparators on the reference cell:** Haiku 4.5 and agy, exact ids. Evaluation only; no training.
@@ -192,7 +192,7 @@ almacen:/rex-corpus/v1/items-v1.tar                 the sealed corpus leaves the
 
 ### §4.1 Hardware (lexicographic)
 
-1. **Admissible:** a parity receipt passes against its declared `parity.oracle` (`llama.cpp@d1d3c3396` once it is a declared input; until then `apr-parity-gpu-cpu` plus H1; `ds.yaml` min_cosine 0.98); H1 and H2 hold; the parse rate equals the reference cell's; the executor is forjar-declared; for tie-breaker or vote, the cell is **not** lambda-cuda.
+1. **Admissible:** a parity receipt passes against its declared `parity.oracle` (`llama.cpp@d1d3c3396` once it is a declared input; until then `apr-parity-gpu-cpu` plus H1; `ds.yaml` min_cosine 0.98); H1 and H2 hold; the parse rate equals the reference cell's; the executor is forjar-declared; for tie-breaker or vote, the cell is **not** devbox-cuda.
 2. Rank by replay p95 under natural load.
 3. H6-rejected cells rank last.
 4. Ties go to the larger 7-day idle fraction, then to a host outside the clean-room pool.
@@ -223,7 +223,7 @@ almacen:/rex-corpus/v1/items-v1.tar                 the sealed corpus leaves the
 
 | Lever | Owner | Expected effect |
 |---|---|---|
-| Keep the GPU path on gx10 (F2 guard) | #4313 | CPU → GPU; the largest single step |
+| Keep the GPU path on arm64 (F2 guard) | #4313 | CPU → GPU; the largest single step |
 | Honour `--context-length` | #4443 | right-sized KV |
 | Prefill kernels and batched prefill | E2 → E6 | the dominant term (§0.2) |
 | Resident `apr serve` plus a prefix cache for the fixed system prompt | E2 | TTFT |
@@ -240,7 +240,7 @@ almacen:/rex-corpus/v1/items-v1.tar                 the sealed corpus leaves the
 | Q1 | prompt versions | now |
 | Q2 | retrieval few-shot from **gold** train-pool specimens (never the test split) | now |
 | Q3 | constrained decoding (`--json-schema`) | 0.70 |
-| Q4 | **local logit distillation:** Qwen3.5-27B on gx10 writes `sparse-logits-v1` over G-PROV-eligible inputs; the 4B student trains with forward-KL plus tail-mass correction; reverse-KL/GKD as challengers, using Qwen's own shadow outputs as on-policy samples | qwen35 `apr distill`, per D-7 |
+| Q4 | **local logit distillation:** Qwen3.5-27B on arm64 writes `sparse-logits-v1` over G-PROV-eligible inputs; the 4B student trains with forward-KL plus tail-mass correction; reverse-KL/GKD as challengers, using Qwen's own shadow outputs as on-policy samples | qwen35 `apr distill`, per D-7 |
 | Q5 | QLoRA on gold labels only (`apr finetune`); merge (`apr merge`); re-quantize (`apr quantize`, now) | per D-7 / now |
 
 - Q4/Q5 are aprender acceptance tests: a qwen35 distill/finetune ticket is done only when its challenger passes §5.4.
@@ -265,7 +265,7 @@ A challenger replaces the champion only if all of these hold on the current seal
 |---|---|---|---|
 | **shadow** (default; anything unreadable) | none | — | — |
 | **tripwire** | a dissent against a 3–0 opens an HRQ, capped at D-8/day | replay p95 ≤ queue budget | H4 |
-| **tie-breaker** | decides only a **1–1** split (a counted lane NotRun, or a 2-counted quorum) | queue budget **and** availability ≥ 95% over 7 d `[O cop crit. 4]`, on a non-lambda cell | H4 **and** H5 **and** H7, with H1/H2 on the primary cell |
+| **tie-breaker** | decides only a **1–1** split (a counted lane NotRun, or a 2-counted quorum) | queue budget **and** availability ≥ 95% over 7 d `[O cop crit. 4]`, on a non-devbox cell | H4 **and** H5 **and** H7, with H1/H2 on the primary cell |
 | **vote** | counted voter | same | same, plus ≥ 20 decided tie-breaks `[A]` whose 14 d outcome agreement ≥ the voters' agreement on the same rounds |
 
 - The ladder reads only `prm-001-report-v1` and §5.3 reports carrying the `rex-prereg-v2` sha.
@@ -284,7 +284,7 @@ A challenger replaces the champion only if all of these hold on the current seal
 - **R-6 NotRun is never a pass,** and never in an accuracy numerator.
 - **R-7 No invented thresholds.** `[A]` values are recalibrated after the first test version.
 - **R-8 No Python.**
-- **R-9 Lambda GPU.**
+- **R-9 Devbox GPU.**
   - 0 minutes for experiment cells, teacher, finetune and resident serve.
   - Rung-2 shadow dispatch only (§2.1), with its minutes measured.
   - 0 minutes once the lane holds tie-breaker or above.
@@ -319,11 +319,11 @@ A challenger replaces the champion only if all of these hold on the current seal
 | 0 | PRM-00 | REX-00 | — | v1 prereg | `rex-prereg-v1` | — | — | **DONE** `5f0ae10ac` |
 | 0 | **PRM-00b** | new | P0 | lock v3: §2–§5, `stats.rs` (min inside resample, R-class H5, H7 max-pair rule), analysis plan v2 | `rex-prereg-v2` | sha recorded; a planted §3 edit fails; 0 rows exist under v1 | 60 | todo, before any measurement |
 | 0 | **PRM-L** | new | P0 | land `rex/001` plus this spec on `main` (own PR); banner on v1 file | — | merged; `rex prereg-check` green on `main` | 45 | todo |
-| 0 | PRM-01 | REX-01 | P0 | split infra#1088: **gx10 slice** (4B weights by sha, `apr-review-serve` unit, cgroup, health, `exec_sha256`, train-active yield) as P0; corpus tar and replay sets to almacen | — | slice issue filed with checkable criteria | 20 | DONE → split todo |
+| 0 | PRM-01 | REX-01 | P0 | split infra#1088: **arm64 slice** (4B weights by sha, `apr-review-serve` unit, cgroup, health, `exec_sha256`, train-active yield) as P0; corpus tar and replay sets to almacen | — | slice issue filed with checkable criteria | 20 | DONE → split todo |
 | 0 | PRM-C1 | PRA T1 | P0 | capture at dispatch, incl. `latency_ms{queue,ttft,prefill,decode,total}` | `agent-trace-v1` | **transferred → pi#436**; F-R13 green there | — | foreign |
 | 0 | **PRM-C2** | PRA T2 | P0 | `review-ledger-v2`: findings text, trace shas, weights sha, typed states | `review-ledger-v2` | FALSIFY: no weights sha → `holds()=false`; free-text reason → parse error; v1 fixtures parse | 120 | todo |
 | 0 | PRM-C3–C5 | PRA T3–T5 | P0 | almacen store, second copy, transcript retention | `trace-blob-store-v1`, `trace-backup-v1`, `transcript-retention-v1` | **transferred → infra**; drill 0 mismatches; 31-day canary survives | — | foreign |
-| 0 | **PRM-07** | REX-07 | P0 | shadow activation | `review-ledger-v2` | on gx10 slice + pi release: 100% of receipts carry an apr row; planted gx10-down → width 3, `NotRun{NoExecutor}` | 90 | active on its 2 deps |
+| 0 | **PRM-07** | REX-07 | P0 | shadow activation | `review-ledger-v2` | on arm64 slice + pi release: 100% of receipts carry an apr row; planted arm64-down → width 3, `NotRun{NoExecutor}` | 90 | active on its 2 deps |
 | 1 | **PRM-S1** | new | P1 | replay benchmark `review-replay-v1` + runner (apr vs llama.cpp, same cell and GGUF) | `review-replay-v1` | 200 items, 4 strata, 0 sealed overlap; receipt per tag; queue budget derived from captured voter p95 | 150 | todo |
 | 1 | **PRM-S2** | new | P1 | workload profile: input/output token distribution per lane | extends `agent-trace-v1` | §0.2 confirmed or falsified with receipt; strata weights set | 60 | todo |
 | 1 | PRM-10 | REX-10 | P1 | perf ratchet wired to replay; per-tag issue per worsened stratum; knob sweep per train | `review-lane-perf-ratchet-v1` | 3 real tags recorded; planted +10% RED | 60 | gate landed `634916cbd` |
@@ -337,10 +337,10 @@ A challenger replaces the champion only if all of these hold on the current seal
 | 3 | PRM-05 | REX-05 | P2 | pilot | extends receipt | sample-size rule on R-recall applied | 90 | parked (prep `469bf0c98`) |
 | 3 | PRM-06 | REX-06 | P2 | full run plus comparators | extends receipt | 100% receipts or explicit NotRun; 0 unknown identity | 240 | parked |
 | 4 | PRM-08 | REX-08 | P2 | analysis plus hardware ruling | `prm-001-report-v1` | H1–H7 verdicts; primary/failover or shadow-only with reason | 150 | parked |
-| 5 | **PRM-09** | REX-09 | P3/P4 | ladder: add the **tie-breaker** rung; wire pi (#428) and arbiter (infra#1095) | `rex-promotion-ladder-v2` | planted reports: H4 only → tripwire; H4+H5+H7 → tie-breaker; lambda primary → refused | 60 | gate landed `4a4318f1c` → extend |
+| 5 | **PRM-09** | REX-09 | P3/P4 | ladder: add the **tie-breaker** rung; wire pi (#428) and arbiter (infra#1095) | `rex-promotion-ladder-v2` | planted reports: H4 only → tripwire; H4+H5+H7 → tie-breaker; devbox primary → refused | 60 | gate landed `4a4318f1c` → extend |
 | 6 | PRM-11 | REX-11 | P3 | Q1–Q3 loop (prompt, gold few-shot, json-schema) | `review-champion-challenger-v1` | ≥ 1 challenger end-to-end; counter increments | 120 | gate landed `d8696650e` |
 | 7 | PRM-C11 | PRA T11 | P5 | `sparse-logits-v1` in `apr serve` rows (local only) | `sparse-logits-v1` | header + residual mass round-trip | 180 | `capture` + `rex sparse-logits` on rex/001 (FALSIFY-SPL-005); the rail call in apr-advisory-ask.sh is outside aprender |
-| 7 | PRM-12 | REX-12 | P5 | Q4/Q5: 27B teacher on gx10 → 4B student; gold QLoRA | `review-b2-loop-v1` | teacher dataset receipted (0 test hashes, 0 hosted rows); `NotRun{VerbRefused}` until D-7's train | 180 | gate landed `da7b6386f` |
+| 7 | PRM-12 | REX-12 | P5 | Q4/Q5: 27B teacher on arm64 → 4B student; gold QLoRA | `review-b2-loop-v1` | teacher dataset receipted (0 test hashes, 0 hosted rows); `NotRun{VerbRefused}` until D-7's train | 180 | gate landed `da7b6386f` |
 
 **Budget:** remaining aprender K̂ = **2,585 min `[A]`** `[C: sum of the rows above]` · **K = 2,840** (1.1 × K̂) · **andon at 2,275** (0.88 × K̂). Foreign rows are outside K.
 
@@ -351,7 +351,7 @@ A challenger replaces the champion only if all of these hold on the current seal
 - **S-1** A measurement before the `rex-prereg-v2` lock.
 - **S-2** An undeclared `apr`, or a weights sha mismatch, on an executing host.
 - **S-3** Any sealed hash or cluster in a pool or replay set.
-- **S-4** Lambda GPU work outside rung-2 shadow, or any lambda work at tie-breaker or above.
+- **S-4** Devbox GPU work outside rung-2 shadow, or any devbox work at tie-breaker or above.
 - **S-5** A run overlaps train-active on a clean-room/CUDA pool without yielding.
 - **S-6** **A hosted-model output appears in any training pool, manifest or release artifact (R-18).**
 - **S-7** No admissible cell for the hardware ruling. Capture, shadow and P0/P1 rows continue.
@@ -367,7 +367,7 @@ A challenger replaces the champion only if all of these hold on the current seal
 
 | ID | Question | Status / default |
 |---|---|---|
-| R-9 | lambda GPU | **decided: option b**, shadow only (§2.1) |
+| R-9 | devbox GPU | **decided: option b**, shadow only (§2.1) |
 | Training data | hosted outputs as targets | **decided: never** (§0.4, R-18) |
 | D-7 | qwen35 finetune/distill: 0.71 (G5) or 0.75 (E8)? | default 0.71 under E4 as the PRM-12 acceptance test; E8 keeps multi-engine CRUX |
 | D-8 | tripwire HRQ cap per day | none; blocks P3 only |
@@ -387,7 +387,7 @@ ticket: PMAT-NNNN
 outcome: merged | stopped | already-done | premise-falsified | foreign-linked
 stop: {id: S-n, evidence, resume_when}
 baseline_remeasured: [{row: G#, value, mark, command}]
-lane: {rung: shadow|tripwire|tie-breaker|vote, rows_7d, availability_7d, by_state: {}, by_served_by: {}, lambda_gpu_min}
+lane: {rung: shadow|tripwire|tie-breaker|vote, rows_7d, availability_7d, by_state: {}, by_served_by: {}, devbox_gpu_min}
 speed:                                   # PRM-S1 / PRM-10, per tag
   replay_version: review-replay-vN
   apr_tag: vX.Y.Z
@@ -426,7 +426,7 @@ next_row: PRM-NN
 | Hosted rows in any training pool or release | **0** | G-PROV |
 | Secrets / sealed hashes / cross-split clusters in pools or replay | **0 / 0 / 0** | §4.2 |
 | Restore mismatches; blobs without a second copy after 24 h | **0 / 0** | backup |
-| Lambda GPU minutes outside rung-2 shadow | **0** | host receipts |
+| Devbox GPU minutes outside rung-2 shadow | **0** | host receipts |
 | Champion sealed-test correctness | never down across promotions | §5.3 |
 | κ_err(qwen, voter) | ≤ max voter–voter κ_err | H7 |
 | Python lines in files this spec touches | **0** | diff scan |
