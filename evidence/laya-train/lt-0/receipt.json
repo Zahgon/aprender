@@ -5,7 +5,7 @@
   "main_sha": "e39f91a65e",
   "pr4941_head": "e7730a3a4c",
   "pr4634_head": "dad7f6a5e0",
-  "host": "noah-Lambda-Vector",
+  "host": "workstation, 48 threads, 125 GiB",
   "measured_utc": "2026-10-10T11:00Z",
   "report": "evidence/laya-train/lt-0/report.md",
   "enforcing": ["scripts/check_laya_train_rules.sh --self-test"],

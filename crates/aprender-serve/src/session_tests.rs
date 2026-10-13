@@ -20,6 +20,16 @@ struct Scripted {
     restores: usize,
     /// The forward loses its checkpoint (a reallocation, a fallback).
     lose_checkpoint: bool,
+    /// What `set_layer_timing` answers: whether this forward times its layers.
+    times_layers: bool,
+    /// Every `set_layer_timing` argument, in order.
+    timing_log: Vec<bool>,
+    /// What `take_layer_timings` hands back, once.
+    timed: Option<Vec<LayerTiming>>,
+    /// The forward call (0-based) from which every forward errors.
+    fail_from: Option<usize>,
+    /// What each `validate` call judged the backend on (#4342).
+    probes: Vec<Vec<u32>>,
 }
 
 impl Scripted {
@@ -35,6 +45,11 @@ impl Scripted {
             saved: None,
             restores: 0,
             lose_checkpoint: false,
+            times_layers: false,
+            timing_log: Vec::new(),
+            timed: None,
+            fail_from: None,
+            probes: Vec::new(),
         }
     }
 
@@ -66,6 +81,10 @@ impl ArchForward for Scripted {
         self.reserves += 1;
         Ok(self.drop_on_reserve)
     }
+    fn validate(&mut self, probe: &[u32]) -> Result<()> {
+        self.probes.push(probe.to_vec());
+        Ok(())
+    }
     fn checkpoint_at(&self, prompt: &[u32]) -> Option<usize> {
         let marker = self.marker?;
         prompt.iter().rposition(|&t| t == marker)
@@ -93,11 +112,23 @@ impl ArchForward for Scripted {
             "forward from {start}, but the state holds {}",
             self.held
         );
+        if self.fail_from.is_some_and(|n| self.calls.len() >= n) {
+            return Err(RealizarError::InvalidShape {
+                reason: "scripted forward failure".to_string(),
+            });
+        }
         self.calls.push((tokens.len(), start));
         self.held = tokens.len();
         let mut logits = vec![0.0; 8];
         logits[self.next as usize] = 1.0;
         Ok(logits)
+    }
+    fn set_layer_timing(&mut self, on: bool) -> bool {
+        self.timing_log.push(on);
+        self.times_layers
+    }
+    fn take_layer_timings(&mut self) -> Option<Vec<LayerTiming>> {
+        self.timed.take()
     }
 }
 
@@ -123,6 +154,125 @@ fn generate_prefills_once_then_decodes_one_token_per_step() {
     // The prompt whole from 0, then each chosen token (not the last) from where it left.
     assert_eq!(s.engine().calls, vec![(3, 0), (4, 3), (5, 4)]);
     assert_eq!(s.processed_len(), 5);
+}
+
+/// A tracer that records what a `step` or `layer` serve trace records.
+fn step_tracer() -> crate::inference_trace::InferenceTracer {
+    use crate::inference_trace::{InferenceTracer, TraceConfig, TraceStep};
+    let mut config = TraceConfig::enabled();
+    config.steps = [TraceStep::TransformerBlock, TraceStep::Decode]
+        .into_iter()
+        .collect();
+    InferenceTracer::new(config)
+}
+
+/// What a traced turn filed, as `(step, iteration)` in order.
+fn filed(
+    tracer: &crate::inference_trace::InferenceTracer,
+) -> Vec<(crate::inference_trace::TraceStep, usize)> {
+    tracer
+        .events()
+        .iter()
+        .map(|e| (e.step, e.iteration))
+        .collect()
+}
+
+const TIMED: LayerTiming = LayerTiming {
+    total_us: 7,
+    calls: 2,
+    kind: "scripted",
+};
+
+/// APR-OBS-001 OBS-09: a traced turn files one `TransformerBlock` per forward,
+/// iteration 0 being the prompt's, and one `Decode` per `on_token` at the
+/// iteration of the token it emits. `serve_trace` splits prefill from decode
+/// on exactly this shape, so a shifted iteration would report a decode as
+/// prefill and still fit under the wall clock.
+#[test]
+fn a_traced_turn_files_one_event_per_forward_and_per_token() {
+    use crate::inference_trace::TraceStep::{Decode, TransformerBlock};
+    let mut s = Session::new(Scripted {
+        times_layers: true,
+        timed: Some(vec![TIMED]),
+        ..Scripted::new(3, 100)
+    });
+    let mut tracer = step_tracer();
+    let turn = s
+        .generate_traced(
+            &[7901, 7902, 7903],
+            &greedy(3),
+            &mut |_| true,
+            Some(TurnTrace {
+                tracer: &mut tracer,
+                layers: true,
+            }),
+        )
+        .expect("turn");
+    assert_eq!(turn.tokens, vec![7901, 7902, 7903, 3, 3, 3]);
+    assert_eq!(
+        filed(&tracer),
+        [
+            (TransformerBlock, 0),
+            (Decode, 0),
+            (TransformerBlock, 1),
+            (Decode, 1),
+            (TransformerBlock, 2),
+            (Decode, 2),
+        ]
+    );
+    assert_eq!(
+        s.engine().timing_log,
+        [true, false],
+        "on for the turn, then off"
+    );
+    assert_eq!(s.take_layer_timings(), Some(vec![TIMED]));
+    assert_eq!(s.take_layer_timings(), None, "taking it clears it");
+}
+
+/// Layer timing is asked for only by a layer trace, and turned off after the
+/// turn, Ok or Err, on every forward that said it would time its layers. A
+/// forward left timing would run every later decode eager, syncing after each
+/// layer, with nothing in any reply to show it.
+#[test]
+fn layer_timing_is_on_for_the_turn_and_off_after_it_ok_or_err() {
+    // (layer trace, forward times layers, first failing forward call,
+    // the set_layer_timing calls the forward sees)
+    let cases: [(bool, bool, Option<usize>, &[bool]); 6] = [
+        (true, true, None, &[true, false]),
+        (true, true, Some(0), &[true, false]), // the prompt's forward errors
+        (true, true, Some(2), &[true, false]), // a decode forward errors
+        (true, false, None, &[true]),          // a CPU forward: nothing to undo
+        (false, true, None, &[]),              // a step trace times no layer
+        (false, true, Some(0), &[]),
+    ];
+    for (layers, times, fail_from, want) in cases {
+        let case = format!("layers={layers} times={times} fail_from={fail_from:?}");
+        let mut s = Session::new(Scripted {
+            times_layers: times,
+            fail_from,
+            ..Scripted::new(3, 100)
+        });
+        let mut tracer = step_tracer();
+        let r = s.generate_traced(
+            &[7911, 7912],
+            &greedy(3),
+            &mut |_| true,
+            Some(TurnTrace {
+                tracer: &mut tracer,
+                layers,
+            }),
+        );
+        assert_eq!(r.is_err(), fail_from.is_some(), "{case}");
+        assert_eq!(s.engine().timing_log, want, "{case}");
+    }
+    // An untraced turn asks nothing of the forward's timing.
+    let mut s = Session::new(Scripted {
+        times_layers: true,
+        ..Scripted::new(3, 100)
+    });
+    s.generate(&[7913], &greedy(2), &mut |_| true)
+        .expect("turn");
+    assert!(s.engine().timing_log.is_empty());
 }
 
 #[test]
@@ -492,6 +642,30 @@ fn the_default_forward_keeps_no_checkpoint() {
     );
 }
 
+/// The default times nothing and says so: a layer trace on such a forward
+/// turns no timing on and leaves no per-layer rows (APR-OBS-001 OBS-09).
+#[test]
+fn the_default_forward_times_no_layer() {
+    let mut b = Bare;
+    assert!(!b.set_layer_timing(true), "the default times no layer");
+    assert!(!b.set_layer_timing(false));
+    assert!(b.take_layer_timings().is_none());
+
+    let mut s = Session::new(Bare);
+    let mut tracer = step_tracer();
+    s.generate_traced(
+        &[1, 2],
+        &greedy(2),
+        &mut |_| true,
+        Some(TurnTrace {
+            tracer: &mut tracer,
+            layers: true,
+        }),
+    )
+    .expect("a layer trace on a forward that cannot time layers still runs the turn");
+    assert!(s.take_layer_timings().is_none());
+}
+
 /// A forward that names a fixed checkpoint position whatever the prompt.
 struct FixedCheckpoint {
     inner: Scripted,
@@ -581,4 +755,187 @@ fn a_checkpoint_inside_the_prompt_is_taken() {
     s.prepare_prompt(&[7881, 7882, 7883]).expect("prepare");
     assert_eq!(s.engine().inner.calls, vec![(2, 0)]);
     assert_eq!(s.checkpoint, Some(vec![7881, 7882]));
+}
+
+// #4954: the turn's prefill marks, which the server's `timings` split the TTFT
+// on. Judged by order against the forwards themselves, not by magnitudes, so
+// a loaded machine cannot turn them red (FALSIFY-APR-TTFT-014).
+
+const PLANT: std::time::Duration = std::time::Duration::from_millis(5);
+
+/// A [`Scripted`] forward that sleeps in `reserve` and in each of its first
+/// `prefill_calls` forwards, and records when each forward ran.
+struct Clocked {
+    inner: Scripted,
+    prefill_calls: usize,
+    reserved_at: Option<Instant>,
+    /// `(entered, left)` of each forward, in call order.
+    spans: Vec<(Instant, Instant)>,
+}
+
+impl Clocked {
+    fn new(inner: Scripted, prefill_calls: usize) -> Self {
+        Self {
+            inner,
+            prefill_calls,
+            reserved_at: None,
+            spans: Vec::new(),
+        }
+    }
+}
+
+impl ArchForward for Clocked {
+    fn arch(&self) -> &'static str {
+        "clocked"
+    }
+    fn on_gpu(&self) -> bool {
+        false
+    }
+    fn context_length(&self) -> usize {
+        self.inner.context_length()
+    }
+    fn batched_prefills(&self) -> usize {
+        0
+    }
+    fn notices(&self) -> &[String] {
+        &[]
+    }
+    fn reserve(&mut self, positions: usize) -> Result<bool> {
+        std::thread::sleep(PLANT);
+        let dropped = self.inner.reserve(positions)?;
+        self.reserved_at = Some(Instant::now());
+        Ok(dropped)
+    }
+    fn checkpoint_at(&self, prompt: &[u32]) -> Option<usize> {
+        self.inner.checkpoint_at(prompt)
+    }
+    fn save_checkpoint(&mut self) -> Result<()> {
+        self.inner.save_checkpoint()
+    }
+    fn restore_checkpoint(&mut self) -> Result<bool> {
+        self.inner.restore_checkpoint()
+    }
+    fn forward(&mut self, tokens: &[u32], start: usize) -> Result<Vec<f32>> {
+        let entered = Instant::now();
+        if self.spans.len() < self.prefill_calls {
+            std::thread::sleep(PLANT);
+        }
+        let logits = self.inner.forward(tokens, start)?;
+        self.spans.push((entered, Instant::now()));
+        Ok(logits)
+    }
+}
+
+/// The gx10 shape: a prompt prefilled in two calls, up to its checkpoint and
+/// then the rest. Both calls are prefill; the reserve before them is not, and
+/// no decode forward is.
+#[test]
+fn prefill_marks_bracket_every_prompt_forward_and_nothing_else() {
+    let mut s = Session::new(Clocked::new(Scripted::checkpointing(3, 100, MARK), 2));
+    let prompt = [7901, 7902, MARK, 7903];
+    let turn = s
+        .generate(&prompt, &greedy(3), &mut |_| true)
+        .expect("turn");
+    let f = s.engine();
+    assert_eq!(f.inner.calls[..2], [(2, 0), (4, 2)], "two prefill calls");
+    assert_eq!(f.spans.len(), 4, "two prefill calls and two decode steps");
+
+    let reserved = f.reserved_at.expect("the turn reserved");
+    assert!(
+        reserved <= turn.prefill_started,
+        "the reserve was counted as prefill"
+    );
+    for (i, (entered, left)) in f.spans[..2].iter().enumerate() {
+        assert!(
+            turn.prefill_started <= *entered && *left <= turn.prefill_ended,
+            "prefill call {i} ran outside the prefill marks"
+        );
+    }
+    for (i, (entered, _)) in f.spans[2..].iter().enumerate() {
+        assert!(
+            turn.prefill_ended <= *entered,
+            "decode step {i} began inside the prefill marks"
+        );
+    }
+    assert!(turn.prefill_ended.duration_since(turn.prefill_started) >= 2 * PLANT);
+}
+
+/// What the caller does with a token — send it down a channel, sleep — happens
+/// after prefill has ended, so it can only ever show up as decode.
+#[test]
+fn prefill_marks_exclude_time_the_caller_spends_in_on_token() {
+    let mut s = Session::new(Clocked::new(Scripted::new(3, 100), 1));
+    let mut first_call: Option<Instant> = None;
+    let turn = s
+        .generate(&[7911, 7912, 7913], &greedy(3), &mut |_| {
+            first_call.get_or_insert_with(Instant::now);
+            std::thread::sleep(PLANT);
+            true
+        })
+        .expect("turn");
+    let first_call = first_call.expect("on_token ran");
+    assert!(
+        turn.prefill_ended <= first_call,
+        "prefill ended after the first token reached the caller"
+    );
+    let (first_decode, _) = s.engine().spans[1];
+    assert!(
+        first_decode.duration_since(turn.prefill_ended) >= PLANT,
+        "the caller's delay landed inside prefill"
+    );
+}
+
+/// #4342: `prepare_turn` is `generate`'s setup run ahead of it, so a caller can
+/// time generation alone. It refuses what `generate` refuses, reserves the
+/// turn, runs no forward, and the turn after it is the turn `generate` alone
+/// would have produced.
+#[test]
+fn prepare_turn_is_the_setup_generate_would_do() {
+    let mut s = Session::new(Scripted::new(3, 10));
+    assert!(
+        s.prepare_turn(&[], 4).is_err(),
+        "an empty prompt is refused"
+    );
+    assert!(
+        s.prepare_turn(&[7401; 10], 4).is_err(),
+        "a prompt the context cannot hold is refused"
+    );
+    assert_eq!(s.engine().reserves, 0, "a refused prompt reserves nothing");
+    s.prepare_turn(&[7401, 7402, 7403], 4)
+        .expect("a prompt that fits");
+    assert_eq!(s.engine().reserves, 1);
+    assert!(s.engine().calls.is_empty(), "setup runs no forward");
+    let turn = s
+        .generate(&[7401, 7402, 7403], &greedy(4), &mut |_| true)
+        .expect("turn");
+    assert_eq!(turn.tokens, vec![7401, 7402, 7403, 3, 3, 3, 3]);
+    assert_eq!(s.engine().calls, vec![(3, 0), (4, 3), (5, 4), (6, 5)]);
+}
+
+/// #4342: the guard `prepare_turn` runs judges the positions it judged when it
+/// ran inside `generate`, on the turn's first forward: the prefix the session
+/// checkpoints when it takes one (a chat prompt's last turn marker), else the
+/// whole prompt.
+#[test]
+fn prepare_turn_probes_what_the_first_forward_covers() {
+    let mut s = Session::new(Scripted::new(3, 10));
+    s.prepare_turn(&[7401, 7402, 7403], 4)
+        .expect("a prompt that fits");
+    assert_eq!(s.engine().probes, vec![vec![7401, 7402, 7403]]);
+
+    let mut s = Session::new(Scripted::checkpointing(3, 16, 7900));
+    let prompt = [7401, 7900, 7402, 7403];
+    s.prepare_turn(&prompt, 4).expect("a prompt that fits");
+    assert_eq!(
+        s.engine().probes,
+        vec![vec![7401]],
+        "the checkpointed prefix"
+    );
+    s.generate(&prompt, &greedy(2), &mut |_| true)
+        .expect("turn");
+    assert_eq!(
+        s.engine().calls[0],
+        (1, 0),
+        "the first forward covers the probe"
+    );
 }

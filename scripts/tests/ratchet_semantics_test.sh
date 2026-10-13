@@ -135,6 +135,7 @@ fi
 
 WORK="$(mktemp -d -t ratchet_semantics_test.XXXXXX)" || die "mktemp -d failed"
 trap 'rm -rf "${WORK:?}"' EXIT
+cd -- "$WORK" || die "cannot cd into $WORK"; export GIT_CEILING_DIRECTORIES="${WORK%/*}"   # a fetch that loses its -C must not reach the caller's checkout (#5025)
 mkdir -p "$WORK/empty-template" || die "cannot create the empty git template dir"
 
 # --- fixture ---------------------------------------------------------------
@@ -598,8 +599,17 @@ run_complexity() {
   else
     bad "C16 the mutation could not be derived: no '# PIN-BUILD-BASE-MUTATION-POINT' line in scripts/ci/pin_build_base.sh"
   fi
+  # #4936: the pin reads origin through fetch_p6.sh beside it, so the mutant gets the same neighbour.
+  # Without it the mutant dies on the missing helper and C16 would pass on a crash, not on the
+  # fall-through to the tip that it names; the mutant's own line proves which one ran.
+  cp "$ROOT/scripts/ci/fetch_p6.sh" "$WORK/fetch_p6.sh" || die "C16: cannot place fetch_p6.sh beside the mutant"
   cx_rerun_clone "$CC5" 1 "$M" || die "C16: the clone is not the re-run shape (HEAD=M, origin/main=B2, no merge-base)"
   out=$(cx_pin "$CC5" "$X" "$WORK/pin-mutant.sh"); rc=$?
+  if [ "$rc" -eq 0 ] && grep -q "^comparand: $B2 pinned as origin/main (the tip; event pull_request)$" <<<"$out"; then
+    ok "C16 the mutant pin ran its fall-through: origin/main = B2, the tip"
+  else
+    bad "C16 the mutant pin did not fall through to the tip (rc=$rc)"$'\n'"$(printf '%s' "$out" | sed 's/^/        /')"
+  fi
   out=$(cx_run "$CC5" check_complexity_ratchet.sh "${TIP_ENV[@]}"); rc=$?
   if [ "$rc" -eq 1 ] && grep -qE "^  comparand   TIP +${B2:0:7}" <<<"$out" \
      && grep -q 'RED    NEW      src/lib.rs::cognitive_only' <<<"$out"; then
@@ -637,6 +647,7 @@ run_satd() {
     die "cargo could not build the falsification suite: $(tail -3 "$log" | tr '\n' ' ')"
   fi
   bin=$(sed -n 's|.*Executable tests/falsification_spec_v10_tests\.rs (\(.*\))$|\1|p' "$log" | tail -1)
+  case "$bin" in /*|"") ;; *) bin="$ROOT/$bin" ;; esac   # cargo names it relative to its cwd, $ROOT; this script runs in $WORK (#5025)
   [ -n "$bin" ] && [ -x "$bin" ] || die "cargo did not name an executable for the falsification suite"
 
   # S1 — the parsing/fallback unit test.
@@ -731,6 +742,7 @@ run_satd() {
   if ( cd "$ROOT" && CARGO_TERM_COLOR=never cargo test -p aprender-core --features model-tests \
          --test falsification_spec_v10_tests --no-run ) > "$mlog" 2>&1; then
     mbin=$(sed -n 's|.*Executable tests/falsification_spec_v10_tests\.rs (\(.*\))$|\1|p' "$mlog" | tail -1)
+    case "$mbin" in /*|"") ;; *) mbin="$ROOT/$mbin" ;; esac
   fi
   cp "$WORK/checklist.orig" "$inc"; trap 'rm -rf "${WORK:?}"' EXIT
   [ -n "$mbin" ] && [ -x "$mbin" ] || die "S8: cargo could not build the mutant: $(tail -3 "$mlog" | tr '\n' ' ')"
