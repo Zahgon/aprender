@@ -21,31 +21,11 @@ fn transpose_f32_matrix(data: &[f32], rows: usize, cols: usize) -> Vec<f32> {
 /// `None` for F16/F32/BF16/unknown, which are not scaled-block layouts.
 ///
 /// Split out of `quant_scale_first_nonfinite` so that function stays under the
-/// cognitive-complexity gate: this ten-arm table was the whole of its 30, and
-/// dtype.rs `include!()`s this file, so the gate rejected every commit touching
-/// dtype.rs regardless of what it changed.
+/// cognitive-complexity gate (dtype.rs `include!()`s this file). Both columns
+/// come from the one ggml table (#3418): the block size (FT-GGMLT-009) and the
+/// f16 scale offsets (FT-GGMLT-018), so none are written here.
 fn quant_block_layout(qtype: u32) -> Option<(usize, &'static [usize])> {
-    use crate::gguf::types::{
-        GGUF_TYPE_Q2_K, GGUF_TYPE_Q3_K, GGUF_TYPE_Q4_0, GGUF_TYPE_Q4_1, GGUF_TYPE_Q4_K,
-        GGUF_TYPE_Q5_0, GGUF_TYPE_Q5_1, GGUF_TYPE_Q5_K, GGUF_TYPE_Q6_K, GGUF_TYPE_Q8_0,
-    };
-    // Where the f16 scales sit inside one block. The block size itself is read
-    // from the one ggml table (#3418, FT-GGMLT-009), never written here.
-    let scale_offsets: &'static [usize] = match qtype {
-        // 32-element blocks (one or two leading f16 scales).
-        t if t == GGUF_TYPE_Q4_0 => &[0],
-        t if t == GGUF_TYPE_Q8_0 => &[0],
-        t if t == GGUF_TYPE_Q4_1 => &[0, 2],
-        t if t == GGUF_TYPE_Q5_0 => &[0],
-        t if t == GGUF_TYPE_Q5_1 => &[0, 2],
-        // 256-element K-quant super-blocks.
-        t if t == GGUF_TYPE_Q4_K => &[0, 2],   // d, dmin
-        t if t == GGUF_TYPE_Q5_K => &[0, 2],   // d, dmin
-        t if t == GGUF_TYPE_Q6_K => &[208],    // d (trailing)
-        t if t == GGUF_TYPE_Q2_K => &[80, 82], // d, dmin (trailing)
-        t if t == GGUF_TYPE_Q3_K => &[108],    // d_all (trailing)
-        _ => return None,
-    };
+    let scale_offsets = crate::gguf::ggml_type_table::scale_offsets(qtype)?;
     let block_bytes = crate::gguf::ggml_type_table::traits(qtype)?.type_size;
     Some((block_bytes, scale_offsets))
 }
@@ -350,7 +330,10 @@ impl OwnedQuantizedModel {
 #[cfg(test)]
 mod quant_block_layout_tests {
     use super::{quant_block_layout, quant_scale_first_nonfinite};
-    use crate::gguf::types::{GGUF_TYPE_Q4_0, GGUF_TYPE_Q4_K, GGUF_TYPE_Q6_K};
+    // ggml ids, as in the admitted list below.
+    const Q4_0: u32 = 2;
+    const Q4_K: u32 = 12;
+    const Q6_K: u32 = 14;
 
     /// The layout table had NO coverage: changing Q4_K's block size from 144 to
     /// 999 left all 15,657 lib tests green. It is the sole input to a corruption
@@ -361,12 +344,12 @@ mod quant_block_layout_tests {
     #[test]
     fn block_layout_matches_the_ggml_wire_format() {
         // Q4_0: 2-byte f16 scale + 16 bytes of packed nibbles.
-        assert_eq!(quant_block_layout(GGUF_TYPE_Q4_0), Some((18, &[0][..])));
+        assert_eq!(quant_block_layout(Q4_0), Some((18, &[0][..])));
         // Q4_K super-block: 144 bytes, leading d and dmin.
-        assert_eq!(quant_block_layout(GGUF_TYPE_Q4_K), Some((144, &[0, 2][..])));
+        assert_eq!(quant_block_layout(Q4_K), Some((144, &[0, 2][..])));
         // Q6_K: 210 bytes with a TRAILING scale at 208 -- the offset most likely
         // to be transcribed as 0 by someone assuming scales lead.
-        assert_eq!(quant_block_layout(GGUF_TYPE_Q6_K), Some((210, &[208][..])));
+        assert_eq!(quant_block_layout(Q6_K), Some((210, &[208][..])));
     }
 
 
@@ -411,7 +394,7 @@ mod quant_block_layout_tests {
         block[0] = 0x00;
         block[1] = 0x3C;
         assert_eq!(
-            quant_scale_first_nonfinite(&block, GGUF_TYPE_Q4_0),
+            quant_scale_first_nonfinite(&block, Q4_0),
             None,
             "a finite scale must not be reported as corruption"
         );
@@ -419,8 +402,8 @@ mod quant_block_layout_tests {
         // f16 NaN = 0x7E00. This is the case the function exists to catch.
         block[0] = 0x00;
         block[1] = 0x7E;
-        let found = quant_scale_first_nonfinite(&block, GGUF_TYPE_Q4_0)
-            .expect("a NaN scale must be detected");
+        let found =
+            quant_scale_first_nonfinite(&block, Q4_0).expect("a NaN scale must be detected");
         assert!(found.is_nan(), "expected the NaN scale itself, got {found}");
     }
 
@@ -428,8 +411,8 @@ mod quant_block_layout_tests {
     fn a_block_size_mismatch_declines_rather_than_reading_past_the_end() {
         // 17 bytes is not a whole number of 18-byte Q4_0 blocks.
         let short = vec![0u8; 17];
-        assert_eq!(quant_scale_first_nonfinite(&short, GGUF_TYPE_Q4_0), None);
-        assert_eq!(quant_scale_first_nonfinite(&[], GGUF_TYPE_Q4_0), None);
+        assert_eq!(quant_scale_first_nonfinite(&short, Q4_0), None);
+        assert_eq!(quant_scale_first_nonfinite(&[], Q4_0), None);
     }
 }
 

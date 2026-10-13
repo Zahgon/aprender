@@ -156,6 +156,37 @@ pub fn to_float_by_name(name: &str) -> Option<ToFloat> {
         .and_then(|t| to_float(t.id))
 }
 
+/// #3418 (FT-GGMLT-018): where each scaled-block type keeps its f16 scale
+/// field(s), as byte offsets inside one block. The load gate's non-finite
+/// scale scan (PMAT-895) reads this instead of its own match. The tests tie
+/// every row to its [`to_float`] decoder: zero scales decode to zeros, and a
+/// NaN at any listed offset reaches the output.
+const SCALES: &[(u32, &[usize])] = {
+    use crate::gguf::types::{
+        GGUF_TYPE_Q2_K, GGUF_TYPE_Q3_K, GGUF_TYPE_Q4_0, GGUF_TYPE_Q4_1, GGUF_TYPE_Q4_K,
+        GGUF_TYPE_Q5_0, GGUF_TYPE_Q5_1, GGUF_TYPE_Q5_K, GGUF_TYPE_Q6_K, GGUF_TYPE_Q8_0,
+    };
+    &[
+        (GGUF_TYPE_Q4_0, &[0]),
+        (GGUF_TYPE_Q4_1, &[0, 2]),
+        (GGUF_TYPE_Q5_0, &[0]),
+        (GGUF_TYPE_Q5_1, &[0, 2]),
+        (GGUF_TYPE_Q8_0, &[0]),
+        (GGUF_TYPE_Q2_K, &[80, 82]), // d, dmin (trailing)
+        (GGUF_TYPE_Q3_K, &[108]),    // d_all (trailing)
+        (GGUF_TYPE_Q4_K, &[0, 2]),   // d, dmin
+        (GGUF_TYPE_Q5_K, &[0, 2]),   // d, dmin
+        (GGUF_TYPE_Q6_K, &[208]),    // d (trailing)
+    ]
+};
+
+/// The f16 scale offsets inside one block of ggml type `id`, or `None` for
+/// a type this table has no scale row for.
+#[must_use]
+pub fn scale_offsets(id: u32) -> Option<&'static [usize]> {
+    SCALES.iter().find(|(row, _)| *row == id).map(|(_, o)| *o)
+}
+
 /// The refusal text for an id with no size in this table. Every id that
 /// [`TRAITS`] names but does not size is one upstream removed.
 fn unsupported(id: u32) -> String {
@@ -439,6 +470,60 @@ pub(crate) mod to_float_tests_3418 {
                 decode(&data).expect("whole IQ blocks"),
                 crate::quantize::dequantize_iq_tensor(id, &data).expect("whole IQ blocks"),
                 "IQ row {id} does not decode as IQ type {id}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod scale_tests_3418 {
+    use super::to_float_tests_3418::blocks;
+    use super::{scale_offsets, to_float, traits, SCALES};
+
+    /// f16 bit patterns.
+    const ZERO: [u8; 2] = [0x00, 0x00];
+    const NAN: [u8; 2] = [0x00, 0x7E];
+
+    fn decode(id: u32, data: &[u8]) -> Vec<f32> {
+        to_float(id).expect("a scale row has a to_float row")(data).expect("whole blocks")
+    }
+
+    #[test]
+    fn scale_rows_are_the_decoders_scales_3418() {
+        for &(id, offsets) in SCALES {
+            let t = traits(id).expect("a scale row is a sized ggml type");
+            let mut zeroed = blocks(id, 2);
+            for b in zeroed.chunks_exact_mut(t.type_size) {
+                for &off in offsets {
+                    assert!(off + 2 <= t.type_size, "{} scale at {off}", t.name);
+                    b[off..off + 2].copy_from_slice(&ZERO);
+                }
+            }
+            assert!(
+                decode(id, &zeroed).iter().all(|v| *v == 0.0),
+                "{} ({id}): zeroing {offsets:?} leaves a non-zero value, so a scale sits elsewhere",
+                t.name
+            );
+            for &off in offsets {
+                let mut poisoned = blocks(id, 2);
+                poisoned[off..off + 2].copy_from_slice(&NAN);
+                assert!(
+                    decode(id, &poisoned).iter().any(|v| v.is_nan()),
+                    "{} ({id}): a NaN at {off} does not reach the output, so {off} is not a scale",
+                    t.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn scale_rows_cover_the_ten_scaled_ids_3418() {
+        const SCALED: [u32; 10] = [2, 3, 6, 7, 8, 10, 11, 12, 13, 14];
+        for id in 0..64u32 {
+            assert_eq!(
+                scale_offsets(id).is_some(),
+                SCALED.contains(&id),
+                "ggml id {id} scale row"
             );
         }
     }
