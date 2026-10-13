@@ -1,8 +1,8 @@
-//! PRM-09 promotion ladder (PRM-001 v3 §5.4; contract `rex-promotion-ladder-v2`,
+//! PRM-09 promotion ladder (PRM-001 v4 §5.4; contract `rex-promotion-ladder-v2`,
 //! which supersedes the REX-09 shadow → tripwire → vote ladder of v1).
 //!
 //! The ladder reads only a `prm-001-report-v1` report (the §9 template:
-//! `spec: PRM-001, version: 3`) and fails closed:
+//! `spec: PRM-001, version: 4`) and fails closed:
 //! - **shadow** is the default, and anything the ladder cannot read keeps it;
 //! - **tripwire** needs H4 and the replay p95 within the queue budget;
 //! - **tie-breaker** (decides only a 1–1 split) also needs H5, H7, H1, H2 and
@@ -21,7 +21,7 @@
 use serde::{Deserialize, Serialize};
 
 pub const SPEC: &str = "PRM-001";
-pub const SPEC_VERSION: u64 = 3;
+pub const SPEC_VERSION: u64 = 4;
 /// §5.4: 7-day availability for tie-breaker.
 pub const MIN_AVAILABILITY: f64 = 0.95;
 /// §5.4: decided tie-breaks for vote.
@@ -205,13 +205,18 @@ fn gates(r: &Report, reasons: &mut Vec<String>) -> Mode {
     }
 }
 
-/// `true` when the primary cell is devbox or unnamed (R-9: devbox may not sit
-/// at tie-breaker or above).
+/// The cell prefixes R-9 keeps shadow-only: the v4 alias and the legacy name
+/// that cell producers on `main` still emit. Both are capped, so a producer
+/// that has not moved to the alias cannot open the cap.
+const SHADOW_ONLY_PREFIXES: [&str; 2] = ["devbox", "lambda"];
+
+/// `true` when the primary cell is devbox (under either name) or unnamed
+/// (R-9: devbox may not sit at tie-breaker or above).
 fn s4(r: &Report) -> bool {
     r.hardware_ruling
         .as_ref()
         .and_then(|h| h.primary.as_deref())
-        .is_none_or(|p| p.starts_with("devbox"))
+        .is_none_or(|p| SHADOW_ONLY_PREFIXES.iter().any(|x| p.starts_with(x)))
 }
 
 fn read(report_json: &str, prereg_sha: &str) -> Result<Report, Decision> {

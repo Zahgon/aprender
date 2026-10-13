@@ -14,7 +14,7 @@ fn h(id: &str, p: f64) -> Value {
 fn full() -> Value {
     json!({
         "spec": "PRM-001",
-        "version": 3,
+        "version": 4,
         "prereg_sha": PREREG,
         "lane": {"rung": "tie-breaker", "availability_7d": 0.97},
         "speed": {"within_budget": true},
@@ -251,6 +251,26 @@ fn falsify_rxg_006_devbox_primary_is_refused_above_tripwire() {
         "{:?}",
         n.reasons
     );
+}
+
+/// FALSIFY-RXG-009: a primary under the legacy cell name that producers on
+/// `main` still emit is capped like the v4 alias; it cannot open the S-4 cap.
+#[test]
+fn falsify_rxg_009_legacy_cell_name_cannot_open_the_s4_cap() {
+    let v = set(full(), "/hardware_ruling/primary", json!("lambda-cuda"));
+    let d = evidence(&v.to_string(), PREREG);
+    assert_eq!(d.mode, Mode::Tripwire, "{:?}", d.reasons);
+    assert!(
+        d.reasons
+            .iter()
+            .any(|r| r.contains("S-4") && r.contains("primary cell lambda-cuda is")),
+        "{:?}",
+        d.reasons
+    );
+    // decide caps at once from any rung above tripwire
+    for current in [Mode::TieBreaker, Mode::Vote] {
+        assert_eq!(decide(&v.to_string(), PREREG, current).mode, Mode::Tripwire);
+    }
 }
 
 /// FALSIFY-RXG-007: vote needs ≥ 20 decided tie-breaks whose 14-day outcome

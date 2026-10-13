@@ -1,11 +1,11 @@
 metadata:
-  version: 1.1.0
+  version: 1.2.0
   kind: schema
   description: |
-    PRM-09 (PRM-001 v3 "PROMETHEUS" §5.4, §7, §9): the promotion ladder with the tie-breaker rung.
+    PRM-09 (PRM-001 v4 "PROMETHEUS" §5.4, §7, §9): the promotion ladder with the tie-breaker rung.
     Supersedes rex-promotion-ladder-v1. `rex ladder REPORT_JSON [--current RUNG]`
     (crates/aprender-review-experiment: ladder.rs, examples/rex.rs) reads only a `prm-001-report-v1`
-    report (the §9 template: spec PRM-001, version 3) whose prereg_sha is the lock and that is not
+    report (the §9 template: spec PRM-001, version 4) whose prereg_sha is the lock and that is not
     exploratory. Anything else, including the older rex-001-report-v2, is read as no evidence (shadow).
     Rungs, lowest first: shadow < tripwire < tie-breaker < vote.
       tripwire    ⇔ H4 ∧ speed.within_budget (replay p95 ≤ the queue budget).
@@ -82,3 +82,9 @@ falsification_tests:
     test_harness: "cargo test -p aprender-review-experiment --lib falsify_rxg_008"
     expected_output: "exit 0"
     if_fails: "One good report would jump the lane to vote, or one bad report would drop it to shadow."
+  - id: FALSIFY-RXG-009
+    name: legacy_cell_name_cannot_open_the_s4_cap
+    prediction: "a report passing every gate with hardware_ruling.primary lambda-cuda (the legacy cell name producers on main still emit) is tripwire with an S-4 reason naming the cell as written, and decide takes tie-breaker or vote to tripwire at once"
+    test_harness: "cargo test -p aprender-review-experiment --lib falsify_rxg_009"
+    expected_output: "exit 0"
+    if_fails: "A producer that has not moved to the v4 alias would open the R-9 cap."
