@@ -1281,7 +1281,7 @@ of reports (under test, Jena, W3C) per rule.
 | S1 | `jena` in `CRUX_COMPETITORS`, with its admission comment. Category R stories, one per cell, and one contract per cell. This section and the master contract move together. **Done 2026-10-09** (v2.4): CRUX-R-01..04 | none (registration) |
 | S2 | The Jena distribution pinned by sha256, as the OWL oracle pins ELK 0.4.3. The detached harness under `tests/oracle/`, its exit codes and its planted controls. The JVM and Jena declared in the hosts' configuration (paiml/infra, cross-repo) | none alone; its controls prove the comparators. **Harness done 2026-10-09** (`tests/oracle/jena/`, `make oracle-jena`, self-test 26/26); the hosts' configuration in paiml/infra is not done |
 | S3 | pv reads Turtle and N-Triples, blank nodes included. The reader is in house, because R-13 bars a third-party RDF crate from `aprender-contracts`' tree, dev-dependencies included. R-15 bars blank nodes from the graph pv extracts and hashes, so the reader holds input blank nodes in its own types, outside that graph. **Done 2026-10-09**: `pv ontology read` (`crates/aprender-contracts/src/ontology/read/`), and the harness runs it (§14.9) | R-INPUT, R-RETURN: both GREEN at branch commit `c818b43593`, measured again 2026-10-14 (§14.9) |
-| S4 | pv emits a W3C `sh:ValidationReport`, as Turtle and as JSON, with every field of §14.2 | R-FEEDBACK; R-VALIDATE on S-W3C, where refused cases are named |
+| S4 | pv emits a W3C `sh:ValidationReport`, as Turtle and as JSON, with every field of §14.2. **Done on the S4 branch 2026-10-14**: `pv ontology validate SHAPES DATA [--format turtle|ntriples|json]` (`crates/aprender-contracts/src/ontology/report.rs`, `shapes_rdf.rs`), and the harness runs it (§14.10) | R-FEEDBACK; R-VALIDATE on S-W3C, where refused cases are named. S-CORPUS: both GREEN. S-W3C: both RED, 17 of 35 as W3C expects and the other 18 refused by name (§14.10) |
 | S5 | The rudof oracle reads S4's report and compares the full tuple. `tests/oracle/differential.json` is regenerated with every vendored case. The oracle runs on a schedule | none; it hardens the second oracle |
 
 **Precondition, proposed separately as the fix for `make oracle-check` (§14.7).**
@@ -1290,6 +1290,12 @@ in `contracts/` declare it in the same PR, and W3C `node/closed-001` is vendored
 The other fix, declaring rdf:type on the shapes alone, would turn oracle-check
 GREEN but leave pv short of SHACL Core on any closed shape that does not declare
 it, which is what R-VALIDATE tests against Jena.
+S4 takes the first fix in this form: pv admits rdf:type on a closed shape only
+when the shape lists it in `sh:ignoredProperties`, as SHACL does. A shape pv
+reads from contract YAML gets rdf:type added to that list, so the shapes.ttl pv
+writes says so to any engine. W3C `node/closed-001` runs in S-W3C through
+`pv ontology validate` and in `shapes_rdf_tests.rs`; the YAML-subset list in
+`w3c.rs` still excludes it, because a YAML shape always admits rdf:type.
 
 ### 14.7 Initial state (measured 2026-10-04 on `316dee2cd4`; detail in the baseline file)
 
@@ -1367,3 +1373,38 @@ The self-test saw 26 of 26 controls. The run exits 1 on the R-VALIDATE RED of
   flips R-01 and R-02 under its maintenance rule: the §5 rows, `coverage_intake`
   and each story's work ticket change in one commit. That flip waits for this
   receipt on `main`.
+
+### 14.10 pv validates: the S4 run (measured 2026-10-14 on branch commit `4d80785c24`; receipt `tests/oracle/jena/receipt.json`)
+
+pv was built from that commit. For R-VALIDATE and R-FEEDBACK the harness runs
+`pv ontology validate SHAPES DATA --format ntriples` and compares the report
+with Jena's (S-CORPUS) and with the W3C manifest's expected report (S-W3C), on
+the full tuple: focus node, path, value, source shape, component, severity and
+message. A case pv refuses counts RED. The self-test saw 26 of 26 controls. The
+run exits 1 on the S-W3C cells alone. The receipt is from a branch commit, not
+from `main`. It replaces the §14.9 receipt, which stays in the history at
+`c818b43593`.
+
+| Cell | Case | Verdict |
+|---|---|---|
+| R-INPUT, R-RETURN | `contracts.nt`, `shapes.ttl`, the two controls, S-W3C | GREEN, as in §14.9: `contracts.nt` 35,028 triples; `shapes.ttl` 4,738 distinct triples, 1,739 blank nodes (`riot` streams 4,739); 37 of 37 W3C case files |
+| R-VALIDATE | S-CORPUS | GREEN: Jena 569 results, pv 569, 0 pairs differ. The #4837 class is gone: each closed shape in `shapes.ttl` now lists rdf:type in `sh:ignoredProperties`, and pv admits nothing else implicitly |
+| R-FEEDBACK | S-CORPUS | GREEN: 569 results on each side, 0 differ on the full tuple |
+| R-VALIDATE | S-W3C | **RED**: 17 of 35 cases as W3C expects. Jena ran all 35 |
+| R-FEEDBACK | S-W3C | **RED**: the same 17 of 35 carry the full tuple, a message on every result, and each declared `sh:message` |
+| S-SHSH | `shapes.ttl` | GREEN |
+
+- The 18 S-W3C cases short of GREEN are all refusals, exit 3, naming the file,
+  the shape and the term. Thirteen are terms on a node shape: `sh:class` (3),
+  `sh:datatype` (3, one of them `datatype-ill-formed`), and `sh:flags`, `sh:in`,
+  `sh:maxLength`, `sh:minLength`, `sh:node`, `sh:nodeKind` and `sh:pattern` (1
+  each). The other five: `sh:flags` and `sh:or` on a property shape; a blank-node node
+  shape; `sh:nodeKind sh:BlankNode`; and a language-tagged literal. No case pv
+  runs disagrees with W3C. Turning them GREEN is widening the subset, case by
+  case.
+- One S-W3C case has a blank-node source shape, so its Jena-vs-W3C check drops
+  the source shape from the key. That check only arbitrates; pv is judged
+  against W3C on the full tuple.
+- R-VALIDATE and R-FEEDBACK on S-CORPUS are GREEN for the first time. The flip
+  of R-03 and R-04 in §5 waits for this receipt on `main`, under the same rule
+  as R-01 and R-02 in §14.9.
