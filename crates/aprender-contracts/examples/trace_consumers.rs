@@ -6,8 +6,8 @@
 //!
 //!   cargo run -p aprender-contracts --example trace_consumers [-- <repo root>]
 
-use aprender_contracts::ontology::extract::binary::{parse_snapshot, SNAPSHOT};
-use aprender_contracts::trace_consumers::{check, derive, parse_registry, Finding, REGISTRY};
+use provable_contracts::ontology::extract::binary::{parse_snapshot, SNAPSHOT};
+use provable_contracts::trace_consumers::{check, derive, parse_registry, Finding, REGISTRY};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
