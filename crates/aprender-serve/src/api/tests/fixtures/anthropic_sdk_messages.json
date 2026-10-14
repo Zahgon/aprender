@@ -1,0 +1,268 @@
+{
+  "_source": "anthropics/anthropic-sdk-python @ 2a53eaa6966b04560b6a72c28d3ace4389a9ac58, tests/api_resources/test_messages.py: the request each messages.create test sends, Python dict to JSON, every field and value unchanged (`stream` placed last).",
+  "cases": [
+    {
+      "name": "test_method_create_overload_1",
+      "expect": "message",
+      "request": {
+        "max_tokens": 1024,
+        "messages": [
+          {
+            "content": "Hello, world",
+            "role": "user"
+          }
+        ],
+        "model": "claude-opus-5-5"
+      }
+    },
+    {
+      "name": "test_method_create_overload_2",
+      "expect": "stream",
+      "request": {
+        "max_tokens": 1024,
+        "messages": [
+          {
+            "content": "Hello, world",
+            "role": "user"
+          }
+        ],
+        "model": "claude-opus-5-5",
+        "stream": true
+      }
+    },
+    {
+      "name": "test_method_create_with_all_params_overload_1",
+      "expect": "refused",
+      "refused": [
+        "container",
+        "tools[0].strict",
+        "tools[0].defer_loading",
+        "tool_choice.disable_parallel_tool_use"
+      ],
+      "request": {
+        "max_tokens": 1024,
+        "messages": [
+          {
+            "content": "Hello, world",
+            "role": "user"
+          }
+        ],
+        "model": "claude-opus-5-5",
+        "cache_control": {
+          "type": "ephemeral",
+          "ttl": "5m"
+        },
+        "container": {
+          "id": "id",
+          "skills": [
+            {
+              "skill_id": "pdf",
+              "type": "anthropic",
+              "version": "latest"
+            }
+          ]
+        },
+        "diagnostics": {
+          "previous_message_id": "previous_message_id"
+        },
+        "inference_geo": "inference_geo",
+        "metadata": {
+          "user_id": "13803d75-b4b5-4c3e-b2a2-6f21399b021b"
+        },
+        "output_config": {
+          "effort": "low",
+          "format": {
+            "schema": {
+              "foo": "bar"
+            },
+            "type": "json_schema"
+          }
+        },
+        "service_tier": "auto",
+        "stop_sequences": [
+          "string"
+        ],
+        "system": [
+          {
+            "text": "Today's date is 2024-06-01.",
+            "type": "text",
+            "cache_control": {
+              "type": "ephemeral",
+              "ttl": "5m"
+            },
+            "citations": [
+              {
+                "cited_text": "The grass is green. The sky is blue.",
+                "document_index": 0,
+                "document_title": "x",
+                "end_char_index": 0,
+                "start_char_index": 0,
+                "type": "char_location"
+              }
+            ]
+          }
+        ],
+        "thinking": {
+          "type": "adaptive",
+          "display": "summarized"
+        },
+        "tool_choice": {
+          "type": "auto",
+          "disable_parallel_tool_use": true
+        },
+        "tools": [
+          {
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "location": "bar",
+                "unit": "bar"
+              },
+              "required": [
+                "location"
+              ]
+            },
+            "name": "name",
+            "allowed_callers": [
+              "direct"
+            ],
+            "cache_control": {
+              "type": "ephemeral",
+              "ttl": "5m"
+            },
+            "defer_loading": true,
+            "description": "Get the current weather in a given location",
+            "eager_input_streaming": true,
+            "input_examples": [
+              {
+                "foo": "bar"
+              }
+            ],
+            "strict": true,
+            "type": "custom"
+          }
+        ],
+        "user_profile_id": "anthropic-user-profile-id",
+        "workspace_id": "wrkspc_011CZkZaBF1tNoB5wlCeusgy",
+        "stream": false
+      }
+    },
+    {
+      "name": "test_method_create_with_all_params_overload_2",
+      "expect": "refused",
+      "refused": [
+        "container",
+        "tools[0].strict",
+        "tools[0].defer_loading",
+        "tool_choice.disable_parallel_tool_use"
+      ],
+      "request": {
+        "max_tokens": 1024,
+        "messages": [
+          {
+            "content": "Hello, world",
+            "role": "user"
+          }
+        ],
+        "model": "claude-opus-5-5",
+        "cache_control": {
+          "type": "ephemeral",
+          "ttl": "5m"
+        },
+        "container": {
+          "id": "id",
+          "skills": [
+            {
+              "skill_id": "pdf",
+              "type": "anthropic",
+              "version": "latest"
+            }
+          ]
+        },
+        "diagnostics": {
+          "previous_message_id": "previous_message_id"
+        },
+        "inference_geo": "inference_geo",
+        "metadata": {
+          "user_id": "13803d75-b4b5-4c3e-b2a2-6f21399b021b"
+        },
+        "output_config": {
+          "effort": "low",
+          "format": {
+            "schema": {
+              "foo": "bar"
+            },
+            "type": "json_schema"
+          }
+        },
+        "service_tier": "auto",
+        "stop_sequences": [
+          "string"
+        ],
+        "system": [
+          {
+            "text": "Today's date is 2024-06-01.",
+            "type": "text",
+            "cache_control": {
+              "type": "ephemeral",
+              "ttl": "5m"
+            },
+            "citations": [
+              {
+                "cited_text": "The grass is green. The sky is blue.",
+                "document_index": 0,
+                "document_title": "x",
+                "end_char_index": 0,
+                "start_char_index": 0,
+                "type": "char_location"
+              }
+            ]
+          }
+        ],
+        "thinking": {
+          "type": "adaptive",
+          "display": "summarized"
+        },
+        "tool_choice": {
+          "type": "auto",
+          "disable_parallel_tool_use": true
+        },
+        "tools": [
+          {
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "location": "bar",
+                "unit": "bar"
+              },
+              "required": [
+                "location"
+              ]
+            },
+            "name": "name",
+            "allowed_callers": [
+              "direct"
+            ],
+            "cache_control": {
+              "type": "ephemeral",
+              "ttl": "5m"
+            },
+            "defer_loading": true,
+            "description": "Get the current weather in a given location",
+            "eager_input_streaming": true,
+            "input_examples": [
+              {
+                "foo": "bar"
+              }
+            ],
+            "strict": true,
+            "type": "custom"
+          }
+        ],
+        "user_profile_id": "anthropic-user-profile-id",
+        "workspace_id": "wrkspc_011CZkZaBF1tNoB5wlCeusgy",
+        "stream": true
+      }
+    }
+  ]
+}

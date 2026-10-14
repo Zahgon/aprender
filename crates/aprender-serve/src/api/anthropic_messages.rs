@@ -15,9 +15,14 @@
 //! ```
 //!
 //! What the adapter cannot serve it REFUSES with a 400 `invalid_request_error`
-//! rather than dropping: image and document blocks, and server tools (a tool
-//! entry with a `type` other than `custom`). A silently dropped image would let
-//! the model answer a question about a picture it never saw.
+//! rather than dropping: image and document blocks, server tools (a tool
+//! entry with a `type` other than `custom`), the platform's `container` and
+//! `mcp_servers`, and the guarantees `tools[].strict`, `tools[].defer_loading`
+//! and `tool_choice.disable_parallel_tool_use`. A silently dropped image would
+//! let the model answer a question about a picture it never saw. Hints that
+//! leave the reply's content unchanged (`cache_control`, `service_tier`,
+//! routing ids) are ignored. `tests/fixtures/anthropic_sdk_messages.json`
+//! replays the SDK's own requests against this rule.
 //!
 //! `stream: true` streams live: the chat path's SSE chunks are re-encoded as
 //! the Messages event sequence (`message_start` … `message_stop`) while
@@ -38,8 +43,8 @@ use serde_json::{json, Value};
 
 use super::{
     openai_chat_completions_handler, AppState, ChatCompletionRequest, ChatCompletionResponse,
-    ChatMessage, ChoiceCount, OpenAiFunctionDef, OpenAiTool, OpenAiToolChoice,
-    OpenAiToolChoiceFunction, ResponseFunctionCall, ResponseToolCall,
+    ChatMessage, ChoiceCount, JsonSchemaFormat, OpenAiFunctionDef, OpenAiTool, OpenAiToolChoice,
+    OpenAiToolChoiceFunction, ResponseFormat, ResponseFunctionCall, ResponseToolCall,
 };
 
 // ============================================================================
@@ -85,6 +90,27 @@ pub struct MessagesRequest {
     /// `metadata.user_id` is passed through as the OpenAI `user`.
     #[serde(default)]
     pub metadata: Option<Metadata>,
+    /// `output_config.format` is served as the chat path's `response_format`.
+    #[serde(default)]
+    pub output_config: Option<OutputConfig>,
+    /// Every other top-level field. One that only the Anthropic platform can
+    /// serve ([`PLATFORM_FIELDS`]) is refused. The rest (`cache_control`,
+    /// `service_tier`, routing ids) are hints that leave the reply's content
+    /// unchanged, so they are ignored.
+    #[serde(flatten)]
+    pub other: serde_json::Map<String, Value>,
+}
+
+/// Top-level fields served only by the Anthropic platform: a code-execution
+/// container with its skills, and remote MCP servers it connects to.
+pub const PLATFORM_FIELDS: [&str; 2] = ["container", "mcp_servers"];
+
+/// `output_config`. Its `effort` is a hint and is ignored.
+#[derive(Debug, Clone, Deserialize)]
+pub struct OutputConfig {
+    /// `{"type":"json_schema","schema":{…}}`.
+    #[serde(default)]
+    pub format: Option<Value>,
 }
 
 /// One conversation turn.
@@ -155,6 +181,13 @@ pub struct ToolDef {
     /// JSON Schema of the input.
     #[serde(default)]
     pub input_schema: Option<Value>,
+    /// Guarantee that `input` matches the schema. Refused when true: tool
+    /// arguments are not generated under a constraint.
+    #[serde(default)]
+    pub strict: bool,
+    /// Load the tool through tool search. Refused when true: no tool search.
+    #[serde(default)]
+    pub defer_loading: bool,
 }
 
 /// `tool_choice`.
@@ -166,12 +199,16 @@ pub struct ToolChoice {
     /// The tool name when `type` is `tool`.
     #[serde(default)]
     pub name: Option<String>,
+    /// At most one tool call per reply. Refused when true: the chat path has
+    /// no such limit, and cutting extra calls would drop model output.
+    #[serde(default)]
+    pub disable_parallel_tool_use: bool,
 }
 
 /// `thinking`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Thinking {
-    /// `enabled` | `disabled`.
+    /// `enabled` | `adaptive` | `disabled`.
     #[serde(rename = "type")]
     pub thinking_type: String,
 }
@@ -425,11 +462,72 @@ fn to_openai_tool_choice(choice: &ToolChoice) -> Result<OpenAiToolChoice, String
     }
 }
 
+/// Every field of `req` that asks for something this server cannot do, by
+/// its path in the request. All of them are named in one refusal.
+fn unservable(req: &MessagesRequest) -> Vec<String> {
+    let mut out: Vec<String> = PLATFORM_FIELDS
+        .iter()
+        .filter(|f| req.other.contains_key(**f))
+        .map(|f| (*f).to_string())
+        .collect();
+    for (i, tool) in req.tools.iter().flatten().enumerate() {
+        if tool.strict {
+            out.push(format!("tools[{i}].strict"));
+        }
+        if tool.defer_loading {
+            out.push(format!("tools[{i}].defer_loading"));
+        }
+    }
+    if req
+        .tool_choice
+        .as_ref()
+        .is_some_and(|c| c.disable_parallel_tool_use)
+    {
+        out.push("tool_choice.disable_parallel_tool_use".to_string());
+    }
+    out
+}
+
+/// `thinking.type` as the chat template's `think`. `adaptive` asks the model
+/// to reason only when it helps, so it sets nothing and the server's default
+/// stands. Forcing thinking on would refuse every model whose template has no
+/// thinking mode (#3723).
+fn to_think(thinking: &Thinking) -> Result<Option<bool>, String> {
+    match thinking.thinking_type.as_str() {
+        "enabled" => Ok(Some(true)),
+        "disabled" => Ok(Some(false)),
+        "adaptive" => Ok(None),
+        other => Err(format!("thinking: unknown type {other:?}")),
+    }
+}
+
+/// `output_config.format` as the chat path's `response_format`.
+fn to_response_format(format: &Value) -> Result<ResponseFormat, String> {
+    match format.get("type").and_then(Value::as_str) {
+        Some("json_schema") => Ok(ResponseFormat::JsonSchema {
+            json_schema: JsonSchemaFormat {
+                name: None,
+                description: None,
+                schema: format.get("schema").cloned(),
+                strict: None,
+            },
+        }),
+        other => Err(format!("output_config.format: unknown type {other:?}")),
+    }
+}
+
 /// Translate a Messages request into the internal chat request.
 ///
 /// # Errors
 /// A refusal message for anything the adapter cannot serve faithfully.
 pub fn to_chat_request(req: &MessagesRequest) -> Result<ChatCompletionRequest, String> {
+    let refused = unservable(req);
+    if !refused.is_empty() {
+        return Err(format!(
+            "not supported by this server: {}",
+            refused.join(", ")
+        ));
+    }
     let mut messages = Vec::with_capacity(req.messages.len() + 1);
     if let Some(system) = &req.system {
         messages.push(chat("system", content_text(system)?));
@@ -454,7 +552,13 @@ pub fn to_chat_request(req: &MessagesRequest) -> Result<ChatCompletionRequest, S
             .as_ref()
             .map(to_openai_tool_choice)
             .transpose()?,
-        think: req.thinking.as_ref().map(|t| t.thinking_type == "enabled"),
+        think: req.thinking.as_ref().map(to_think).transpose()?.flatten(),
+        response_format: req
+            .output_config
+            .as_ref()
+            .and_then(|c| c.format.as_ref())
+            .map(to_response_format)
+            .transpose()?,
         ..Default::default()
     })
 }

@@ -124,6 +124,7 @@ fn tool_choice_modes_map() {
         let choice = ToolChoice {
             choice_type: anthropic.to_string(),
             name: None,
+            disable_parallel_tool_use: false,
         };
         assert!(
             matches!(to_openai_tool_choice(&choice), Ok(OpenAiToolChoice::Mode(ref m)) if m == openai),
@@ -133,6 +134,7 @@ fn tool_choice_modes_map() {
     let nameless = ToolChoice {
         choice_type: "tool".to_string(),
         name: None,
+        disable_parallel_tool_use: false,
     };
     assert!(to_openai_tool_choice(&nameless).is_err());
 }
@@ -147,6 +149,76 @@ fn thinking_toggle_maps_to_think() {
     );
     assert_eq!(to_chat_request(&on).expect("on").think, Some(true));
     assert_eq!(to_chat_request(&off).expect("off").think, Some(false));
+    let adaptive = parse(
+        r#"{"model":"m","max_tokens":4,"thinking":{"type":"adaptive"},"messages":[{"role":"user","content":"x"}]}"#,
+    );
+    assert_eq!(
+        to_chat_request(&adaptive).expect("adaptive").think,
+        None,
+        "adaptive sets nothing, so the server default stands"
+    );
+    let unknown = parse(
+        r#"{"model":"m","max_tokens":4,"thinking":{"type":"sometimes"},"messages":[{"role":"user","content":"x"}]}"#,
+    );
+    assert!(to_chat_request(&unknown).is_err(), "unknown thinking type");
+}
+
+#[test]
+fn output_config_format_maps_to_response_format() {
+    let req = parse(
+        r#"{"model":"m","max_tokens":4,"messages":[{"role":"user","content":"x"}],
+            "output_config":{"effort":"low","format":{"type":"json_schema","schema":{"type":"object"}}}}"#,
+    );
+    let chat = to_chat_request(&req).expect("translates");
+    assert!(matches!(
+        chat.response_format,
+        Some(ResponseFormat::JsonSchema { ref json_schema })
+            if json_schema.schema == Some(json!({"type": "object"}))
+    ));
+    let effort_only = parse(
+        r#"{"model":"m","max_tokens":4,"messages":[{"role":"user","content":"x"}],"output_config":{"effort":"low"}}"#,
+    );
+    assert!(to_chat_request(&effort_only)
+        .expect("effort is a hint")
+        .response_format
+        .is_none());
+    let unknown = parse(
+        r#"{"model":"m","max_tokens":4,"messages":[{"role":"user","content":"x"}],
+            "output_config":{"format":{"type":"regex"}}}"#,
+    );
+    assert!(to_chat_request(&unknown).is_err(), "unknown format type");
+}
+
+/// Every unservable field is named in one refusal; a hint is not one of them.
+#[test]
+fn platform_features_are_refused_by_name_and_hints_are_not() {
+    let req = parse(
+        r#"{"model":"m","max_tokens":4,"messages":[{"role":"user","content":"x"}],
+            "container":{"id":"c"},"mcp_servers":[],
+            "tools":[{"name":"f","strict":true,"defer_loading":true}],
+            "tool_choice":{"type":"auto","disable_parallel_tool_use":true},
+            "cache_control":{"type":"ephemeral"},"service_tier":"auto"}"#,
+    );
+    let msg = to_chat_request(&req).expect_err("refused");
+    for field in [
+        "container",
+        "mcp_servers",
+        "tools[0].strict",
+        "tools[0].defer_loading",
+        "tool_choice.disable_parallel_tool_use",
+    ] {
+        assert!(msg.contains(field), "{field} not named: {msg}");
+    }
+    assert!(
+        !msg.contains("cache_control") && !msg.contains("service_tier"),
+        "{msg}"
+    );
+    let hints_only = parse(
+        r#"{"model":"m","max_tokens":4,"messages":[{"role":"user","content":"x"}],
+            "tools":[{"name":"f","strict":false,"cache_control":{"type":"ephemeral"}}],
+            "cache_control":{"type":"ephemeral"},"service_tier":"auto","inference_geo":"us"}"#,
+    );
+    assert!(to_chat_request(&hints_only).is_ok(), "hints are ignored");
 }
 
 /// What cannot be served faithfully is refused, never dropped.
