@@ -22,7 +22,8 @@ metadata:
     receipt. The OpenAI cases (models, finish_reason, length, stream, usage,
     seed, tool_call) judge the surface described by
     apr-serve-openai-compat-v1.yaml. The Ollama cases are POST /api/chat: seed
-    (R-3), usage (R-4) and done (R-5, the NDJSON stream); the Ollama shape
+    (R-3), usage (R-4), done (R-5, the NDJSON stream) and length (R-5,
+    done_reason "length" at num_predict 1); the Ollama shape
     speaks R-3..R-5 only.
   references:
   - 'aprender#5349 — R-6 agent conformance suite runner'
@@ -30,7 +31,7 @@ metadata:
   - 'docs/specifications/EPIC-0.72-agent-ready-plan.md — rows E-1, R-1..R-6'
   - 'crates/aprender-serve/src/api/conformance.rs — Case, Cell, Verdict, cases, run_case, missing_cells, uncovered_rows'
   - 'crates/aprender-serve/src/api/conformance_checks.rs — one check per case'
-  - 'crates/aprender-serve/src/api/conformance_tests.rs — FALSIFY-ASM-001..011'
+  - 'crates/aprender-serve/src/api/conformance_tests.rs — FALSIFY-ASM-001..012'
   - 'crates/aprender-serve/examples/serve_conformance.rs — the HTTP runner and receipt'
 equations:
   conformance_cells:
@@ -183,6 +184,13 @@ falsification_tests:
   red_state: the check accepts any done line or treats done_reason as optional
   green_state: the six ollama done rows match their expected verdicts (PASS)
   if_fails: a truncated or unterminated /api/chat stream passes R-5
+- id: FALSIFY-ASM-012
+  rule: a num_predict cap ends the Ollama stream with done_reason length
+  prediction: on the demo router, ollama.chat.length (stream, num_predict 1) passes while oai.chat.length passes as the control that the cap was hit; ollama_length fails done_reason stop and an absent done_reason
+  test: 'cargo test -p aprender-serve --lib api::conformance::tests::demo_router_ollama_length_reports_length'
+  red_state: /api/chat hardcodes done_reason stop, so a truncated turn reads as finished (aprender#5357)
+  green_state: the terminal chunk carries done_reason length (PASS)
+  if_fails: an Ollama client cannot tell a cut-off answer from a complete one
 qa_gate:
   id: F-ASM-001
   name: Agent Conformance Suite Contract
@@ -192,5 +200,5 @@ qa_gate:
   - not_measured_is_not_pass
   - missing_cells_named
   - anthropic_checks_bite
-  pass_criteria: FALSIFY-ASM-001..011 PASS; the live cells over the certified matrix are the serve_conformance receipt, not a test
+  pass_criteria: FALSIFY-ASM-001..012 PASS; the live cells over the certified matrix are the serve_conformance receipt, not a test
   falsification: Make oai_chat_finish accept an absent finish_reason — FALSIFY-ASM-006 FAILS

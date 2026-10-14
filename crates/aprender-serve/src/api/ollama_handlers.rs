@@ -432,6 +432,7 @@ fn chat_stream_objects(
     content: &str,
     prompt_eval_count: usize,
     eval_count: usize,
+    done_reason: &str,
 ) -> Vec<OllamaChatChunk> {
     let created_at = created_at_now();
     let mut out: Vec<OllamaChatChunk> = content_fragments(content)
@@ -457,7 +458,7 @@ fn chat_stream_objects(
             content: String::new(),
         },
         done: true,
-        done_reason: Some("stop".to_string()),
+        done_reason: Some(done_reason.to_string()),
         prompt_eval_count: Some(prompt_eval_count),
         eval_count: Some(eval_count),
     });
@@ -470,6 +471,7 @@ fn generate_stream_objects(
     content: &str,
     prompt_eval_count: usize,
     eval_count: usize,
+    done_reason: &str,
 ) -> Vec<OllamaGenerateChunk> {
     let created_at = created_at_now();
     let mut out: Vec<OllamaGenerateChunk> = content_fragments(content)
@@ -489,7 +491,7 @@ fn generate_stream_objects(
         created_at,
         response: String::new(),
         done: true,
-        done_reason: Some("stop".to_string()),
+        done_reason: Some(done_reason.to_string()),
         prompt_eval_count: Some(prompt_eval_count),
         eval_count: Some(eval_count),
     });
@@ -548,24 +550,34 @@ fn modified_at(source: Option<&ModelSourceInfo>) -> Option<String> {
     )
 }
 
-/// Extract `(content, prompt_tokens, completion_tokens)` from the OpenAI chat
-/// response, or a fallback `(error_text, 0, 0)` when generation failed.
+/// Ollama `done_reason` for an OpenAI `finish_reason`: a cap hit is `length`,
+/// as `ollama serve` reports it; every other end is `stop`.
+fn done_reason_for(finish_reason: &str) -> &'static str {
+    if finish_reason == "length" {
+        "length"
+    } else {
+        "stop"
+    }
+}
+
+/// Extract `(content, prompt_tokens, completion_tokens, done_reason)` from the
+/// OpenAI chat response, or a fallback `(error_text, 0, 0, "stop")` when
+/// generation failed.
 ///
 /// Crucially this ALWAYS yields an Ollama-shaped body — even on a backend error
 /// or a missing model — so a wired route is observably distinct from the axum
 /// `not_found` fallback (which has no `done` field).
-fn chat_response_to_parts(status: StatusCode, body: &[u8]) -> (String, usize, usize) {
+fn chat_response_to_parts(status: StatusCode, body: &[u8]) -> (String, usize, usize, &'static str) {
     if status.is_success() {
         if let Ok(resp) = serde_json::from_slice::<ChatCompletionResponse>(body) {
-            let content = resp
-                .choices
-                .first()
-                .map(|c| c.message.content.clone())
-                .unwrap_or_default();
+            let first = resp.choices.first();
+            let content = first.map(|c| c.message.content.clone()).unwrap_or_default();
+            let done_reason = first.map_or("stop", |c| done_reason_for(&c.finish_reason));
             return (
                 content,
                 resp.usage.prompt_tokens,
                 resp.usage.completion_tokens,
+                done_reason,
             );
         }
     }
@@ -575,7 +587,7 @@ fn chat_response_to_parts(status: StatusCode, body: &[u8]) -> (String, usize, us
         .ok()
         .and_then(|v| v.get("error").and_then(|e| e.as_str().map(str::to_string)))
         .unwrap_or_else(|| "generation unavailable".to_string());
-    (msg, 0, 0)
+    (msg, 0, 0, "stop")
 }
 
 /// Stamp the upstream generation status onto an Ollama-shaped response.
@@ -635,7 +647,7 @@ pub async fn ollama_chat_handler(
         openai_chat_completions_handler(State(state), headers, Extension(cancel), Json(chat_req))
             .await;
     let (status, body) = split_response(inner).await;
-    let (content, prompt_tokens, eval_count) = chat_response_to_parts(status, &body);
+    let (content, prompt_tokens, eval_count, done_reason) = chat_response_to_parts(status, &body);
 
     if stream {
         return with_upstream_status(
@@ -645,6 +657,7 @@ pub async fn ollama_chat_handler(
                 &content,
                 prompt_tokens,
                 eval_count,
+                done_reason,
             )),
         );
     }
@@ -696,7 +709,7 @@ pub async fn ollama_generate_handler(
         openai_chat_completions_handler(State(state), headers, Extension(cancel), Json(chat_req))
             .await;
     let (status, body) = split_response(inner).await;
-    let (content, prompt_tokens, eval_count) = chat_response_to_parts(status, &body);
+    let (content, prompt_tokens, eval_count, done_reason) = chat_response_to_parts(status, &body);
 
     if stream {
         return with_upstream_status(
@@ -706,6 +719,7 @@ pub async fn ollama_generate_handler(
                 &content,
                 prompt_tokens,
                 eval_count,
+                done_reason,
             )),
         );
     }
@@ -885,10 +899,41 @@ mod tests {
             "choices":[{"index":0,"message":{"role":"assistant","content":"4"},"finish_reason":"stop"}],
             "usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}
         }"#;
-        let (content, p, c) = chat_response_to_parts(StatusCode::OK, body);
+        let (content, p, c, _) = chat_response_to_parts(StatusCode::OK, body);
         assert_eq!(content, "4");
         assert_eq!(p, 3);
         assert_eq!(c, 1);
+    }
+
+    /// #5357: a cap hit (`finish_reason: "length"`) must reach the Ollama
+    /// terminal chunk as `done_reason: "length"`, not a hardcoded `stop`.
+    #[test]
+    fn chat_response_to_parts_maps_length_to_done_reason() {
+        let body = br#"{
+            "id":"x","object":"chat.completion","created":0,"model":"m",
+            "choices":[{"index":0,"message":{"role":"assistant","content":"H"},"finish_reason":"length"}],
+            "usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}
+        }"#;
+        assert_eq!(chat_response_to_parts(StatusCode::OK, body).3, "length");
+        let stop = String::from_utf8_lossy(body).replace("\"length\"", "\"stop\"");
+        assert_eq!(
+            chat_response_to_parts(StatusCode::OK, stop.as_bytes()).3,
+            "stop"
+        );
+        assert_eq!(
+            chat_response_to_parts(StatusCode::NOT_FOUND, b"{}").3,
+            "stop"
+        );
+        let objs = chat_stream_objects("apr", "H", 3, 1, "length");
+        assert_eq!(
+            objs.last().and_then(|c| c.done_reason.as_deref()),
+            Some("length")
+        );
+        let objs = generate_stream_objects("apr", "H", 3, 1, "length");
+        assert_eq!(
+            objs.last().and_then(|c| c.done_reason.as_deref()),
+            Some("length")
+        );
     }
 
     #[test]
@@ -896,7 +941,7 @@ mod tests {
         // On a backend error (e.g. no model), the Ollama body must still be
         // well-formed: the error text becomes the assistant content, tokens 0.
         let body = br#"{"error":"model not found"}"#;
-        let (content, p, c) = chat_response_to_parts(StatusCode::NOT_FOUND, body);
+        let (content, p, c, _) = chat_response_to_parts(StatusCode::NOT_FOUND, body);
         assert_eq!(content, "model not found");
         assert_eq!(p, 0);
         assert_eq!(c, 0);
@@ -1051,7 +1096,7 @@ mod stream_and_discovery_tests {
     /// and is indistinguishable from a non-streaming reply.
     #[test]
     fn chat_stream_is_a_sequence_terminated_by_done_true() {
-        let objs = chat_stream_objects("apr", "The capital of France is Paris.", 21, 7);
+        let objs = chat_stream_objects("apr", "The capital of France is Paris.", 21, 7, "stop");
         assert!(
             objs.len() > 2,
             "a 6-word answer must arrive as several chunks, got {}",
@@ -1080,7 +1125,7 @@ mod stream_and_discovery_tests {
     /// Same contract on `/api/generate`, whose chunks carry a flat `response`.
     #[test]
     fn generate_stream_is_a_sequence_terminated_by_done_true() {
-        let objs = generate_stream_objects("apr", "1 2 3 4 5 6 7 8", 16, 16);
+        let objs = generate_stream_objects("apr", "1 2 3 4 5 6 7 8", 16, 16, "stop");
         let (last, rest) = objs.split_last().expect("non-empty");
         assert!(last.done);
         assert_eq!(last.done_reason.as_deref(), Some("stop"));
@@ -1096,7 +1141,7 @@ mod stream_and_discovery_tests {
     /// loop hangs waiting for `done:true`.
     #[test]
     fn empty_generation_still_terminates_the_stream() {
-        let objs = chat_stream_objects("apr", "", 3, 0);
+        let objs = chat_stream_objects("apr", "", 3, 0, "stop");
         assert_eq!(objs.len(), 1);
         assert!(objs[0].done);
     }
@@ -1106,7 +1151,7 @@ mod stream_and_discovery_tests {
     /// halves in the client's line reader.
     #[test]
     fn each_object_serializes_to_exactly_one_json_line() {
-        for chunk in chat_stream_objects("apr", "a b\nc", 1, 3) {
+        for chunk in chat_stream_objects("apr", "a b\nc", 1, 3, "stop") {
             let line = serde_json::to_string(&chunk).expect("serialize");
             assert!(
                 !line.contains('\n'),
@@ -1121,7 +1166,7 @@ mod stream_and_discovery_tests {
     /// told the model generated nothing.
     #[test]
     fn non_terminal_chunks_omit_counts_and_done_reason() {
-        let objs = chat_stream_objects("apr", "two words", 5, 2);
+        let objs = chat_stream_objects("apr", "two words", 5, 2, "stop");
         let first = serde_json::to_value(&objs[0]).expect("serialize");
         assert!(first.get("eval_count").is_none());
         assert!(first.get("prompt_eval_count").is_none());
@@ -1133,7 +1178,7 @@ mod stream_and_discovery_tests {
     /// decodes every chunk into the same `api.ChatResponse`.
     #[test]
     fn stream_chunk_created_at_is_rfc3339() {
-        for chunk in chat_stream_objects("apr", "hi there", 1, 2) {
+        for chunk in chat_stream_objects("apr", "hi there", 1, 2, "stop") {
             let json = serde_json::to_value(&chunk).expect("serialize");
             let created_at = json["created_at"].as_str().expect("string");
             chrono::DateTime::parse_from_rfc3339(created_at)
