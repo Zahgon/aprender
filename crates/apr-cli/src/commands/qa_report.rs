@@ -73,6 +73,48 @@
         assert!(passed, "All-skipped should be passed (production bounds it with check_min_executed)");
     }
 
+    /// #5226: with `--min-executed` unset, a run in which every gate skipped is a FAIL,
+    /// and its summary says nothing was measured. Before, it printed "All QA gates passed".
+    #[test]
+    fn qa_zero_executed_fails_by_default() {
+        let gates = vec![
+            GateResult::skipped("golden_output", "no model"),
+            GateResult::skipped("throughput", "no engine"),
+        ];
+        let config = QaConfig::default();
+        assert_eq!(config.min_executed, None);
+        let mut passed = gates_pass(&gates);
+        assert!(!check_min_executed(&config, 0, &mut passed));
+        assert!(!passed, "0 executed must not pass when --min-executed is unset");
+        let summary = build_qa_summary(&gates, passed, 0, 2, &config);
+        assert!(summary.starts_with("No QA gate executed (2 skipped)"), "{summary}");
+    }
+
+    /// #5226 case table: the floor is 1 when unset; an explicit value is honoured,
+    /// including `--min-executed 0`, the way to accept an all-skipped run.
+    #[test]
+    fn qa_min_executed_floor_case_table() {
+        for (min, executed, ok) in [
+            (None, 0, false),
+            (None, 1, true),
+            (Some(0), 0, true),
+            (Some(2), 1, false),
+            (Some(2), 2, true),
+        ] {
+            let config = QaConfig {
+                min_executed: min,
+                ..QaConfig::default()
+            };
+            let mut passed = true;
+            assert_eq!(
+                check_min_executed(&config, executed, &mut passed),
+                ok,
+                "min={min:?} executed={executed}"
+            );
+            assert_eq!(passed, ok, "min={min:?} executed={executed}");
+        }
+    }
+
     // ========================================================================
     // QaConfig: safetensors_path and combined flag states
     // ========================================================================

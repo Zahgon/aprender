@@ -177,7 +177,7 @@ pub struct QaConfig {
     pub json: bool,
     /// Verbose output
     pub verbose: bool,
-    /// Minimum number of gates that must execute (not be skipped)
+    /// Minimum number of gates that must execute (not be skipped). `None` means 1 (#5226)
     pub min_executed: Option<usize>,
     /// Path to previous QA report for regression comparison
     pub previous_report: Option<std::path::PathBuf>,

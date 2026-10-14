@@ -320,7 +320,8 @@ pub enum ExtendedCommands {
         /// Verbose output
         #[arg(short, long)]
         verbose: bool,
-        /// Minimum number of gates that must execute (fail if fewer)
+        /// Minimum number of gates that must execute (fail if fewer). Unset means 1, so
+        /// a run that skipped every gate fails; pass 0 to accept one (#5226)
         #[arg(long, value_name = "N")]
         min_executed: Option<usize>,
         /// Previous QA report for regression detection

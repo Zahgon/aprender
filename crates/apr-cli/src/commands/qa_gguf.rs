@@ -428,7 +428,7 @@ fn finalize_qa_report(
             "  {} Only {} gates executed, minimum required: {}",
             "FAIL".red().bold(),
             gates_executed,
-            config.min_executed.unwrap_or(0),
+            min_executed_floor(config),
         );
     }
 
@@ -463,12 +463,18 @@ fn warn_excessive_skips(json: bool, executed: usize, skipped: usize) {
     }
 }
 
+/// #5226: the floor when `--min-executed` is unset. A run in which every gate was
+/// skipped measured nothing, so it is not a pass. `--min-executed 0` asks for one.
+const DEFAULT_MIN_EXECUTED: usize = 1;
+
+/// The executed-gate floor this run is held to.
+fn min_executed_floor(config: &QaConfig) -> usize {
+    config.min_executed.unwrap_or(DEFAULT_MIN_EXECUTED)
+}
+
 /// Check --min-executed constraint. Returns true if constraint is satisfied.
 fn check_min_executed(config: &QaConfig, gates_executed: usize, passed: &mut bool) -> bool {
-    let Some(min) = config.min_executed else {
-        return true;
-    };
-    if gates_executed >= min {
+    if gates_executed >= min_executed_floor(config) {
         return true;
     }
     *passed = false;
@@ -496,11 +502,16 @@ fn build_qa_summary(
         .map(|g| g.name.as_str())
         .collect();
 
-    if names.is_empty() {
+    if names.is_empty() && gates_executed == 0 {
+        format!(
+            "No QA gate executed ({gates_skipped} skipped): nothing was measured \
+             (pass --min-executed 0 to accept an all-skipped run)"
+        )
+    } else if names.is_empty() {
         format!(
             "Insufficient gate execution: {} < {} minimum",
             gates_executed,
-            config.min_executed.unwrap_or(0)
+            min_executed_floor(config)
         )
     } else {
         format!("Failed gates: {}", names.join(", "))
