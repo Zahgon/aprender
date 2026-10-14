@@ -292,3 +292,75 @@ toyota_way_principles:
     three-step process with compiler/test enforcement at each step: ship
     the test, append an entry here, update the spec. A missing step
     fails CI instead of silently degrading.
+
+falsification_tests:
+  - id: FALSIFY-MCP-001-T
+    rule: "initialize answers with the server protocolVersion well inside the 500 ms spec budget"
+    prediction: "The test times initialize and asserts it is under 50 ms (10x headroom on the 500 ms budget) and that protocolVersion equals the server constant"
+    test: "cargo test -p aprender-mcp --test falsify_m1 falsify_mcp_001_initialize_under_500ms"
+    if_fails: "initialize is slow or reports the wrong protocol version"
+  - id: FALSIFY-MCP-002-T
+    rule: "Every tool in tools/list has an inputSchema that compiles as JSON Schema Draft 7"
+    prediction: "The test meta-validates each listed inputSchema with jsonschema::validator_for and asserts it compiles"
+    test: "cargo test -p aprender-mcp --test falsify_schema every_tool_input_schema_is_valid_jsonschema_draft_7"
+    if_fails: "A tool advertises a schema clients cannot compile"
+  - id: FALSIFY-MCP-003-T
+    rule: "apr.run returns the apr run --json schema, including a tokens array, inside its ToolCallResult"
+    prediction: "The test runs apr.run against a mock apr on PATH and asserts the payload parses as the CLI JSON schema with tokens[]"
+    test: "cargo test -p aprender-mcp --test falsify_mcp_003 falsify_mcp_003_apr_run_returns_tokens_array"
+    if_fails: "apr.run drops or reshapes the CLI JSON"
+  - id: FALSIFY-MCP-004-T
+    rule: "apr.qa returns the QaReport schema with each gate carrying pass, value and threshold"
+    prediction: "The test runs apr.qa against a mock apr on PATH and asserts the payload parses as a QaReport with eight gates, each with pass, value and threshold"
+    test: "cargo test -p aprender-mcp --test falsify_mcp_004 falsify_mcp_004_apr_qa_returns_eight_gates_with_pass_value_threshold"
+    if_fails: "apr.qa drops or reshapes the QaReport"
+  - id: FALSIFY-MCP-005-T
+    rule: "A request whose jsonrpc is not exactly 2.0 gets -32600 before dispatch"
+    prediction: "The test sends a wrong jsonrpc version and asserts error code -32600 and no dispatch"
+    test: "cargo test -p aprender-mcp --test falsify_m1 falsify_mcp_005_invalid_jsonrpc_version_is_minus_32600"
+    if_fails: "The server routes or crashes on a malformed request"
+  - id: FALSIFY-MCP-006-T
+    rule: "notifications/cancelled stops a running tool subprocess within the grace window and returns a partial result with isError true"
+    prediction: "The test cancels a long-running mock tool call and asserts the result has isError true, a message starting Cancelled: and an acknowledgement of the partial stdout"
+    test: "cargo test -p aprender-mcp --test falsify_mcp_006 falsify_mcp_006_cancel_stops_subprocess_within_grace"
+    if_fails: "A cancelled tool call keeps its subprocess running"
+  - id: FALSIFY-MCP-007-T
+    rule: "An initialize with a different protocolVersion gets a success result naming the version the server supports"
+    prediction: "The test sends a foreign protocolVersion and asserts a success result carrying the server version, not a JSON-RPC error"
+    test: "cargo test -p aprender-mcp --test falsify_m1 falsify_mcp_007_protocol_version_mismatch_negotiates_down"
+    if_fails: "Version mismatch is answered with an error, breaking negotiation"
+  - id: FALSIFY-MCP-008-T
+    rule: "Every codegen-migrated tool's live inputSchema equals the schema derived from the tool-schemas contract"
+    prediction: "The test canonicalizes both JSON documents for each migrated tool and asserts they are byte-identical"
+    test: "cargo test -p aprender-mcp --test falsify_mcp_008 migrated_tools_match_yaml_contract_byte_for_byte"
+    if_fails: "The live schema drifts from the contract"
+  - id: FALSIFY-MCP-009-T
+    rule: "The stdio server never replies to a request with no id"
+    prediction: "The test sends an id-less request then a request with id 7 and asserts the first response read is the id 7 success, so the id-less one got no reply"
+    test: "cargo test -p aprender-mcp --test falsify_mcp_dogfood_001 falsify_mcp_009_no_reply_to_notification"
+    if_fails: "The server answers notifications, which clients treat as protocol errors"
+  - id: FALSIFY-MCP-010-T
+    rule: "Every request with an id is answered before the read loop returns, including a tools/call still running at stdin EOF"
+    prediction: "The test closes stdin while a tools/call is in flight and asserts its response is written before serve returns"
+    test: "cargo test -p aprender-mcp --lib server::tests::serve_stream_answers_tools_call_before_returning_on_eof"
+    if_fails: "An in-flight call is dropped at EOF"
+  - id: FALSIFY-MCP-011-T
+    rule: "A non-UTF-8 line gets -32700 and the session keeps serving"
+    prediction: "The test sends ping, an invalid UTF-8 line, then ping again and asserts a -32700 for the bad line and answers to both pings"
+    test: "cargo test -p aprender-mcp --lib server::tests::serve_stream_survives_invalid_utf8_line"
+    if_fails: "One bad line ends the session"
+  - id: FALSIFY-MCP-012-T
+    rule: "Valid JSON that is not a valid Request gets -32600 with the client id echoed, not -32700 with id null"
+    prediction: "The test sends a request missing a required field and asserts -32600 and the echoed id"
+    test: "cargo test -p aprender-mcp --lib server::tests::missing_required_field_is_invalid_request_with_id_echoed"
+    if_fails: "Clients cannot match the error to their request"
+  - id: FALSIFY-MCP-013-T
+    rule: "ping is answered with an empty result at any point in the session"
+    prediction: "The test sends ping and asserts an empty success result"
+    test: "cargo test -p aprender-mcp --lib server::tests::ping_returns_empty_result"
+    if_fails: "Keepalive clients read the server as dead"
+  - id: FALSIFY-MCP-014-T
+    rule: "A required argument of the wrong JSON type is reported as a type error naming the received type, never as missing"
+    prediction: "The test passes a wrong-typed argument and asserts the message names the type and does not say missing"
+    test: "cargo test -p aprender-mcp --lib tools::args::require_str_tests::wrong_type_names_the_type_and_never_says_missing"
+    if_fails: "Type errors are misreported as missing arguments"

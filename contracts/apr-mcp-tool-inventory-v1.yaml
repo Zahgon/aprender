@@ -181,3 +181,25 @@ toyota_way_principles:
     `pmcp`, the inventory entries become the input to whatever
     register-tool API pmcp exposes — the macro stays, only the
     consumer changes.
+
+falsification_tests:
+  - id: FALSIFY-INVENTORY-001-T
+    rule: "The startup inventory yields exactly the shipped tool set"
+    prediction: "The test collects tool names from the inventory and asserts they equal the expected list"
+    test: "cargo test -p aprender-mcp --test falsify_inventory_001 inventory_yields_same_tool_set_as_hardcoded_list"
+    if_fails: "A tool is lost or added by the inventory registration"
+  - id: FALSIFY-INVENTORY-002-T
+    rule: "Two tools with the same name make the dispatch index build panic with a duplicate-name message"
+    prediction: "The test registers a duplicate and asserts the index build panics with the duplicate-name diagnostic"
+    test: "cargo test -p aprender-mcp --test falsify_inventory_002 duplicate_tool_name_panics_at_index_build"
+    if_fails: "One tool silently shadows another"
+  - id: FALSIFY-INVENTORY-003-T1
+    rule: "Every shipped tool is reachable through the inventory dispatch path"
+    prediction: "The test calls tools/call for each listed tool and asserts none returns a JSON-RPC error envelope"
+    test: "cargo test -p aprender-mcp --test falsify_inventory_003 every_shipped_tool_is_reachable_via_dispatch"
+    if_fails: "A shipped tool is listed but not dispatchable"
+  - id: FALSIFY-INVENTORY-003-T2
+    rule: "apr.version through inventory dispatch returns the same success envelope as the hardcoded path"
+    prediction: "The test calls apr.version and asserts a success envelope with exactly one content block"
+    test: "cargo test -p aprender-mcp --test falsify_inventory_003 version_dispatch_envelope_matches_hardcoded_path"
+    if_fails: "Inventory dispatch changes the response envelope"
