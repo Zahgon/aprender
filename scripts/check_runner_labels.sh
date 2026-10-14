@@ -24,7 +24,10 @@ cd "$(dirname "$0")/.."
 # review-light (#4729): one runner on intel-clean-room-15, same unit and isolation as the
 # clean-room pool, deliberately WITHOUT clean-room so build jobs cannot queue in front of
 # pr-review-quorum `present` (a seconds-long check). A one-box label, like perf-solo.
-DISCRIM='clean-room|cuda|gpu|rtx4090|ada|blackwell|gb10|apple-silicon|m4|perf-solo|mini-builder|review-light'
+# mq (c314-mq-pair-1014 quorum): runners dedicated to the merge queue, WITHOUT clean-room so PR CI
+# cannot queue in front of a merge group. ci.yml uses it only on merge_group, for x86-main,
+# x86-main-advisories, mg-reuse and workspace-test-shard; every other event keeps clean-room.
+DISCRIM='clean-room|cuda|gpu|rtx4090|ada|blackwell|gb10|apple-silicon|m4|perf-solo|mini-builder|review-light|mq'
 fail=0
 
 while IFS=: read -r file line sel; do
