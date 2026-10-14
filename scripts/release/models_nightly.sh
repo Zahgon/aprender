@@ -172,7 +172,8 @@ seal() {
     (cd "$b" && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | LC_ALL=C sort | xargs -r sha256sum -- > SHA256SUMS)
 }
 
-# verify BUNDLE COMMIT -> "<state>\t<reason>"; the CI checkout supplies C's version and models_t1 blob
+# verify BUNDLE COMMIT -> "<state>\t<reason>"; COMMIT is the commit the bundle measured (B under --at-or-before),
+# and the CI checkout supplies that commit's version and models_t1 blob, so B is judged by its own code
 verify() {
     local b=$1 c=$2 v listed have ver blob sha9 replay rec
     [ -f "$b/verdict" ] && [ -f "$b/SHA256SUMS" ] || { printf 'not_measured\tno bundle for %s on %s\n' "${c:0:9}" "$EV_BRANCH"; return 0; }

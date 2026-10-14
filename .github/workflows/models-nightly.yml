@@ -146,6 +146,9 @@ jobs:
   # The column the nightly train reads (job regex ^models$). It runs only on a
   # measured verdict, so a missing or broken measurement is a skipped job,
   # which the train reads as not_measured.
+  # The verdict is about the commit the GPU host measured (B), an ancestor of
+  # this run's commit no more than 24h older; commits between B and C are
+  # measured the next night, never inferred green from B (#3715).
   models:
     name: models
     needs: models-evidence
