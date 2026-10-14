@@ -59,7 +59,7 @@ proof_obligations:
     discharged_by: FALSIFY-OBS-TRACE-002
   - id: PO-TRACE-003
     kind: correctness
-    statement: "The --trace-output record of apr run at every apr-trace-v1 level is byte-identical to serve's build_trace_data for the same facts, and passes check."
+    statement: "The --trace-output record of apr run at every apr-trace-v1 level equals, as JSON, serve's build_trace_data for the same facts, and passes check."
     discharged_by: FALSIFY-OBS-TRACE-003
   - id: PO-TRACE-004
     kind: correctness

@@ -2168,8 +2168,9 @@ mod trace_output_events_tests {
     }
 
     /// FALSIFY-OBS-TRACE-003: `apr run --trace-level <level> --trace-output`
-    /// carries the record `apr serve` sends for the same facts, byte for byte
-    /// (the document's `timestamp` is not part of it), and the record passes
+    /// carries the record `apr serve` sends for the same facts, equal as JSON (the
+    /// file's keys come out sorted, so not byte for byte; the document's
+    /// `timestamp` is not part of the record), and the record passes
     /// `apr-trace-v1`'s [`check`](crate::apr_trace::check).
     #[test]
     fn falsify_obs_trace_003_run_record_is_serves_record() {
@@ -2182,8 +2183,8 @@ mod trace_output_events_tests {
             let (b, s, l) = build_trace_data(Some(level), infer_us, 9, 3, 28);
             let serve = b.or(s).or(l).expect("serve renders every apr-trace-v1 level");
             assert_eq!(
-                serde_json::to_string(&v["apr_trace"]).expect("run record"),
-                serde_json::to_string(&serve).expect("serve record"),
+                v["apr_trace"],
+                serde_json::to_value(&serve).expect("serve record"),
                 "level {level}: run and serve records differ"
             );
             let run: crate::apr_trace::TraceData =
