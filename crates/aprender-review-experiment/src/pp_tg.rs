@@ -13,7 +13,7 @@
 //! figure is never the median of the shots that happened to fit.
 
 use crate::crux_perf::Phases;
-use crate::harness::Parsed;
+use crate::harness::{classify, Parsed, Reply};
 use serde_json::{json, Value};
 
 /// llama-bench's default prompt length.
@@ -145,6 +145,59 @@ pub fn phases_from_shots(
     }
     let [t, p, d] = &cols;
     Phases::from_samples(t, p, d, seed).ok_or(ShotRefusal::TooFew(shots.len()))
+}
+
+/// Why one engine gave no phases.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DriveError {
+    /// No prompt of exactly `pp` tokens (or a probe failed).
+    Fit(String),
+    /// The request never got a reply.
+    Transport(String),
+    /// The timed shots were refused.
+    Shots(ShotRefusal),
+}
+
+/// One OpenAI-compatible server: its chat-completions URL and model name.
+#[derive(Debug, Clone, Copy)]
+pub struct Engine<'a> {
+    pub url: &'a str,
+    pub model: &'a str,
+}
+
+/// One engine's phases at (`pp`, `tg`) over `runs` timed shots.
+///
+/// The prompt is fitted on this engine with one-token probes, then one cold
+/// shot is sent and discarded, so model load and first-touch never enter the
+/// series. `send` posts a body to a URL ([`crate::harness::post`] in use).
+///
+/// # Errors
+/// See [`DriveError`].
+pub fn measure(
+    engine: Engine<'_>,
+    runs: usize,
+    pp: u64,
+    tg: u64,
+    seed: u64,
+    mut send: impl FnMut(&str, &Value) -> Result<Reply, String>,
+) -> Result<Phases, DriveError> {
+    let mut shot = |prompt: &str, n: u64| {
+        send(engine.url, &shot_body(engine.model, prompt, n))
+            .map(|r| classify(&r))
+            .map_err(DriveError::Transport)
+    };
+    let prompt = fit_prompt(pp, |text| {
+        let p = shot(text, 1).map_err(|e| format!("{e:?}"))?;
+        p.tokens
+            .map(|t| t.prompt)
+            .ok_or_else(|| format!("probe reply has no usage: {:?}", p.verdict))
+    })
+    .map_err(DriveError::Fit)?;
+    shot(&prompt, tg)?;
+    let shots = (0..runs)
+        .map(|_| shot(&prompt, tg))
+        .collect::<Result<Vec<_>, _>>()?;
+    phases_from_shots(&shots, pp, tg, seed).map_err(DriveError::Shots)
 }
 
 #[cfg(test)]

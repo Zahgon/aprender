@@ -134,3 +134,113 @@ fn the_shot_body_asks_for_exactly_tg_tokens_past_eos() {
     assert_eq!(b["temperature"], 0.0);
     assert_eq!(b["stream"], false);
 }
+
+/// A fake server: `overhead(url)` template tokens plus one per word, exactly
+/// `max_tokens` generated, and a slow first full-length shot (cold load).
+fn server(overhead: fn(&str) -> u64) -> impl FnMut(&str, &Value) -> Result<Reply, String> {
+    let mut warm = std::collections::HashSet::new();
+    move |url: &str, body: &Value| {
+        let words = body["messages"][0]["content"]
+            .as_str()
+            .map_or(0, |s| s.split_whitespace().count() as u64);
+        let max = body["max_tokens"].as_u64().unwrap_or(0);
+        let cold = max > 1 && warm.insert(url.to_string());
+        let (ms, pps, tps) = if cold {
+            (9999.0, 50.0, 2.0)
+        } else {
+            (128.0, 4000.0, 64.0)
+        };
+        let prompt = overhead(url) + words;
+        Ok(Reply {
+            status: 200,
+            body: format!(
+                r#"{{"choices":[{{"message":{{"content":"x"}}}}],
+                "usage":{{"prompt_tokens":{prompt},"completion_tokens":{max}}},
+                "timings":{{"prompt_ms":{ms},"predicted_ms":1.0,
+                "prompt_per_second":{pps},"predicted_per_second":{tps}}}}}"#
+            ),
+            wall_ms: 1.0,
+        })
+    }
+}
+
+fn two_templates(url: &str) -> u64 {
+    if url.contains("apr") {
+        23
+    } else {
+        11
+    }
+}
+
+#[test]
+fn each_engine_is_measured_on_its_own_fitted_pp_tg_prompt() {
+    let mut send = server(two_templates);
+    for url in [
+        "http://apr/v1/chat/completions",
+        "http://llama/v1/chat/completions",
+    ] {
+        let p = measure(Engine { url, model: "m" }, 5, PP, TG, 1, &mut send)
+            .unwrap_or_else(|e| panic!("{url}: {e:?}"));
+        assert_eq!(p.decode.n, 5, "{url}");
+        assert!((p.decode.median - 15.625).abs() < 1e-12, "{url}");
+    }
+}
+
+#[test]
+fn falsify_crux_perf_010_the_cold_shot_never_enters_the_series() {
+    let p = measure(
+        Engine {
+            url: "http://apr/x",
+            model: "m",
+        },
+        5,
+        PP,
+        TG,
+        1,
+        server(two_templates),
+    )
+    .expect("warm shots");
+    // Every warm shot is 128 ms; a 9999 ms cold shot in the series moves p95.
+    assert_eq!(p.ttft.p95, 128.0, "{p:?}");
+    assert_eq!(p.ttft.n, 5);
+}
+
+#[test]
+fn a_dead_server_or_a_reply_without_usage_gives_no_phases() {
+    let dead = |_: &str, _: &Value| Err::<Reply, _>("connection refused".to_string());
+    assert!(matches!(
+        measure(
+            Engine {
+                url: "u",
+                model: "m"
+            },
+            5,
+            PP,
+            TG,
+            1,
+            dead
+        ),
+        Err(DriveError::Fit(_))
+    ));
+    let no_usage = |_: &str, _: &Value| {
+        Ok(Reply {
+            status: 200,
+            body: r#"{"choices":[{"message":{"content":"x"}}]}"#.to_string(),
+            wall_ms: 1.0,
+        })
+    };
+    assert!(matches!(
+        measure(
+            Engine {
+                url: "u",
+                model: "m"
+            },
+            5,
+            PP,
+            TG,
+            1,
+            no_usage
+        ),
+        Err(DriveError::Fit(_))
+    ));
+}
