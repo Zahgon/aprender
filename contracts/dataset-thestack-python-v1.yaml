@@ -151,16 +151,16 @@ deduplication:
 # ─────────────────────────────────────────────────────────────
 
 budget:
-  min_train_tokens: 2_000_000_000    # 2B tokens minimum for 370M model
-  max_train_tokens: 8_000_000_000    # 8B tokens ceiling (cost/time guard)
-  min_files: 500_000
+  min_train_tokens: "2_000_000_000"    # 2B tokens minimum for 370M model
+  max_train_tokens: "8_000_000_000"    # 8B tokens ceiling (cost/time guard)
+  min_files: "500_000"
   max_files: "5_000_000"
 
 split:
   method: hash-by-file-sha256       # deterministic, no train/val leakage by repo
   train_fraction: 0.98
   val_fraction: 0.02
-  val_min_files: 10_000
+  val_min_files: "10_000"
   seed: 42
   assertion: "Same corpus + same seed → byte-identical split on every host."
 
