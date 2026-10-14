@@ -517,10 +517,55 @@ pub enum LlmClientError {
         /// The parse failure.
         source: serde_json::Error,
     },
+    /// #5348 R-8: the gateway's `binary_sha256` is not the pinned one.
+    ///
+    /// Absent counts as a mismatch: a gateway that does not say which binary
+    /// it runs cannot prove it is the one the measurement was pinned to.
+    #[error(
+        "R-8: gateway at {url} runs binary_sha256 {got:?}, expected {expected}; refusing a \
+         gateway that is not the pinned binary"
+    )]
+    BinarySha256Mismatch {
+        /// The gateway base URL.
+        url: String,
+        /// The pinned sha the caller expects.
+        expected: String,
+        /// What the gateway reported, `None` when it reported nothing.
+        got: Option<String>,
+    },
     /// A benchmark that started its own server was stopped by a signal. The
     /// server's process group was killed before this was returned (#4953).
     #[error("interrupted by {0}: the started server's process group was killed")]
     Interrupted(&'static str),
+}
+
+/// #5348 R-8: the `binary_sha256` a gateway's `GET /` or `/health` body reports.
+#[cfg(feature = "llm")]
+#[must_use]
+pub fn reported_binary_sha256(body: &serde_json::Value) -> Option<String> {
+    body.get("binary_sha256")?.as_str().map(str::to_string)
+}
+
+/// #5348 R-8: `Ok` only when the gateway reported exactly `expected`.
+///
+/// Case-insensitive on the hex; an absent sha is a mismatch, never a pass.
+///
+/// # Errors
+/// [`LlmClientError::BinarySha256Mismatch`] on any other value or none.
+#[cfg(feature = "llm")]
+pub fn check_binary_sha256(
+    url: &str,
+    got: Option<&str>,
+    expected: &str,
+) -> Result<(), LlmClientError> {
+    match got {
+        Some(g) if !expected.is_empty() && g.eq_ignore_ascii_case(expected) => Ok(()),
+        _ => Err(LlmClientError::BinarySha256Mismatch {
+            url: url.to_string(),
+            expected: expected.to_string(),
+            got: got.map(str::to_string),
+        }),
+    }
 }
 
 /// OpenAI-compatible HTTP client for LLM inference.
@@ -784,6 +829,26 @@ impl LlmClient {
             "No health endpoint responded at {}",
             self.base_url
         )))
+    }
+
+    /// #5348 R-8: refuse a gateway whose `binary_sha256` differs from `expected`.
+    ///
+    /// Reads `GET /`, then `/health` (the wgpu router has no `GET /`).
+    ///
+    /// # Errors
+    /// [`LlmClientError::BinarySha256Mismatch`] when neither route reports
+    /// `expected`; transport and route errors as [`Self::get_json`].
+    pub async fn require_binary_sha256(&self, expected: &str) -> Result<(), LlmClientError> {
+        let mut got = None;
+        for path in ["/", "/health"] {
+            if let Some(body) = self.get_json(path).await? {
+                got = reported_binary_sha256(&body);
+                if got.is_some() {
+                    break;
+                }
+            }
+        }
+        check_binary_sha256(&self.base_url, got.as_deref(), expected)
     }
 
     /// Send a streaming chat completion request and collect per-token timestamps.
@@ -1785,5 +1850,53 @@ mod tests {
         // #4954: llama.cpp reports no phase edges; they read as absent.
         assert_eq!(t.load_ms, None);
         assert_eq!(t.first_token_ms, None);
+    }
+
+    #[cfg(feature = "llm")]
+    const PINNED: &str = "ab12";
+
+    /// #5348 R-8 RED: a gateway on another binary is refused, and so is one
+    /// that reports no sha at all.
+    #[cfg(feature = "llm")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn r8_refuses_a_gateway_with_the_wrong_or_no_binary_sha() {
+        for body in [
+            "{\"service\":\"apr serve\",\"binary_sha256\":\"ff99\"}",
+            "{\"service\":\"apr serve\",\"binary_sha256\":null}",
+            "{\"service\":\"apr serve\"}",
+        ] {
+            let url = spawn_status_endpoint("200 OK", body).await;
+            let err = LlmClient::new(&url, "qwen")
+                .require_binary_sha256(PINNED)
+                .await
+                .expect_err("a gateway that is not the pinned binary must be refused");
+            match err {
+                LlmClientError::BinarySha256Mismatch { expected, got, .. } => {
+                    assert_eq!(expected, PINNED);
+                    assert_ne!(got.as_deref(), Some(PINNED), "{body}");
+                }
+                other => panic!("expected BinarySha256Mismatch for {body}, got {other:?}"),
+            }
+        }
+    }
+
+    /// #5348 R-8 GREEN: the pinned binary passes, case-insensitively.
+    #[cfg(feature = "llm")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn r8_accepts_the_gateway_running_the_pinned_binary() {
+        let url = spawn_status_endpoint("200 OK", "{\"binary_sha256\":\"AB12\"}").await;
+        LlmClient::new(&url, "qwen")
+            .require_binary_sha256(PINNED)
+            .await
+            .expect("the pinned binary is accepted");
+    }
+
+    /// #5348 R-8: an empty pin never matches, even an empty report.
+    #[cfg(feature = "llm")]
+    #[test]
+    fn r8_an_empty_pin_is_never_a_match() {
+        assert!(check_binary_sha256("u", Some(""), "").is_err());
+        assert!(check_binary_sha256("u", None, PINNED).is_err());
+        assert!(check_binary_sha256("u", Some(PINNED), PINNED).is_ok());
     }
 }

@@ -308,6 +308,7 @@ pub fn create_router_with_config(state: AppState, config: RouterConfig) -> Route
                 Json(serde_json::json!({
                     "service": "apr serve",
                     "version": env!("CARGO_PKG_VERSION"),
+                    "binary_sha256": super::binary_sha256(),
                     "routes": routes,
                 }))
             }

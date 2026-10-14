@@ -661,6 +661,8 @@ fn build_wgpu_router(wgpu_state: Arc<WgpuInferenceState>) -> axum::Router {
                     "status": "healthy",
                     "compute_mode": "wgpu",
                     "version": env!("CARGO_PKG_VERSION"),
+                    // #5348 R-8: this router has no `GET /`, so the pin rides here.
+                    "binary_sha256": realizar::api::binary_sha256(),
                 }))
             }),
         )

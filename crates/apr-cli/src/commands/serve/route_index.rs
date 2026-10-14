@@ -92,6 +92,7 @@ impl Indexed<()> {
                         Json(serde_json::json!({
                             "service": "apr serve",
                             "version": env!("CARGO_PKG_VERSION"),
+                            "binary_sha256": realizar::api::binary_sha256(),
                             "routes": routes,
                         }))
                     }

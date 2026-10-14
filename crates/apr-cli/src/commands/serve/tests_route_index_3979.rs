@@ -26,6 +26,16 @@ async fn call(
     (status, String::from_utf8_lossy(&bytes).into_owned())
 }
 
+/// sha256 of this test binary, the `current_exe` the server hashes.
+fn running_exe_sha256() -> String {
+    use sha2::{Digest, Sha256};
+    let exe = std::env::current_exe().expect("current_exe");
+    format!(
+        "{:x}",
+        Sha256::digest(std::fs::read(exe).expect("read exe"))
+    )
+}
+
 /// `GET /` as the GGUF router serves it, or panic naming what was served instead.
 async fn index(router: &axum::Router) -> Vec<String> {
     let (st, body) = call(router, Method::GET, "/", "").await;
@@ -33,6 +43,13 @@ async fn index(router: &axum::Router) -> Vec<String> {
     let v: serde_json::Value = serde_json::from_str(&body)
         .unwrap_or_else(|_| panic!("GET / must be the JSON route index, got {body:?}"));
     assert_eq!(v["service"], "apr serve", "{v}");
+    // #5348 R-8: every router's `GET /` names the binary it runs. Hashed here
+    // independently of the server's helper, so a wrong or stale sha fails.
+    assert_eq!(
+        v["binary_sha256"].as_str(),
+        Some(running_exe_sha256().as_str()),
+        "{v}"
+    );
     v["routes"]
         .as_array()
         .expect("routes array")

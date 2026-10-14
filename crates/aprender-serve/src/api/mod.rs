@@ -107,9 +107,10 @@ pub mod effective_config;
 // Carried on `AppState` and read by the handler; not part of the public API,
 // which reaches the same facts through `effective_config(&state)`.
 pub use effective_config::{
-    admission_ceiling_reason, build_features, compute_class_from_residency, effective_config,
-    pp14_holds, AdmissionCounter, EffectiveConfigResponse, InFlightCounter, KvReport, ModelReport,
-    OffloadReport, SchedulerReport, ServerClock, ServerReport, ADMISSION_POLICY,
+    admission_ceiling_reason, binary_sha256, build_features, compute_class_from_residency,
+    effective_config, file_sha256_hex, pp14_holds, AdmissionCounter, EffectiveConfigResponse,
+    InFlightCounter, KvReport, ModelReport, OffloadReport, SchedulerReport, ServerClock,
+    ServerReport, ADMISSION_POLICY,
 };
 pub(crate) use effective_config::{effective_config_handler, EffectiveConfigState};
 mod gpu_handlers;

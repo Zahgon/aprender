@@ -485,3 +485,19 @@ async fn ollama_discovery_routes_answer() {
         );
     }
 }
+
+/// #5348 R-8: `GET /` names the binary this server runs, so a consumer pinned
+/// to a binary sha can refuse a gateway built from any other. The expected
+/// value is hashed here with `sha2` directly, not through the server's helper.
+#[tokio::test]
+async fn root_index_carries_the_running_binary_sha256() {
+    use sha2::{Digest, Sha256};
+    let exe = std::env::current_exe().expect("current_exe");
+    let want = format!("{:x}", Sha256::digest(std::fs::read(exe).expect("read exe")));
+    for config in all_configs() {
+        let (status, _, body) = probe(&config, "GET", "/", None, "").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let v: serde_json::Value = serde_json::from_str(&body).expect("json index");
+        assert_eq!(v["binary_sha256"].as_str(), Some(want.as_str()), "{v}");
+    }
+}

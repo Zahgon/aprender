@@ -143,6 +143,42 @@ impl ServerClock {
     }
 }
 
+/// #5348 R-8: sha256 of the running executable, hex, latched on first use.
+///
+/// `GET /` carries it so a consumer can refuse a gateway built from a binary
+/// other than the one it expects (one gateway per host, pinned by binary sha).
+/// `None` when the executable cannot be read; a consumer pinning a sha then
+/// refuses, because an absent sha is not a matching one.
+#[must_use]
+pub fn binary_sha256() -> Option<&'static str> {
+    static SHA: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    SHA.get_or_init(|| {
+        let exe = std::env::current_exe().ok()?;
+        file_sha256_hex(&exe).ok()
+    })
+    .as_deref()
+}
+
+/// Streaming sha256 of a file, lowercase hex.
+///
+/// # Errors
+/// When the file cannot be opened or read.
+pub fn file_sha256_hex(path: &std::path::Path) -> std::io::Result<String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 1 << 16];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
 impl Default for ServerClock {
     fn default() -> Self {
         Self::new()
