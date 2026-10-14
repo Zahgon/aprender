@@ -154,6 +154,18 @@ evaluate() {
         if (!(r in RW)) { RW[r] = $2; REV[r] = $4; RBR[r] = $5; RH[r] = $6; RC[r] = $7; RST[r] = toupper($8); RCO[r] = toupper($9); nr++; RID[nr] = r }
         if ($10 != "") { nj[r]++; k = nj[r]; JN[r, k] = $10; JS[r, k] = toupper($11); JC[r, k] = toupper($12); JB[r, k] = $13; JE[r, k] = $14; JD[r, k] = $15; JW[r, k] = $2 }
     }
+    # sibling_fail(r, i): failed jobs of run r, when every one is matched by another lane of the same workflow (each
+    #   judges its own); 0 when one is unmatched or none failed. A run carrying several lanes (release-lanes-nightly,
+    #   deep-nightly) concludes failure on the job of any lane, which must not turn its sibling lanes red (#5118)
+    function sibling_fail(r, i,    k, j, own, cnt) {
+        for (k = 1; k <= nj[r]; k++) if (JS[r, k] == "COMPLETED" && JC[r, k] ~ /^(FAILURE|TIMED_OUT|STARTUP_FAILURE)$/) {
+            own = 0
+            for (j = 1; j <= n; j++) if (j != i && WF[j] == JW[r, k] && JN[r, k] ~ RE[j]) own = 1
+            if (!own) return 0
+            cnt++
+        }
+        return cnt + 0
+    }
     # lane state of run r for lane i: green | red | pending | void; sets WHY, ST, EN, DUP
     function lst(i, r,    k, b, fb, nm, pend, bad, ok, tot) {
         split("", b); split("", fb); ST = ""; EN = ""; DUP = 0; WHY = ""
@@ -181,6 +193,7 @@ evaluate() {
         #   step or the workflow failed the run. The --in-run run is the exception: it is still running, and its
         #   conclusion is made up from the lane jobs, which the loops above already judged one by one
         if (ok == tot && (RCO[r] == "SUCCESS" || (IR != "" && r == IR))) return "green"
+        if (ok == tot && RCO[r] == "FAILURE" && sibling_fail(r, i) > 0) { WHY = "run " r ": concluded failure only on job(s) of another lane"; return "green" }
         if (ok == tot) { WHY = "run " r ": its matched job(s) succeeded but the run concluded " (RCO[r] == "" ? "nothing" : tolower(RCO[r])); return (RCO[r] ~ /^(FAILURE|TIMED_OUT|STARTUP_FAILURE)$/ ? "red" : "void") }
         WHY = "run " r ": matched job(s) skipped or cancelled"; return "void"
     }
@@ -837,6 +850,8 @@ fixture() {
     printf '101\t1\n201\t1\n301\t1\n' > "$1/attempts.tsv"
     printf '%s\t%s\t%s\tfresh\n' nightly_train.sh "$ST_C" "$ST_C" nightly_greens.sh "$ST_C" "$ST_C" red_age.sh "$ST_C" "$ST_C" > "$1/fresh"
 }
+# decide_lanes LANES DIR -> the lanes, as one text
+decide_lanes() { decide "$1" "$2" 2026-10-04T06:00:00Z; cat "$2/lanes.tsv"; }
 # st_decide DIR -> the line, the lanes and the reds, as one text
 st_decide() { decide "$ST_LANES" "$1" 2026-10-04T06:00:00Z; cat "$1/line" "$1/lanes.tsv" "$1/reds.tsv"; }
 self_test() {
@@ -870,6 +885,12 @@ self_test() {
     row run_failed_over_green_jobs_is_red 0 "run 201: its matched job(s) succeeded but the run concluded failure" "RELEASABLE H=" -- st_decide "$d"
     d="$tmp/runcancel"; fixture "$d"; sed -i "/\t201\t/s/\tCOMPLETED\tSUCCESS\tx\t/\tCOMPLETED\tCANCELLED\tx\t/" "$d/runs.tsv"
     row run_cancelled_over_green_jobs_is_not_green 0 "the run concluded cancelled" "RELEASABLE H=" -- st_decide "$d"
+    # #5118: a run that carries two lanes concludes failure on one lane's job: only that lane goes red
+    d="$tmp/sibling"; fixture "$d"; sed -i "/\t101\t/s/\tCOMPLETED\tSUCCESS\tjob-a\t/\tCOMPLETED\tFAILURE\tjob-a\t/; /\t101\t/s/\tCOMPLETED\tSUCCESS\tother\t/\tCOMPLETED\tFAILURE\tother\t/" "$d/runs.tsv"
+    row sibling_lane_failure_leaves_this_lane_green 0 "$(printf 'v-a\tverdict\tgreen')" "$(printf 'v-a\tverdict\tred')" -- decide_lanes "$ST_LANES
+v-o;info;check O;.github/workflows/a.yml;^(schedule|workflow_dispatch)$;^other$" "$d"
+    # the same run without the sibling lane: the failed job is nobody's, so the lane is red
+    row unmatched_job_failure_turns_the_lane_red 0 "run 101: its matched job(s) succeeded but the run concluded failure" "$(printf 'v-a\tverdict\tgreen')" -- decide_lanes "$ST_LANES" "$d"
     d="$tmp/other"; fixture "$d"; sed -i "/\t101\t/s/$ST_C/$ST_X/" "$d/runs.tsv"
     row run_on_another_commit_is_not_measured 0 "newest run 101 on bbbbbbbbbb" "RELEASABLE H=" -- st_decide "$d"
     d="$tmp/running"; fixture "$d"; sed -i '/\t101\t/s/\tCOMPLETED\tSUCCESS\tjob-a/\tIN_PROGRESS\t\tjob-a/' "$d/runs.tsv"
@@ -1471,6 +1492,7 @@ m111_lanes_schedule_only	/^dogfood;lab;/s/;\^(schedule|workflow_dispatch)\$;/;^s
 m112_lanes_run_pick_schedule_only	s/(\$4 == "schedule" || \$4 == "workflow_dispatch") \&\& \$7 > t/\$4 == "schedule" \&\& \$7 > t/
 m113_run_conclusion_ignored	s/(RCO\[r\] == "SUCCESS" || (IR != "" \&\& r == IR))/1/
 m114_inrun_conclusion_judged	s/ || (IR != "" \&\& r == IR)//
+m115_sibling_failure_reddens	s/RCO\[r\] == "FAILURE" \&\& sibling_fail(r, i) > 0/0/
 m88_running_night_counts	s/elif \$r.status != "completed" then/elif false then/
 m89_stale_night_counts	s/>= 86400 then/>= 864000000 then/
 m90_setup_fault_unprinted	s/(pwhy == "" \&\& other != "" ? "setup fault: /(0 ? "setup fault: /
