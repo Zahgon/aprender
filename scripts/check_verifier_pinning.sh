@@ -1068,7 +1068,8 @@ behaviour_test() {
     # running this check at once on one target failed 12 runs out of 12, at
     # rows 4, 4b and 4c in turn. Row 4 asserts the private target was the one
     # used. `local` keeps the export inside this function.
-    local CARGO_TARGET_DIR="$REPO_ROOT/target"
+    local pv_own_target="$REPO_ROOT/target"
+    local CARGO_TARGET_DIR="$pv_own_target"
     export CARGO_TARGET_DIR
 
     # Row 1 — the self-referential case: releasing pmat itself.
@@ -1179,9 +1180,9 @@ behaviour_test() {
             exit 1
         fi
         case "$PV" in
-            "$CARGO_TARGET_DIR"/*) ;;
+            "$pv_own_target"/*) ;;
             *)
-                printf 'FAIL  pv-pin     resolved pv %s is outside this tree'"'"'s target %s —\n' "$PV" "$CARGO_TARGET_DIR"
+                printf 'FAIL  pv-pin     resolved pv %s is outside this tree'"'"'s target %s —\n' "$PV" "$pv_own_target"
                 printf '                 these rows would measure another tree'"'"'s build (#5351)\n'
                 exit 1
                 ;;
