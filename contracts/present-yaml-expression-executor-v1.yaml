@@ -81,15 +81,11 @@ equations:
       - "mean of the empty set is 0.0, never NaN"
       - "a non-array input is refused by require_array rather than coerced"
 
-falsification:
+falsification_tests:
   - id: FALSIFY-PRESENT-YAML-EXEC-V1-001
     description: "Operator spellings cannot drift apart, and the table fails closed"
-    test: |
-      crates/aprender-present-yaml/src/executor.rs::tests::
-      every_spelling_of_an_operator_decides_the_same_way,
-      ::equality_and_inequality_are_exact_complements,
-      ::an_unrecognised_operator_matches_nothing,
-      ::ordering_against_a_non_number_is_false_in_both_directions
+    test: "cargo test -p aprender-present-yaml --lib every_spelling_of_an_operator_decides_the_same_way"
+    prediction: "every alias of an operator (eq/==/=, ne/!=/<>, gt/>, ...) gives the same compare_values result on all 7 probes"
     evidence: |
       cargo test -p aprender-present-yaml --lib executor — 12 passed, 2026-09-22.
       MUTANT: drop the ">=" alias from the "gte" arm — RED.
@@ -98,10 +94,8 @@ falsification:
 
   - id: FALSIFY-PRESENT-YAML-EXEC-V1-002
     description: "The ms suffix is read before the bare s, and units are exact"
-    test: |
-      ::the_ms_suffix_is_read_before_the_bare_s,
-      ::window_units_convert_by_their_exact_multiple,
-      ::an_empty_or_unparseable_window_is_refused
+    test: "cargo test -p aprender-present-yaml --lib the_ms_suffix_is_read_before_the_bare_s"
+    prediction: "parse_window reads 500ms as 500 and 500s as 500000"
     evidence: |
       MUTANT: swap the "ms" and 's' arms of the suffix ladder — RED on 2 rows,
       "500ms" parses as neither.
@@ -109,10 +103,8 @@ falsification:
 
   - id: FALSIFY-PRESENT-YAML-EXEC-V1-003
     description: "Aggregates drop unreadable rows, and the empty mean is 0.0"
-    test: |
-      ::rows_that_cannot_be_read_are_dropped_from_an_aggregate,
-      ::the_mean_of_nothing_is_zero_rather_than_not_a_number,
-      ::a_transform_that_needs_an_array_refuses_anything_else
+    test: "cargo test -p aprender-present-yaml --lib rows_that_cannot_be_read_are_dropped_from_an_aggregate"
+    prediction: "rows with a missing or non-numeric field are dropped, so sum is 4.0 and mean is 2.0 over the 2 readable rows"
     evidence: |
       MUTANT: remove apply_mean's is_empty guard — RED, the result is NaN.
       The drop behaviour is asserted as the MEASURED behaviour, not endorsed:

@@ -40,18 +40,21 @@ equations:
     formula: "∀ t ∈ model: read(write(model)).tensor(t.name).shape == t.shape"
     note: "GGUF col-major transpose at import only; export→import is net-identity"
 
-falsification:
+falsification_tests:
   - id: FALSIFY-RT-001
     description: "APR write→read roundtrip preserves F32 tensor values bit-exactly"
-    test: "Write random F32 tensor to APR file; read back; assert byte-level buffer equality"
+    test: "cargo test -p aprender-core --lib test_single_tensor"
+    prediction: "an F32 tensor written with AprWriter reads back through AprReader as a Vec<f32> equal to the input"
     evidence: "cargo test -p aprender-core --lib encoder_roundtrip"
 
   - id: FALSIFY-RT-002
     description: "GGUF export→import roundtrip preserves tensor shapes and names"
-    test: "Export to GGUF; re-import; assert names/ranks/dims identical (net-identity)"
+    test: "cargo test -p aprender-core --lib test_t_qkv_04_multihop_st_apr_gguf_apr_st"
+    prediction: "a SafeTensors -> APR -> GGUF -> APR -> SafeTensors round trip leaves no missing, extra, shape-mismatched or data-mismatched tensor"
     evidence: "cargo test -p aprender-core --lib encoder_roundtrip"
 
   - id: FALSIFY-RT-003
     description: "SafeTensors save→load roundtrip preserves all metadata key-value pairs"
-    test: "Save with custom metadata map; load back; assert map equality"
+    test: "cargo test -p aprender-core --lib test_save_safetensors_with_metadata_round_trip"
+    prediction: "both user metadata keys saved into a SafeTensors file come back with their saved values when it is reopened with MappedSafeTensors"
     evidence: "cargo test -p aprender-core --lib encoder_roundtrip"

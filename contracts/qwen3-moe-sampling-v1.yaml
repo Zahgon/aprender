@@ -77,36 +77,29 @@ equations:
       else:
         next_token = multinomial(softmax(logits), seed)
 
-falsification:
+falsification_tests:
   - id: FALSIFY-QWEN3_MOE_SAMPLING_V1_001
     description: "temperature == 0 OR top_k == 1 produces deterministic outputs across runs"
-    test: |
-      Cargo test: same prompt + same seed + temperature=0 → same tokens
-      across 3 invocations. Discharges the greedy-fallback invariant.
+    test: "cargo test -p aprender-serve --lib v1_001_temperature_zero_is_argmax_deterministic"
+    prediction: "sample_from_logits at temperature 0.0 returns the argmax index on each of 5 repeated runs"
     evidence: "cargo test --test qwen3_moe_sampling_v1 -- --ignored"
 
   - id: FALSIFY-QWEN3_MOE_SAMPLING_V1_002
     description: "temperature > 0 with fixed seed produces deterministic outputs (seeded RNG)"
-    test: |
-      Cargo test: same prompt + same seed (e.g. 42) + temperature=0.7 →
-      same tokens across 3 invocations. Sampling MUST seed from
-      QuantizedGenerateConfig.seed.
+    test: "cargo test -p aprender-serve --lib v1_002_seeded_rng_is_reproducible"
+    prediction: "temperature 0.7 with seed 42 yields the identical token across 5 freshly seeded StdRng runs"
     evidence: "cargo test --test qwen3_moe_sampling_v1 -- --ignored"
 
   - id: FALSIFY-QWEN3_MOE_SAMPLING_V1_003
     description: "temperature > 0 with different seeds produces different outputs"
-    test: |
-      Cargo test: same prompt + temperature=0.7 + seed=42 vs seed=43 →
-      tokens differ (at least one position differs in the first 16
-      generated tokens). Discharges the non-greedy-ness invariant.
+    test: "cargo test -p aprender-serve --lib v1_003_different_seeds_diverge"
+    prediction: "sampling at temperature 1.5 over seeds 0..32 yields at least 3 distinct tokens"
     evidence: "cargo test --test qwen3_moe_sampling_v1 -- --ignored"
 
   - id: FALSIFY-QWEN3_MOE_SAMPLING_V1_004
     description: "top_k truncation actually restricts sampling space"
-    test: |
-      Cargo test: temperature=high (e.g. 5.0; nearly-uniform sampling)
-      + top_k=1 → output IS greedy (argmax). Confirms top_k=1 is
-      equivalent to greedy regardless of temperature.
+    test: "cargo test -p aprender-serve --lib v1_004_top_k_one_equals_pure_greedy"
+    prediction: "with top_k=1, temperature 50 and a different seed still return the greedy argmax token"
     evidence: "cargo test --test qwen3_moe_sampling_v1 -- --ignored"
 
 scope_extension:

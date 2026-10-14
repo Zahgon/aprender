@@ -32,8 +32,9 @@ equations:
     formula: "∀ M,N,K: output shape = [M,N] regardless of tile alignment"
     note: "Remainder tiles handled by masked stores or scalar fallback"
 
-falsification:
+falsification_tests:
   - id: FALSIFY-AVX512-BLIS-001
     description: "BLIS GEMM matches naive for random matrices"
-    test: "backend equivalence tests"
+    test: "cargo test -p aprender-compute --lib test_gemm_blis_large"
+    prediction: "gemm_blis on 256x256 patterned matrices stays within 1e-2 max absolute difference of the naive gemm_reference"
     evidence: "cargo test -p aprender-compute --lib blis"
