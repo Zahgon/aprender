@@ -667,6 +667,16 @@ mod tests {
                 .expect_err("qwen3.5 must be refused")
                 .to_string();
             assert!(msg.contains("UnsupportedArch"), "{msg}");
+            // C314 r3: --plan and --stage precompute refuse too (they return
+            // before run_config_train_real).
+            for (stage, plan) in [(None, true), (Some("precompute"), false), (Some("train"), false)] {
+                let msg = super::run_config_mode(&cfg_path, stage, plan, true)
+                    .expect_err("config mode must refuse qwen3.5")
+                    .to_string();
+                assert!(msg.contains("UnsupportedArch"), "{stage:?} plan={plan}: {msg}");
+            }
+            // The shared refusal the positional and CUDA (incl. --plan) paths call.
+            assert!(super::refuse_unmodelled_teacher_student(teacher, Some(student.as_path())).is_err());
         }
     }
 

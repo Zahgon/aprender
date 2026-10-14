@@ -474,6 +474,7 @@ pub(crate) fn run(
                         "--backend cuda requires a positional teacher path".to_string(),
                     )
                 })?;
+                refuse_unmodelled_teacher_student(teacher_path, student_path)?;
                 return run_cuda_backend(
                     teacher_path,
                     student_path,
@@ -518,12 +519,7 @@ pub(crate) fn run(
     if !teacher_path.exists() {
         return Err(CliError::FileNotFound(teacher_path.to_path_buf()));
     }
-    // #4552 train-arch-honesty-v1: every backend and --plan refuse an unmodelled
-    // teacher/student architecture by name, from the header only.
-    super::model_config::refuse_unmodelled_model_path(teacher_path)?;
-    if let Some(student) = student_path {
-        super::model_config::refuse_unmodelled_model_path(student)?;
-    }
+    refuse_unmodelled_teacher_student(teacher_path, student_path)?;
 
     let distill_strategy: DistillStrategy = strategy.parse().map_err(CliError::ValidationFailed)?;
     validate_distill_params(temperature, alpha)?;
@@ -1092,6 +1088,17 @@ impl entrenar_distill::teacher_provider::TeacherLogitsProvider for TruncatingTea
 ///   --plan: validate config + show estimates
 ///   --stage precompute: extract teacher logits to sharded files
 ///   --stage train: train student with KD loss from precomputed logits
+/// #4552 train-arch-honesty-v1: every backend (the CUDA one and its --plan
+/// included) refuses an unmodelled teacher/student architecture by name,
+/// before any weight read.
+fn refuse_unmodelled_teacher_student(teacher: &Path, student: Option<&Path>) -> Result<()> {
+    super::model_config::refuse_unmodelled_model_path(teacher)?;
+    if let Some(student) = student {
+        super::model_config::refuse_unmodelled_model_path(student)?;
+    }
+    Ok(())
+}
+
 fn run_config_mode(
     config_path: &Path,
     stage: Option<&str>,
@@ -1122,6 +1129,11 @@ fn run_config_mode(
     config
         .validate()
         .map_err(|e| CliError::ValidationFailed(format!("Validation error: {e}")))?;
+
+    // #4552: --plan and both stages refuse an unmodelled teacher/student first.
+    for model_id in [&config.teacher.model_id, &config.student.model_id] {
+        super::model_config::refuse_unmodelled_model_path(Path::new(model_id))?;
+    }
 
     if plan_only {
         return run_config_plan(&config, config_path, json_output);
