@@ -608,3 +608,25 @@ equations:
     codomain: "{true, false}"
     invariants:
       - "FALSIFY-CAP-002: every row agrees with the one predicate the GPU dispatch uses"
+
+falsification_tests:
+  - id: FALSIFY-CAP-001-T
+    rule: "gpu_supported_ops() returns exactly the ops this contract marks gpu_supported true"
+    prediction: "The test reads this contract and asserts the two op sets are equal in both directions"
+    test: "cargo test -p aprender-serve --lib capability::capability_contract::the_contract_and_gpu_supported_ops_are_the_same_set"
+    if_fails: "An op is GPU-enabled in code but not declared here, or the reverse"
+  - id: FALSIFY-CAP-002-T
+    rule: "Every quant type the GPU dispatch accepts is declared gpu_supported true and every refused type false"
+    prediction: "The test checks each quant_types row, keyed by ggml id, against the GPU dispatch predicate and asserts they agree"
+    test: "cargo test -p aprender-serve --lib capability::capability_contract::every_quant_row_agrees_with_the_gpu_dispatch_predicate"
+    if_fails: "The dispatch and the declared quant table diverge"
+  - id: FALSIFY-CAP-004-T
+    rule: "Every ggml_type variant appears in quant_types with the same numeric id"
+    prediction: "The test walks the ggml type enum and asserts each variant has a quant_types row with the same id"
+    test: "cargo test -p aprender-serve --lib capability::capability_contract::the_quant_table_is_exhaustive_over_the_ggml_enum"
+    if_fails: "A new quant type is decoded without being declared"
+  - id: FALSIFY-CAP-003-T
+    rule: "Every op_implementation row has a known status, and every wired row names a non-empty symbol and non-empty evidence"
+    prediction: "The test asserts each status is wired, unwired, unimplemented or unestablished, and each wired row carries a symbol and evidence. It does not walk the call graph; the non-test-reference half of FALSIFY-CAP-003 rests on that evidence text"
+    test: "cargo test -p aprender-serve --lib capability::capability_contract::an_implementation_row_claiming_wired_names_a_symbol"
+    if_fails: "An op is marked wired with no symbol or evidence behind it"
