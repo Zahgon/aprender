@@ -838,43 +838,6 @@ fn dispatch_diagnostic_commands(cli: &Cli) -> Option<Result<(), CliError>> {
     })
 }
 
-/// SHIP-007 layer-0 stage diff: `apr trace --save-tensor` on a `.apr` file runs the
-/// end-to-end save-tensor wrapper (PR-A clap → PR-B plan → PR-C-real step1+2 wrapper).
-/// `None` (after naming the extension) falls through to the existing trace path.
-/// Split out of [`dispatch_diagnostic_commands`] unchanged: inline, it held that
-/// function's cognitive complexity at 30 against the pre-commit ceiling of 25.
-#[cfg(feature = "inference")]
-fn dispatch_trace_save_tensor(
-    r: &Path,
-    stages: &str,
-    dir: Option<&Path>,
-    layers: &str,
-) -> Option<Result<(), CliError>> {
-    let ext_lower = r
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(str::to_ascii_lowercase);
-    match ext_lower.as_deref() {
-        Some("apr") => Some(crate::commands::trace_save_tensor::run_save_tensor_apr(
-            r, stages, dir, layers,
-        )),
-        // M-MOE-SUB-2 step (a) CLI completion: GGUF dispatches to the MoE-traced
-        // wireup if the arch is qwen3_moe; dense-GGUF will be wired in SHIP-007 PR-E.
-        Some("gguf") => Some(
-            crate::commands::trace_save_tensor::run_save_tensor_gguf_moe(r, stages, dir, layers),
-        ),
-        _ => {
-            eprintln!(
-                "apr trace --save-tensor: only .apr and .gguf (qwen3_moe arch) \
-                 supported today; .safetensors will be wired in SHIP-007 PR-E \
-                 (got {})",
-                r.display()
-            );
-            None
-        }
-    }
-}
-
 /// CRUX-B-20 — render an `apr diff --quant-roundtrip` report.
 fn dispatch_quant_roundtrip(
     reference: &std::path::Path,
@@ -1325,6 +1288,7 @@ mod batch_jsonl_logprobs_4026 {
             1,
             true,
             false,
+            &super::commands::run::ConstraintArgs::default(),
         )
         .expect_err("refused");
         let msg = err.to_string();
@@ -1346,6 +1310,7 @@ mod batch_jsonl_logprobs_4026 {
             1,
             true,
             false,
+            &super::commands::run::ConstraintArgs::default(),
         )
         .expect_err("missing files");
         assert!(!err.to_string().contains("--logprobs"), "{err}");
