@@ -294,6 +294,7 @@ fn wgpu_forward_pass(
         config.intermediate_dim,
     );
     fwd.set_rms_norm_eps(config.eps);
+    fwd.set_rope_theta(config.rope_theta); // #4832: it hardcoded 1e6
     fwd
 }
 

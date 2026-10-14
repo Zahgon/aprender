@@ -90,6 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     // #4056: match the CPU reference's eps (the shader used to hardcode 1e-6).
     fwd.set_rms_norm_eps(eps);
+    fwd.set_rope_theta(config.rope_theta); // #4832
 
     // Dequantize weights
     println!("Dequantizing weights...");

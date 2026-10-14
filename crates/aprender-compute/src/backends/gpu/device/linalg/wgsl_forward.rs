@@ -112,14 +112,53 @@ pub struct WgslForwardPass {
     /// [`DEFAULT_RMS_NORM_EPS`]; callers set the model's value with
     /// [`WgslForwardPass::set_rms_norm_eps`] (#4056: Llama-family models use 1e-5).
     rms_norm_eps: f32,
+    /// RoPE base frequency. Defaults to [`DEFAULT_ROPE_THETA`]; callers set the
+    /// model's value with [`WgslForwardPass::set_rope_theta`] (#4832: Llama 2 and
+    /// Mistral use 10000, Llama 3 uses 500000).
+    rope_theta: f32,
 }
 
 /// Default RMSNorm epsilon: the constant the shader hardcoded before #4056.
 pub const DEFAULT_RMS_NORM_EPS: f32 = 1e-6;
 
+/// Default RoPE base: the Qwen2 constant the forward pass hardcoded before #4832.
+pub const DEFAULT_ROPE_THETA: f32 = 1_000_000.0;
+
 /// Uniform params for the RMSNorm shader: `(dim, eps as f32 bits, 0, 0)`.
 fn rmsnorm_params(dim: u32, eps: f32) -> [u32; 4] {
     [dim, eps.to_bits(), 0, 0]
+}
+
+/// Uniform params for the batch RoPE shader:
+/// `(seq_len, num_heads, head_dim, rope_theta as f32 bits)`.
+fn batch_rope_params(seq_len: u32, num_heads: u32, head_dim: u32, rope_theta: f32) -> [u32; 4] {
+    [seq_len, num_heads, head_dim, rope_theta.to_bits()]
+}
+
+/// NeoX-style RoPE on `num_heads` heads of `head_dim` at one `position`, in place:
+/// element `i` of each head's first half pairs with element `i + head_dim / 2`.
+/// The CPU half of the decode path; `BATCH_ROPE_SHADER` computes the same rotation.
+fn apply_rope_neox(
+    data: &mut [f32],
+    num_heads: usize,
+    head_dim: usize,
+    position: usize,
+    rope_theta: f32,
+) {
+    let half = head_dim / 2;
+    for h in 0..num_heads {
+        let offset = h * head_dim;
+        for i in 0..half {
+            let theta = f64::from(rope_theta).powf(-((2 * i) as f64) / head_dim as f64);
+            let angle = position as f64 * theta;
+            let cos_a = angle.cos() as f32;
+            let sin_a = angle.sin() as f32;
+            let x0 = data[offset + i];
+            let x1 = data[offset + i + half];
+            data[offset + i] = x0 * cos_a - x1 * sin_a;
+            data[offset + i + half] = x0 * sin_a + x1 * cos_a;
+        }
+    }
 }
 
 // WGSL shader source for RMSNorm (multi-row via workgroup_id.y)
@@ -215,7 +254,7 @@ struct RopeParams {
     seq_len: u32,
     num_heads: u32,
     head_dim: u32,
-    _pad: u32,
+    rope_theta: f32,
 }
 
 @group(0) @binding(1) var<uniform> params: RopeParams;
@@ -239,7 +278,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Only process the first half of each head (pairs with second half)
     if (pos_in_head >= half_hd) { return; }
 
-    let theta = pow(1000000.0, -f32(pos_in_head * 2u) / f32(head_dim));
+    let theta = pow(params.rope_theta, -f32(pos_in_head * 2u) / f32(head_dim));
     let angle = f32(position) * theta;
     let cos_a = cos(angle);
     let sin_a = sin(angle);
@@ -562,7 +601,20 @@ impl WgslForwardPass {
             head_dim: head_dim as u32,
             intermediate_dim: intermediate_dim as u32,
             rms_norm_eps: DEFAULT_RMS_NORM_EPS,
+            rope_theta: DEFAULT_ROPE_THETA,
         }
+    }
+
+    /// Set the RoPE base frequency every rotation in this forward pass uses — pass
+    /// the model's configured `rope_theta`. Default: [`DEFAULT_ROPE_THETA`].
+    pub fn set_rope_theta(&mut self, rope_theta: f32) {
+        self.rope_theta = rope_theta;
+    }
+
+    /// The RoPE base frequency this forward pass uses.
+    #[must_use]
+    pub fn rope_theta(&self) -> f32 {
+        self.rope_theta
     }
 
     /// Set the RMSNorm epsilon every norm in this forward pass uses — pass the
@@ -964,42 +1016,18 @@ impl WgslForwardPass {
             }
         }
 
-        // PMAT-343: Apply RoPE (NeoX-style interleaved) to Q and K
+        // PMAT-343: Apply RoPE (NeoX-style interleaved) to Q and K, at the model's
+        // rope_theta (#4832: this was a hardcoded Qwen2 1e6).
         let head_dim = self.head_dim as usize;
         let position = _position; // Use the position parameter
-        let rope_theta = 1_000_000.0f64; // Qwen2 rope_theta
-
-        // RoPE on Q (num_heads × head_dim)
-        for h in 0..(self.num_heads as usize) {
-            let offset = h * head_dim;
-            let half = head_dim / 2;
-            for i in 0..half {
-                let theta = rope_theta.powf(-((2 * i) as f64) / head_dim as f64);
-                let angle = position as f64 * theta;
-                let cos_a = angle.cos() as f32;
-                let sin_a = angle.sin() as f32;
-                let x0 = q_data[offset + i];
-                let x1 = q_data[offset + i + half];
-                q_data[offset + i] = x0 * cos_a - x1 * sin_a;
-                q_data[offset + i + half] = x0 * sin_a + x1 * cos_a;
-            }
-        }
-
-        // RoPE on K (num_kv_heads × head_dim)
-        for h in 0..(self.num_kv_heads as usize) {
-            let offset = h * head_dim;
-            let half = head_dim / 2;
-            for i in 0..half {
-                let theta = rope_theta.powf(-((2 * i) as f64) / head_dim as f64);
-                let angle = position as f64 * theta;
-                let cos_a = angle.cos() as f32;
-                let sin_a = angle.sin() as f32;
-                let x0 = k_data[offset + i];
-                let x1 = k_data[offset + i + half];
-                k_data[offset + i] = x0 * cos_a - x1 * sin_a;
-                k_data[offset + i + half] = x0 * sin_a + x1 * cos_a;
-            }
-        }
+        apply_rope_neox(&mut q_data, self.num_heads as usize, head_dim, position, self.rope_theta);
+        apply_rope_neox(
+            &mut k_data,
+            self.num_kv_heads as usize,
+            head_dim,
+            position,
+            self.rope_theta,
+        );
 
         // PMAT-344: Append K,V to cache and compute full attention
         let head_dim = self.head_dim as usize;
@@ -1823,15 +1851,7 @@ impl WgslForwardPass {
         num_heads: u32,
         head_dim: u32,
     ) {
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct RopeParams {
-            seq_len: u32,
-            num_heads: u32,
-            head_dim: u32,
-            _pad: u32,
-        }
-        let params = RopeParams { seq_len, num_heads, head_dim, _pad: 0 };
+        let params = batch_rope_params(seq_len, num_heads, head_dim, self.rope_theta);
         let params_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("batch_rope_params"),
             size: 16,
@@ -2212,5 +2232,86 @@ mod rmsnorm_eps_tests {
         });
         let err = pollster::block_on(gpu.device.pop_error_scope());
         assert!(err.is_none(), "RMSNORM_SHADER failed validation: {err:?}");
+    }
+}
+
+#[cfg(test)]
+mod rope_theta_tests {
+    use super::{apply_rope_neox, batch_rope_params, DEFAULT_ROPE_THETA};
+
+    /// #4832: the batch shader reads the base from `params.rope_theta`; the
+    /// uniform must carry the configured value bit-exactly.
+    #[test]
+    fn batch_rope_params_carry_theta_bits() {
+        let p = batch_rope_params(7, 32, 128, 10_000.0);
+        assert_eq!(&p[..3], &[7, 32, 128]);
+        assert_eq!(f32::from_bits(p[3]), 10_000.0);
+        assert_eq!(f32::from_bits(batch_rope_params(1, 1, 2, DEFAULT_ROPE_THETA)[3]), 1e6);
+    }
+
+    /// #4832: the rotation uses the base it is given. head_dim 4, position 1, so
+    /// pair 1 turns by base^(-1/2): 0.01 rad at 10000 (Llama 2, Mistral), 0.001
+    /// rad at the old hardcoded 1e6.
+    #[test]
+    fn rope_rotation_follows_theta() {
+        let rotate = |theta: f32| {
+            let mut v = vec![0.0f32, 1.0, 0.0, 0.0];
+            apply_rope_neox(&mut v, 1, 4, 1, theta);
+            v
+        };
+        let llama = rotate(10_000.0);
+        assert!((llama[1] - 0.01f32.cos()).abs() < 1e-6, "{llama:?}");
+        assert!((llama[3] - 0.01f32.sin()).abs() < 1e-6, "{llama:?}");
+        let qwen = rotate(1e6);
+        assert!((qwen[3] - 0.001f32.sin()).abs() < 1e-6, "{qwen:?}");
+        assert!((llama[3] - qwen[3]).abs() > 5e-3, "theta did not change the rotation");
+    }
+
+    /// #4832: position 0 is the identity at any base.
+    #[test]
+    fn rope_position_zero_is_identity() {
+        let mut v = vec![0.5f32, -1.0, 2.0, 3.0, 4.0, -5.0, 6.0, 7.0];
+        let orig = v.clone();
+        apply_rope_neox(&mut v, 2, 4, 0, 10_000.0);
+        assert_eq!(v, orig);
+    }
+
+    /// #4832: neither half of the decode path may carry a literal base again. The
+    /// batch shader reads `params.rope_theta`, and the CPU half calls
+    /// `apply_rope_neox` with `self.rope_theta`.
+    #[test]
+    fn no_hardcoded_rope_base_on_the_forward_path() {
+        assert!(super::BATCH_ROPE_SHADER.contains("pow(params.rope_theta,"));
+        assert!(!super::BATCH_ROPE_SHADER.contains("1000000.0"));
+        let src = include_str!("wgsl_forward.rs");
+        let body = src.split("#[cfg(test)]").next().unwrap_or_default();
+        assert!(!body.contains("1_000_000.0f64"), "a hardcoded f64 RoPE base is back");
+        // rustfmt reflows long calls, so compare with whitespace removed.
+        let flat: String = body.chars().filter(|c| !c.is_whitespace()).collect();
+        assert_eq!(
+            flat.matches("position,self.rope_theta").count(),
+            2,
+            "Q and K must use self.rope_theta"
+        );
+        assert!(
+            flat.contains("head_dim,self.rope_theta"),
+            "the batch shader params must carry self.rope_theta"
+        );
+    }
+
+    /// #4832: the batch shader now declares `rope_theta: f32` in its uniform; naga
+    /// must accept it. Skips (returns) when no GPU adapter is present.
+    #[test]
+    fn batch_rope_shader_validates_on_device() {
+        let Ok(gpu) = crate::backends::gpu::GpuDevice::new() else {
+            return;
+        };
+        gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let _module = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("batch_rope_theta_test"),
+            source: wgpu::ShaderSource::Wgsl(super::BATCH_ROPE_SHADER.into()),
+        });
+        let err = pollster::block_on(gpu.device.pop_error_scope());
+        assert!(err.is_none(), "BATCH_ROPE_SHADER failed validation: {err:?}");
     }
 }
