@@ -13,6 +13,11 @@
 #   CI       --relay    models-nightly.yml, at C: fetch models/<C>, verify it, replay the verdict from the
 #                       raw evidence, and hand the state to the `models` job. No bundle, a bundle that
 #                       fails a check, or a replay that disagrees is not_measured: never a pass.
+#                       --at-or-before H (#3715): the host measured its own commit B at ~21Z and the
+#                       relay fires hours later on a later main C, so it relays the newest first-parent
+#                       ancestor of C, no more than H hours older than C, that has a bundle. B is printed
+#                       beside C and written to GITHUB_OUTPUT as measured=; no bundle in the window is
+#                       not_measured, as before.
 #   --run and --publish are separate so that the measuring step never sees the push credential: the
 #   host's units keep the credential out of the measuring sandbox (the infra ticket, not this file).
 #
@@ -47,7 +52,7 @@
 # usage:
 #   models_nightly.sh --run --repo DIR --work DIR [--commit SHA] [--timeout SECONDS] [--measure ladder|crux]
 #   models_nightly.sh --publish --repo DIR --work DIR
-#   models_nightly.sh --relay --commit SHA --out DIR [--evidence DIR] [--plant-red] [--measure ladder|crux]   (cwd: a checkout)
+#   models_nightly.sh --relay --commit SHA --out DIR [--evidence DIR] [--plant-red] [--measure ladder|crux] [--at-or-before HOURS]   (cwd: a checkout)
 #   models_nightly.sh --tickets --commit SHA --evidence BUNDLE --out FILE   open/update the issue of each red row (gh)
 #   models_nightly.sh --self-test   the case table (fixture repos, no network, no GPU)
 #   models_nightly.sh --mutants     each planted mutant must turn the case table RED
@@ -196,26 +201,50 @@ verify() {
     printf '%s\n' "$replay"
 }
 
-relay() { # relay COMMIT OUT EVIDENCE PLANT
-    local c=$1 out=$2 ev=$3 cls state reason bundle=
+# producer RUN-COMMIT HOURS -> B: the newest first-parent commit at or before the run's commit, committed
+# no more than HOURS before it, that has a bundle on the evidence branch. The GPU host measures its own
+# commit at ~21Z and the relay fires hours later on whatever main is then (#3715), so an exact match on
+# the run's commit is almost never there. Nothing is returned when no bundle is in the window.
+producer() {
+    local c=$1 h=$2 t b
+    t=$(git log -1 --format=%ct "$c" 2> /dev/null) || return 0
+    [ -n "$t" ] || return 0
+    while read -r b; do
+        git rev-parse -q --verify "refs/remotes/origin/$EV_BRANCH:$PREFIX/$b" > /dev/null && { printf '%s\n' "$b"; return 0; }
+    done < <(git rev-list --first-parent --max-age=$((t - h * 3600)) "$c" 2> /dev/null)
+}
+
+relay() { # relay COMMIT OUT EVIDENCE PLANT AT-OR-BEFORE-HOURS
+    local c=$1 out=$2 ev=$3 m=$1 cls state reason bundle= where=
     mkdir -p -- "$out" || die "cannot create $out"
     if [ -z "$ev" ]; then
-        ev="$out/$PREFIX/$c"
-        if git fetch -q --no-tags --depth=1 origin "+refs/heads/$EV_BRANCH:refs/remotes/origin/$EV_BRANCH" 2> /dev/null \
-            && git rev-parse -q --verify "refs/remotes/origin/$EV_BRANCH:$PREFIX/$c" > /dev/null; then
-            git archive --format=tar "refs/remotes/origin/$EV_BRANCH" "$PREFIX/$c" > "$out/bundle.tar" \
-                && tar -xf "$out/bundle.tar" -C "$out" && rm -f -- "$out/bundle.tar"
+        if git fetch -q --no-tags --depth=1 origin "+refs/heads/$EV_BRANCH:refs/remotes/origin/$EV_BRANCH" 2> /dev/null; then
+            # --at-or-before: the bundle of the producer's commit B, not of this run's commit (#3715)
+            [ -z "$5" ] || m=$(producer "$c" "$5")
+            if [ -n "$m" ] && git rev-parse -q --verify "refs/remotes/origin/$EV_BRANCH:$PREFIX/$m" > /dev/null; then
+                git archive --format=tar "refs/remotes/origin/$EV_BRANCH" "$PREFIX/$m" > "$out/bundle.tar" \
+                    && tar -xf "$out/bundle.tar" -C "$out" && rm -f -- "${out:?}/bundle.tar"
+            fi
+        elif [ -n "$5" ]; then
+            m=
         fi
+        ev="$out/$PREFIX/${m:-none}"
     fi
-    cls=$(verify "$ev" "$c")
+    if [ -z "$m" ]; then
+        cls=$(printf 'not_measured\tno bundle at or before %s within %sh on %s' "${c:0:9}" "$5" "$EV_BRANCH")
+    else
+        # verified against the commit it measured (B), with B's own version and B's models_t1.sh
+        cls=$(verify "$ev" "$m")
+        [ -z "$5" ] || where=" (measured at ${m:0:9}, $(git rev-list --count "$m..$c" 2> /dev/null || echo '?') commit(s) behind)"
+    fi
     state=${cls%%$'\t'*}; reason=${cls#*$'\t'}
     # bundle= is the dir readiness-nightly reads as artifact models-t1: a verified green or red only. Never
     # not_measured (its files proved nothing) and never a planted run (a plant is not a measurement).
     case $state in green|red) [ -n "$4" ] || bundle=$ev ;; esac
     [ -z "$4" ] || { reason="PLANTED red (plant_red), the bundle said $state: $reason"; state=red; }
     reason=$(printf '%s' "$reason" | tr -d '\r\n')
-    if [ -n "${GITHUB_OUTPUT:-}" ]; then printf 'state=%s\nreason=%s\nbundle=%s\n' "$state" "$reason" "$bundle" >> "$GITHUB_OUTPUT" || die "cannot write GITHUB_OUTPUT"; fi
-    say "RELAY $state at ${c:0:9}: $reason"
+    if [ -n "${GITHUB_OUTPUT:-}" ]; then printf 'state=%s\nreason=%s\nbundle=%s\nmeasured=%s\n' "$state" "$reason" "$bundle" "$m" >> "$GITHUB_OUTPUT" || die "cannot write GITHUB_OUTPUT"; fi
+    say "RELAY $state at ${c:0:9}$where: $reason"
 }
 
 # red_rows BUNDLE -> "host<TAB>row<TAB>why", one line per red row of a red bundle: each rung a receipt
@@ -659,6 +688,20 @@ STUB
     row e2e_pruned_bundle_is_not_measured 0 "RELAY not_measured at ${c1:0:9}: no bundle" "" -- bash -c "cd '$clone' && bash '$SCRIPT_PATH' --relay --commit $c1 --out '$tmp/relay4'"
     row e2e_relay_on_unmeasured_c_is_not_measured 0 "RELAY not_measured" "RELAY green" -- bash -c "cd '$clone' && GITHUB_OUTPUT='$tmp/gho3' bash '$SCRIPT_PATH' --relay --commit $c2 --out '$tmp/relay5' --evidence '$tmp/absent'"
     row e2e_not_measured_gives_no_bundle 0 "state=not_measured" "bundle=/" -- cat "$tmp/gho3"
+    # -- --at-or-before (#3715): the relay fires hours after the host measured B, on a later main C. c4 is a
+    # commit three days after c2 with no bundle of its own; only a window that reaches back to c2 finds c2's.
+    GIT_COMMITTER_DATE="@$(( $(date +%s) + 259200 )) +0000" git -C "$clone" -c user.name=t -c user.email=t@t commit -q --allow-empty -m c4 || exit 3
+    c4=$(git -C "$clone" rev-parse HEAD)
+    row e2e_later_c_without_flag_is_not_measured 0 "RELAY not_measured at ${c4:0:9}: no bundle" "(measured at" -- bash -c "cd '$clone' && bash '$SCRIPT_PATH' --relay --commit $c4 --out '$tmp/aob1'"
+    row e2e_b_outside_the_window_is_not_measured 0 "RELAY not_measured at ${c4:0:9}: no bundle at or before ${c4:0:9} within 36h" "RELAY red" -- bash -c "cd '$clone' && GITHUB_OUTPUT='$tmp/ghoa1' bash '$SCRIPT_PATH' --relay --commit $c4 --out '$tmp/aob2' --at-or-before 36"
+    row e2e_b_outside_the_window_gives_no_bundle 0 "state=not_measured" "bundle=/" -- cat "$tmp/ghoa1"
+    row e2e_b_inside_the_window_is_relayed 0 "RELAY red at ${c4:0:9} (measured at ${c2:0:9}, 1 commit(s) behind)" "" -- bash -c "cd '$clone' && GITHUB_OUTPUT='$tmp/ghoa2' bash '$SCRIPT_PATH' --relay --commit $c4 --out '$tmp/aob3' --at-or-before 100"
+    row e2e_relay_names_the_commit_it_measured 0 "measured=$c2" "measured=$c4" -- cat "$tmp/ghoa2"
+    row e2e_relayed_b_gives_b_bundle 0 "bundle=$tmp/aob3/models/$c2" "" -- cat "$tmp/ghoa2"
+    row e2e_at_or_before_on_c_itself 0 "RELAY red at ${c2:0:9} (measured at ${c2:0:9}, 0 commit(s) behind)" "" -- bash -c "cd '$clone' && bash '$SCRIPT_PATH' --relay --commit $c2 --out '$tmp/aob4' --at-or-before 36"
+    row e2e_at_or_before_zero_refused 2 "is not a positive number of hours" "RELAY" -- bash -c "cd '$clone' && bash '$SCRIPT_PATH' --relay --commit $c4 --out '$tmp/aob5' --at-or-before 0"
+    row e2e_at_or_before_with_evidence_refused 2 "it takes no --evidence" "RELAY" -- bash -c "cd '$clone' && bash '$SCRIPT_PATH' --relay --commit $c4 --out '$tmp/aob6' --at-or-before 36 --evidence '$tmp/relay3/models/$c2'"
+    git -C "$clone" checkout -q "$c2" || exit 3
     echo slow >> "$tmp/src/Cargo.toml"; git -C "$tmp/src" commit -q -am c3 && git -C "$tmp/src" push -q "$bare" main || exit 3
     c3=$(git -C "$tmp/src" rev-parse HEAD)
     row e2e_timeout_is_not_measured 0 "RUN not_measured at ${c3:0:9}" "" -- env STUB_MODE=slow bash "$SCRIPT_PATH" --run --repo "$repo" --work "$work" --timeout 2
@@ -840,7 +883,11 @@ m43_publish_takes_a_measure	s/\[ -z "\$MEAS" \] [|][|] \[ "\$MODE" != --publish 
 m44_crux_takes_the_ladder_go_line	s/GO_RE=.MODELS GO \\\(CRUX smoke\\\) on./GO_RE="MODELS GO.*on"/
 m45_crux_names_the_ladder_measurer	s/MEASURER_RE=.crux_sweep_shards\\\.sh./MEASURER_RE="model_ladder\\.sh"/
 m46_masked_node_counted_as_token	s/\[ ! -r "\$ch\/credentials" \] && \[ ! -r "\$ch\/credentials.toml" \]/[ ! -e "$ch\/credentials" ] \&\& [ ! -e "$ch\/credentials.toml" ]/
-m47_cargo_home_credentials_ignored	/\[ ! -r "\$ch\/credentials" \] && \[ ! -r "\$ch\/credentials.toml" \]/d'
+m47_cargo_home_credentials_ignored	/\[ ! -r "\$ch\/credentials" \] && \[ ! -r "\$ch\/credentials.toml" \]/d
+m48_at_or_before_window_ignored	s/--max-age=\$\(\(t - h \* 3600\)\) //
+m49_at_or_before_flag_ignored	s/\[ -z "\$5" \] \|\| m=\$\(producer "\$c" "\$5"\)/:/
+m50_output_names_the_run_commit	s/"\$bundle" "\$m" >>/"$bundle" "$c" >>/
+m51_no_b_in_window_is_green	s/(cls=\$\(printf .)not_measured(\\tno bundle at or before)/\1green\2/'
 mutants() {
     local tmp pass=0 fail=0 name expr o rc
     tmp=$(mktemp -d) || exit 3
@@ -873,14 +920,14 @@ case $MODE in
     --run|--publish|--relay|--tickets) ;;
     *) echo "usage: models_nightly.sh --run|--publish|--relay|--tickets|--self-test|--mutants (see the header)" >&2; exit 2 ;;
 esac
-REPO=""; WORK=""; COMMIT=""; OUT=""; EVIDENCE=""; PLANT=""; MEAS=""
+REPO=""; WORK=""; COMMIT=""; OUT=""; EVIDENCE=""; PLANT=""; MEAS=""; AOB=""
 while [ $# -gt 0 ]; do
     case $1 in
-        --repo|--work|--commit|--out|--evidence|--timeout|--measure)
+        --repo|--work|--commit|--out|--evidence|--timeout|--measure|--at-or-before)
             [ $# -ge 2 ] || { echo "models_nightly: $1 needs a value" >&2; exit 2; }
             case $1 in
                 --repo) REPO=$2 ;; --work) WORK=$2 ;; --commit) COMMIT=$2 ;;
-                --out) OUT=$2 ;; --evidence) EVIDENCE=$2 ;; --timeout) TMO=$2 ;; --measure) MEAS=$2 ;;
+                --out) OUT=$2 ;; --evidence) EVIDENCE=$2 ;; --timeout) TMO=$2 ;; --measure) MEAS=$2 ;; --at-or-before) AOB=$2 ;;
             esac
             shift 2 ;;
         --plant-red) PLANT=1; shift ;;
@@ -899,7 +946,10 @@ case $MODE in
         if [ "$MODE" = --run ]; then run "$REPO" "$WORK" "$COMMIT" "$TMO"; else publish "$REPO" "$WORK"; fi ;;
     --relay)
         [[ $COMMIT =~ ^[0-9a-f]{40}$ ]] && [ -n "$OUT" ] || { echo "models_nightly: --relay needs --commit <40-hex sha> and --out" >&2; exit 2; }
-        relay "$COMMIT" "$OUT" "$EVIDENCE" "$PLANT" ;;
+        [ -z "$AOB" ] || [[ $AOB =~ ^[1-9][0-9]*$ ]] || { echo "models_nightly: --at-or-before '$AOB' is not a positive number of hours" >&2; exit 2; }
+        # --evidence names the bundle of C itself, so a search for B would name nothing it obeys
+        [ -z "$AOB" ] || [ -z "$EVIDENCE" ] || { echo "models_nightly: --at-or-before searches the evidence branch; it takes no --evidence" >&2; exit 2; }
+        relay "$COMMIT" "$OUT" "$EVIDENCE" "$PLANT" "$AOB" ;;
     --tickets)
         [[ $COMMIT =~ ^[0-9a-f]{40}$ ]] && [ -n "$OUT" ] && [ -d "$EVIDENCE" ] || { echo "models_nightly: --tickets needs --commit <40-hex sha>, --evidence <bundle dir> and --out <file>" >&2; exit 2; }
         tickets "$EVIDENCE" "$COMMIT" "$OUT" ;;
