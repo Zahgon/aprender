@@ -84,6 +84,7 @@ commands:
     kinds: {generative: receipt, embedding: refuse}
     use_instead: {embedding: embed}
     side_effects: [network, filesystem]
+    subcommands: [eval]
 
   # ── Model Inspection (read-only, no side effects) ──
   - name: inspect

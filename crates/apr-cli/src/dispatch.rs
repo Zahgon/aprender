@@ -394,8 +394,15 @@ fn dispatch_runtime_commands(cli: &Cli) -> Option<Result<(), CliError>> {
 
         Commands::Serve { command } => dispatch_serve_command(command, cli),
 
+        // #5286: apr code eval — the hermetic, receipted eval of apr code
+        Commands::Code {
+            action: Some(action),
+            ..
+        } => dispatch_code_subcommand(action),
+
         // PMAT-182: apr code — sovereign coding assistant
         Commands::Code {
+            action: None,
             model,
             project,
             resume,
@@ -428,6 +435,59 @@ fn dispatch_runtime_commands(cli: &Cli) -> Option<Result<(), CliError>> {
 
         _ => return None,
     })
+}
+
+/// Dispatch an `apr code` subcommand (#5286).
+#[cfg(feature = "inference")]
+fn dispatch_code_subcommand(action: &CodeCommands) -> Result<(), CliError> {
+    let CodeCommands::Eval {
+        tasks,
+        envs,
+        model,
+        receipt,
+        suite,
+        format,
+        n,
+        k,
+        seed,
+        max_tokens,
+        no_gpu,
+        engine,
+        work_dir,
+        load_date,
+        cutoff,
+        train_corpus,
+        canary_probe,
+    } = action;
+    let args = commands::code_eval_run::EvalArgs {
+        tasks: tasks.to_path_buf(),
+        envs: envs.to_path_buf(),
+        model: model.to_path_buf(),
+        receipt: receipt.to_path_buf(),
+        suite: suite.to_string(),
+        format: commands::code_eval_run::parse_format(format)?,
+        n: usize::try_from(*n).unwrap_or(usize::MAX),
+        k: *k,
+        seed: *seed,
+        max_tokens: *max_tokens,
+        no_gpu: *no_gpu,
+        engine: PathBuf::from(engine.to_string()),
+        work_dir: work_dir.to_path_buf(),
+        load_date: load_date.as_ref().map(ToString::to_string),
+        cutoff: cutoff.as_ref().map(ToString::to_string),
+        train_corpus: train_corpus.iter().map(|f| f.to_path_buf()).collect(),
+        canary_probe: *canary_probe,
+    };
+    commands::code_eval_run::run(&args)
+}
+
+/// `apr code eval` drives `apr serve` through tokio, which only the `inference`
+/// feature builds.
+#[cfg(not(feature = "inference"))]
+fn dispatch_code_subcommand(_action: &CodeCommands) -> Result<(), CliError> {
+    Err(CliError::Aprender(
+        "apr code eval needs the `inference` feature".to_string(),
+    ))
 }
 
 /// Borrowed view of the parsed `apr code` flags, so [`dispatch_code_command`]

@@ -148,6 +148,9 @@ batuta-common = { workspace = true, features = ["cli-roles"] }
 # .cargo/config.toml.dev-overrides; CI uses checkout+symlink.
 batuta = { version = "0.71.2", path = "../aprender-orchestrate", package = "aprender-orchestrate", default-features = false, features = ["agents", "agents-inference", "agents-mcp", "rag"] }
 
+# Hermetic, receipted eval of apr code (`apr code eval`, #5286).
+aprender-code-eval = { workspace = true }
+
 # Inference engine (workspace path dep — enables cuda/gpu feature forwarding)
 # GH-573: shim (0.9.1) didn't forward cuda feature → 0.7 tok/s instead of 273 tok/s
 realizar = { workspace = true, optional = true }

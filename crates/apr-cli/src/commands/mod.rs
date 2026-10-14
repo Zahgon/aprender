@@ -32,6 +32,8 @@ pub mod chat;
 pub mod check;
 pub(crate) mod check_finite_classifier;
 pub(crate) mod check_finite_lint;
+#[cfg(feature = "inference")]
+pub(crate) mod code_eval_run;
 pub mod compare_hf;
 pub(crate) mod compile;
 /// #3793: `apr run --json-schema` / `--grammar`.

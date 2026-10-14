@@ -338,6 +338,7 @@ aprender-rag-cli = { path = "crates/aprender-rag-cli", version = "0.71.2" }
 aprender-qa-cli = { path = "crates/aprender-qa-cli", version = "0.71.2" }
 aprender-cgp = { path = "crates/aprender-cgp", version = "0.71.2" }
 aprender-contrastive-data = { path = "crates/aprender-contrastive-data", version = "0.71.2" }
+aprender-code-eval = { path = "crates/aprender-code-eval", version = "0.71.2" }
 aprender-contracts-cli = { path = "crates/aprender-contracts-cli", version = "0.71.2" }
 aprender-update = { path = "crates/aprender-update", version = "0.71.2" }
 aprender-data = { path = "crates/aprender-data", version = "0.71.2" }

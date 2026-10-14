@@ -253,6 +253,7 @@ dependencies = [
  "anyhow",
  "aprender-build-sha",
  "aprender-cgp",
+ "aprender-code-eval",
  "aprender-common",
  "aprender-compute",
  "aprender-contracts",

@@ -9,12 +9,12 @@ rust-version.workspace = true
 description = "Hermetic, receipted evaluation harness for `apr code` (APR-CODE-EVAL-001)"
 keywords = ["eval", "swe-bench", "pass-at-k", "aprender"]
 categories = ["development-tools"]
-# Not published: the harness is in-tree tooling for the nightly eval (#5288), and a crate
-# name becomes permanent at its first crates.io publish. Reversible.
-publish = false
+# Published: `apr-cli` is published and its `apr code eval` verb depends on this crate, so
+# it must be on crates.io and enters the cascade before apr-cli (scripts/cascade-publish.sh
+# TIERS[2]; decided on #5286).
 
 # Library only (FALSIFY-MONO-011 allows binaries on the listed crates only). The driver
-# that runs it is an `apr` subcommand (#5287).
+# that runs it is an `apr` subcommand (#5286).
 [lib]
 name = "aprender_code_eval"
 path = "src/lib.rs"

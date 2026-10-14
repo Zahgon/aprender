@@ -1,4 +1,3 @@
-
 // R-0b (#3002): the backend-resolution module. Declared here (an included
 // file whose own analysis is clean) rather than in lib.rs, whose include! tree
 // pulls pre-existing over-threshold functions the complexity hook would charge.
@@ -864,9 +863,18 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Sovereign AI coding assistant — all inference local via realizar (PMAT-182)
-    
+    /// Sovereign AI coding assistant — all inference local via realizar (PMAT-182),
+    /// or a code subcommand
+    ///
+    /// `apr code eval` runs the hermetic, receipted eval of this assistant (#5286).
+    /// Any `apr code` flag or prompt word given first makes `eval` a prompt word,
+    /// so `apr code -p eval this` still asks the assistant.
+    #[command(args_conflicts_with_subcommands = true)]
     Code {
+        /// Code subcommand, e.g. `eval`
+        #[command(subcommand)]
+        action: Option<CodeCommands>,
+
         /// Path to local GGUF/APR model file (prefers .apr format)
         #[arg(long)]
         model: Option<ModelPath>,
@@ -999,6 +1007,71 @@ pub enum Commands {
     /// in-apr route to the same commands)
     #[command(subcommand)]
     Pv(aprender_contracts_cli::cli::Commands),
+}
+
+/// Subcommands for `apr code` (#5286).
+#[derive(Subcommand, Debug)]
+pub enum CodeCommands {
+    /// Run the hermetic, receipted eval of `apr code` over a task set and write
+    /// the run receipt (docs/specifications/apr-code-eval-v1.md).
+    ///
+    /// Every task is validated first (gold edit three times, null edit once) in
+    /// its pinned container with no network; the model runs in an `apr serve`
+    /// child. No receipt is written unless the whole run succeeds.
+    Eval {
+        /// Task set: JSON lines, one task per line
+        #[arg(long, value_name = "FILE")]
+        tasks: InputFile,
+        /// Environment table: JSON map of task id to image, command and report
+        #[arg(long, value_name = "FILE")]
+        envs: InputFile,
+        /// Model under test (GGUF/APR/SafeTensors)
+        #[arg(long, value_name = "FILE")]
+        model: ModelPath,
+        /// Write the run receipt (JSON) here
+        #[arg(long, value_name = "FILE")]
+        receipt: OutputPath,
+        /// Suite name recorded in the receipt, e.g. `code-v1-2026-10`
+        #[arg(long, value_name = "NAME")]
+        suite: FreeText,
+        /// Edit format the model must reply in
+        #[arg(long, value_parser = ["whole", "search_replace", "udiff"], default_value = "udiff")]
+        format: String,
+        /// Samples per task
+        #[arg(long, value_name = "N", default_value_t = 1, value_parser = clap::value_parser!(u64).range(1..))]
+        n: u64,
+        /// Also report pass@k (k ≤ n)
+        #[arg(long, value_name = "K")]
+        k: Option<usize>,
+        /// Seed for the model and the container runs
+        #[arg(long, value_name = "N", default_value_t = 0)]
+        seed: u64,
+        /// Token budget per model call
+        #[arg(long, value_name = "N", default_value_t = 2048, value_parser = clap::value_parser!(u32).range(1..))]
+        max_tokens: u32,
+        /// Run the `apr serve` child on the CPU (default: GPU)
+        #[arg(long, alias = "cpu")]
+        no_gpu: bool,
+        /// Container engine binary: docker or podman
+        #[arg(long, value_name = "BIN", default_value = "docker")]
+        engine: FreeText,
+        /// Scratch directory for per-attempt working trees
+        #[arg(long, value_name = "DIR")]
+        work_dir: DirPath,
+        /// Task load date (YYYY-MM-DD) recorded for contamination checks (default: today)
+        #[arg(long, value_name = "DATE")]
+        load_date: Option<FreeText>,
+        /// Model training cutoff (YYYY-MM-DD); tasks released before it are reported apart
+        #[arg(long, value_name = "DATE")]
+        cutoff: Option<FreeText>,
+        /// Training-corpus file to check each gold solution against for 13-gram overlap
+        /// (repeatable); overlapping tasks are flagged in the receipt, never dropped
+        #[arg(long = "train-corpus", value_name = "FILE")]
+        train_corpus: Vec<InputFile>,
+        /// Ask the model to complete the suite canary and record whether it could
+        #[arg(long)]
+        canary_probe: bool,
+    },
 }
 
 /// Subcommands for `apr debug` (aprender#2377 finding 3).
