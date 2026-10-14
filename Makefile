@@ -791,7 +791,7 @@ coverage: ## Coverage summary + threshold check (warm: ~3min)
 			echo "   ⬆  Above the floor - raise COV_FLOOR to $${COV_PCT} to lock the gain in."; \
 		fi; \
 	else \
-		echo "✅ Coverage $${COV_PCT}% meets threshold $(COV_THRESHOLD)%"; \
+		echo "✅ Coverage $${COV_PCT}% meets threshold $(COV_THRESHOLD)%, floor $(COV_FLOOR)%"; \
 	fi
 
 # Fast coverage alias

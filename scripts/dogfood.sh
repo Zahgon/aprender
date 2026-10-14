@@ -1889,14 +1889,23 @@ if [ -n "$MAKEFILE_PATH" ] && grep -qE '^coverage-check:' "$MAKEFILE_PATH" 2>/de
   cov_pct=$(printf '%s' "$cov_out" | grep -oE 'lines covered \([0-9]+(\.[0-9]+)?%\)' \
             | grep -oE '[0-9]+(\.[0-9]+)?%' | tail -1)
   cov_why=$(printf '%s' "$cov_out" | grep -iE 'REGRESSION|below the enforced floor|coverage [0-9]' | head -1)
-  if [ "$cov_rc" -eq 0 ]; then
-    mark coverage PASS "${cov_pct:+$cov_pct, }floor met"
+  # #4671: the floor is the one make APPLIED, read off its verdict line -- never this shell's
+  # COV_FLOOR, which is unset here (the note said 88 while make enforced 89).
+  # shellcheck source=lib/coverage_floor.sh
+  . "$SKILL_DIR/lib/coverage_floor.sh" || { echo "dogfood: cannot source $SKILL_DIR/lib/coverage_floor.sh" >&2; exit 2; }
+  cov_floor=$(cov_floor_applied "$cov_out") || cov_floor=""
+  cov_floor_note="floor ${cov_floor:+$cov_floor% (applied by make)}${cov_floor:-NOT APPLIED (make printed no verdict)}"
+  if [ "$cov_rc" -eq 0 ] && [ -n "$cov_floor" ]; then
+    mark coverage PASS "${cov_pct:+$cov_pct, }$cov_floor_note met"
+  elif [ "$cov_rc" -eq 0 ]; then
+    # rc 0 with no verdict line is not "floor met": nothing says which floor, if any, was checked.
+    mark coverage FAIL "coverage-check exited 0 but printed no verdict naming a floor; ${cov_pct:-no percentage}, $cov_floor_note"
   elif [ "$DOGFOOD_PHASE" = pre-publish ]; then
     # #3957 F1b: coverage is deferred WORK, not an unmeasurable row -- it is RED (operator
     # rulings 2026-09-23: "no defer", and "fold in 88% coverage" blocks 0.69.1).
-    mark coverage FAIL "measured ${cov_pct:-NO PERCENTAGE (the run died before parsing LCOV)} against floor ${COV_FLOOR:-88}; owed by #3839 (stale COVERAGE_EXCLUDE_REGEX + the real gap). ${cov_why:0:60}"
+    mark coverage FAIL "measured ${cov_pct:-NO PERCENTAGE (the run died before parsing LCOV)} against $cov_floor_note; owed by #3839 (stale COVERAGE_EXCLUDE_REGEX + the real gap). ${cov_why:0:60}"
   else
-    mark coverage FAIL "${cov_why:-coverage-check failed (rc $cov_rc)}"
+    mark coverage FAIL "${cov_why:-coverage-check failed (rc $cov_rc)}; $cov_floor_note"
   fi
 else mark coverage FAIL "no coverage-check make target in ${MAKEFILE_PATH:-$PWD/Makefile} — the >=95% floor is UNVERIFIED, which is not the same as met (was a WARN, contradicting the rule of this skill that a missing capability is a NO-GO)"; fi
 fi # end: pre-publish reads CI (C316 2c), every other phase measures
