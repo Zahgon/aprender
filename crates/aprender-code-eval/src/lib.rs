@@ -11,7 +11,9 @@
 //! - [`runner`]: a tree and its task's pinned environment → one sandbox run (ACE-RUN).
 //! - [`harness`]: a task set, a runner and a model → a validated suite run and its receipt (ACE-HAR).
 //! - [`prompt`]: one driver request → one chat prompt for a single-turn model (ACE-PRM).
+//! - [`contamination`]: a canary and a 13-gram manifest overlap → flagged tasks in the receipt (ACE-CON).
 
+pub mod contamination;
 pub mod driver;
 pub mod edit;
 pub mod harness;

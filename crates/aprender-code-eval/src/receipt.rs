@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::contamination::Contamination;
 use crate::driver::{results, Config, Pass, TaskRecord};
 use crate::metric::{compute, MetricError, Metrics};
 use crate::verdict::Verdict;
@@ -160,6 +161,9 @@ pub struct Receipt {
     pub counts_by_label: BTreeMap<Verdict, usize>,
     /// Metrics per attempt.
     pub metrics: PerAttempt,
+    /// Contamination checks (ACE-CON-004): unchecked unless the run ran them.
+    #[serde(default = "Contamination::unchecked")]
+    pub contamination: Contamination,
 }
 
 /// The receipt cannot be written, or two receipts cannot be compared.
@@ -277,6 +281,7 @@ pub fn build(
         per_task,
         counts_by_label,
         metrics,
+        contamination: Contamination::unchecked(),
     })
 }
 

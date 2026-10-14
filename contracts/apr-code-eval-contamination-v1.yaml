@@ -1,0 +1,106 @@
+# apr-code-eval-contamination-v1 — the CONTAMINATION node of the apr code eval ontology (APR-CODE-EVAL-001).
+#
+# A pass@1 on tasks the model was trained on measures recall, not repair. LiveCodeBench
+# reports the score after the model's cutoff apart (ACE-MET-006); the BIG-bench canary
+# GUID marks a suite so a model that can finish the string has seen it; GPT-3's analysis
+# flags a benchmark item that shares a 13-gram with the training corpus. Here the canary
+# and the overlap check are equations with planted-failure tests, and a run that did not
+# check says so instead of reading as clean.
+metadata:
+  version: "1.0.0"
+  created: "2026-10-14"
+  author: PAIML Engineering
+  kind: kernel
+  registry: true
+  description: |
+    Contamination control for the `apr code` eval (epic #5281, ticket #5287): a fixed
+    canary in every in-repo task file, an optional probe asking the model to finish it,
+    and a 13-gram overlap between each gold solution and the training-corpus files. The
+    results go into the receipt (contracts/apr-code-eval-receipt-v1.yaml) next to the
+    post-cutoff score (contracts/apr-code-eval-metric-v1.yaml, ACE-MET-006).
+  references:
+    - "docs/specifications/apr-code-eval-v1.md §9 (contamination control)"
+    - "BIG-bench (2022) — a canary GUID in every task file"
+    - "GPT-3, Brown et al. (2020) §4 and appendix C — 13-gram overlap with the training corpus"
+    - "LiveCodeBench (2024) — scores split by release date against the model's cutoff"
+name: apr-code-eval-contamination
+version: "1.0.0"
+status: PROPOSED
+scope: "contamination checks of the apr code eval harness (ticket #5287)"
+description: |
+  CANARY is one fixed string. canary_prefix() is what the probe shows the model and
+  canary_secret() what it never shows. solution_text(gold) is the text a gold edit adds.
+  NgramIndex::build(corpus) holds the 13-grams of the corpus over lower-cased words of
+  letters, digits and underscore; flag_overlap(tasks, index) lists the tasks whose
+  solution text shares one. Contamination is the receipt block; None means not checked.
+
+equations:
+  ACE-CON-001:
+    description: "The canary is split into a shown prefix and an unshown secret; completing it means the reply holds the secret"
+    formula: "prefix · secret = CANARY ∧ |secret| ≥ 32;  completed(r) ⟺ secret ⊆ r;  has_canary(f) ⟺ CANARY ⊆ f"
+  ACE-CON-002:
+    description: "A task is flagged iff its solution text shares a 13-gram with the corpus"
+    formula: "t ∈ flag_overlap(T, I) ⟺ grams₁₃(solution_text(gold(t))) ∩ grams₁₃(corpus) ≠ ∅"
+  ACE-CON-003:
+    description: "For a diff gold, only added lines count; headers, context and removed lines never do"
+    formula: "is_diff(g) ⇒ solution_text(g) = ⋃ {l[1..] | l ∈ lines(g) ∧ l = '+'·_ ∧ l ≠ '+++'·_};  ¬is_diff(g) ⇒ solution_text(g) = g"
+  ACE-CON-004:
+    description: "A check that did not run is None, never an empty list or false"
+    formula: "¬ran(overlap) ⟺ overlap_flagged = None ∧ manifest_sha256 = None;  ¬ran(probe) ⟺ canary_completed = None"
+  ACE-CON-005:
+    description: "Flags are a function of the tasks and the corpus, in task order"
+    formula: "set(C₁) = set(C₂) ⇒ flag_overlap(T, I(C₁)) = flag_overlap(T, I(C₂)) ∧ order(flags) ⊑ order(T)"
+
+proof_obligations:
+  - id: ACE-CON-PO-001
+    type: invariant
+    property: "The prefix and secret rebuild the canary; the reply holding the secret is completed; echoing the prefix is not (ACE-CON-001)"
+    formal: "completed(prefix) = false ∧ completed(secret) = true"
+  - id: ACE-CON-PO-002
+    type: invariant
+    property: "A planted 14-word leak is flagged across case and spacing changes; its first 12 words are not (ACE-CON-002)"
+    formal: "∀ t. |words(leak)| = 12 ⇒ t ∉ flag_overlap(T, I(leak))"
+  - id: ACE-CON-PO-003
+    type: invariant
+    property: "A leak in the context and removed lines is not flagged; a non-diff gold counts whole (ACE-CON-003)"
+    formal: "∀ l ∈ context ∪ removed. l ∉ solution_text(g)"
+  - id: ACE-CON-PO-004
+    type: invariant
+    property: "unchecked() has every field None and serialises them as null; checked-and-clean differs from unchecked (ACE-CON-004)"
+    formal: "unchecked() ≠ unchecked().with_overlap(s, ∅)"
+  - id: ACE-CON-PO-005
+    type: invariant
+    property: "A corpus given twice flags the same tasks as once, in task order (ACE-CON-005)"
+    formal: "∀ T. flag_overlap(T, I([c])) = flag_overlap(T, I([c, c]))"
+
+falsification_tests:
+  - id: FALSIFY-ACE-CON-001
+    name: canary
+    prediction: "has_canary finds the full canary and not half a GUID; prefix + secret = CANARY with a secret of at least 32 bytes; a reply with the secret is completed, the prefix alone or an unrelated reply is not."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_con_001"
+    expected_output: "test result: ok"
+    if_fails: "A model that memorised the suite reads as clean, or one that echoed the prompt reads as contaminated."
+  - id: FALSIFY-ACE-CON-002
+    name: planted_leak_flagged
+    prediction: "With the leak in the corpus upper-cased and re-spaced, flag_overlap returns exactly the leaked task; a corpus of its first 12 words flags nothing."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_con_002"
+    expected_output: "test result: ok"
+    if_fails: "A task the model saw in training counts toward its score unflagged, or common short phrases flag every task."
+  - id: FALSIFY-ACE-CON-003
+    name: only_added_lines_count
+    prediction: "A gold diff whose context and removed lines hold the leak and whose added line does not is not flagged, and its solution text has no header path; a whole-file gold holding the leak overlaps."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_con_003"
+    expected_output: "test result: ok"
+    if_fails: "Tasks are flagged for code the model was shown, not code it had to write."
+  - id: FALSIFY-ACE-CON-004
+    name: unchecked_is_not_clean
+    prediction: "unchecked() serialises overlap_flagged as null; with_overlap(sha, []) is Some([]) and differs from unchecked(); with_canary on a miss is Some(false)."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_con_004"
+    expected_output: "test result: ok"
+    if_fails: "A run that never checked is reported as uncontaminated."
+  - id: FALSIFY-ACE-CON-005
+    name: deterministic
+    prediction: "Over 20 tasks with the leak in every third, a corpus given once and twice flag the same ids, t00, t03 … t18, in task order."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_con_005"
+    expected_output: "test result: ok"
+    if_fails: "Two runs of one suite against one corpus report different contaminated tasks."

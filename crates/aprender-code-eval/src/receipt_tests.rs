@@ -329,6 +329,7 @@ fn falsify_ace_rcp_005_seeded_receipts_match_apart_from_timing() {
         "per_task",
         "counts_by_label",
         "metrics",
+        "contamination",
     ] {
         assert!(v.get(key).is_some(), "{key}");
     }
