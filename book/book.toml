@@ -7,7 +7,8 @@ description = "The complete guide to aprender: a next-generation machine learnin
 
 [build]
 build-dir = "book"
-create-missing = true
+# #5300: a SUMMARY.md entry with no file must fail the build, never ship as a blank page
+create-missing = false
 use-default-preprocessors = true
 
 [output.html]
