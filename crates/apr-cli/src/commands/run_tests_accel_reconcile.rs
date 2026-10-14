@@ -65,6 +65,7 @@ fn a_forced_accelerator_that_ran_on_cpu_is_refused() {
         token_texts: None,
         usage: Default::default(),
         constraint_refusal: None,
+        model_digest: None,
     };
 
     let err = reconcile_accelerator(true, &result)
@@ -154,6 +155,7 @@ fn gpu_result(used_gpu: Option<bool>) -> RunResult {
         token_texts: None,
         usage: Default::default(),
         constraint_refusal: None,
+        model_digest: None,
     }
 }
 

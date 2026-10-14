@@ -71,6 +71,7 @@
             token_texts: None,
             usage: Default::default(),
             constraint_refusal: None,
+            model_digest: None,
         };
         let result_zero = RunResult {
             text: String::new(),
@@ -84,6 +85,7 @@
             token_texts: None,
             usage: Default::default(),
             constraint_refusal: None,
+            model_digest: None,
         };
         assert_ne!(
             result_none.tokens_generated, result_zero.tokens_generated,
@@ -107,6 +109,7 @@
             token_texts: None,
             usage: Default::default(),
             constraint_refusal: None,
+            model_digest: None,
         };
         assert_eq!(result.text, "output");
         assert!((result.duration_secs - 1.234).abs() < f64::EPSILON);

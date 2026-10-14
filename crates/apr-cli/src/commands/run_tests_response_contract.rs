@@ -15,6 +15,7 @@ fn contract_result(text: &str) -> RunResult {
         token_texts: None,
         usage: RunUsage::default(),
         constraint_refusal: None,
+        model_digest: None,
     }
 }
 
@@ -196,4 +197,42 @@ fn response_contract_the_stream_final_event_carries_the_envelope() {
         serde_json::from_str(ok.lines().last().expect("final")).expect("json");
     assert_eq!(v["status"], "ok");
     assert!(v.get("error").is_none());
+}
+
+/// #3720 done_when 1: the document names what produced it, the loaded file's sha256 (the
+/// value `sha256sum` prints) and the apr build; a run that never loaded has no digest.
+#[test]
+fn response_contract_the_document_carries_the_model_digest_and_the_apr_build() {
+    let mut result = contract_result("4");
+    result.model_digest = Some("ab".repeat(32));
+    let doc = final_document(&result, "m.gguf", 16, false, None);
+    assert_eq!(doc["model_digest"], "ab".repeat(32));
+    assert_eq!(doc["apr_version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(doc["apr_git_sha"], env!("APR_GIT_SHA"));
+    assert!(final_document(&contract_result("4"), "m", 1, false, None)["model_digest"].is_null());
+
+    let e = crate::error::CliError::ModelLoadFailed("x".into());
+    let doc = error_document(&e, "m.gguf", false);
+    assert_eq!(doc["apr_version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(doc["apr_git_sha"], env!("APR_GIT_SHA"));
+}
+
+/// The digest is `sha256sum`'s: a file with known content hashes to its known value, and a
+/// directory (not one file) has none.
+#[test]
+fn response_contract_the_model_digest_is_sha256sum_of_the_file_and_none_for_a_directory() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("m.gguf");
+    std::fs::write(&file, b"abc").expect("write");
+    let digest = spawn_model_digest(file).join().expect("join");
+    assert_eq!(
+        digest.as_deref(),
+        Some("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+    );
+    assert_eq!(
+        spawn_model_digest(dir.path().to_path_buf())
+            .join()
+            .expect("join"),
+        None
+    );
 }

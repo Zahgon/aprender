@@ -60,6 +60,22 @@ equations:
     lean_theorem: Theorems.Empty_Completion
     notes: The qwen3-8b golden gate defect (#3724) had this shape, an empty answer read as a model defect;
       in production it would have read as success.
+  model_identity:
+    formula: |
+      forall run r of apr run with a machine-readable output mode:
+        D.model_digest = sha256sum(file(r))  when the model is one local file, else null
+        D.apr_version = the apr crate version; D.apr_git_sha = the commit apr was built from
+    domain: apr run --json / --stream
+    codomain: what produced the document
+    invariants:
+    - The digest is the value sha256sum prints for the loaded file, hex lowercase
+    - A run that ends before it has a result still names the apr build
+    - The digest is computed only for machine-readable output, beside inference, never on the text path
+    preconditions:
+    - the output mode is --json or --stream (not --benchmark)
+    postconditions:
+    - a consumer can lock a generated asset to the exact model file and apr build
+    lean_theorem: Theorems.Model_Identity
 proof_obligations:
 - id: RESP-INV-001
   type: invariant
@@ -76,6 +92,11 @@ proof_obligations:
   property: an empty completion is a named failure
   formal: "(trim(text) = \"\" ∧ ¬constraint_refused(r) ⇒ kind = empty_completion) ∧ (kind = empty_completion ⇒ trim(text) = \"\")"
   applies_to: empty_completion
+- id: RESP-INV-004
+  type: invariant
+  property: the document names the model file by its sha256 and the apr build
+  formal: "(is_file(m) ⇒ model_digest(D) = sha256(m)) ∧ (¬is_file(m) ⇒ model_digest(D) = null)"
+  applies_to: model_identity
 enforcement:
   cli_error_envelope:
     description: Every CliError variant maps to a kind, a status and its exit code
@@ -88,6 +109,10 @@ enforcement:
   empty_completion_refused:
     description: An empty or whitespace answer fails by name with exit 8
     check: run_tests_response_contract::FALSIFY-RESP-003
+    severity: ERROR
+  model_identity_named:
+    description: apr run --json names the model digest and the apr build
+    check: run_tests_response_contract::FALSIFY-RESP-004
     severity: ERROR
 falsification_tests:
 - id: FALSIFY-RESP-001
@@ -117,3 +142,12 @@ falsification_tests:
     response_contract_a_constraint_refusal_wins_over_empty
   file: crates/apr-cli/src/commands/run_tests_response_contract.rs
   if_fails: an empty answer reads as success (the #3724 shape)
+- id: FALSIFY-RESP-004
+  rule: The document names what produced it
+  prediction: model_digest is the sha256sum of the loaded file (abc hashes to ba7816bf...), null for a
+    directory or a run with no result; apr_version and apr_git_sha are present on ok and error documents
+  test: |
+    response_contract_the_document_carries_the_model_digest_and_the_apr_build
+    response_contract_the_model_digest_is_sha256sum_of_the_file_and_none_for_a_directory
+  file: crates/apr-cli/src/commands/run_tests_response_contract.rs
+  if_fails: a consumer cannot lock a generated asset to the model and build that produced it
