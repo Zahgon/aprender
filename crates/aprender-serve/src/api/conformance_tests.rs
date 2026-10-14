@@ -215,10 +215,22 @@ fn check_case_table() {
         )
     };
     let tool_anth = r#"{"content":[{"type":"tool_use","name":"get_weather","input":{"city":"Paris"}}],"stop_reason":"tool_use"}"#;
+    let tool_sse = concat!(
+        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"ci\"}}]}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"ty\\\":\\\"Paris\\\"}\"}}]}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+        "data: [DONE]\n\n",
+    );
+    let text_sse = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
     let rows: Vec<(&str, fn(&[Observed]) -> Result<(), String>, Vec<Observed>, bool)> = vec![
         ("tool_call ok", checks::oai_tool_call, vec![obs(200, json, tool_oai)], true),
         ("tool_call stripped", checks::oai_tool_call, vec![chat("hi")], false),
         ("tool_call 404", checks::oai_tool_call, vec![obs(404, json, "{}")], false),
+        ("stream tool ok", checks::oai_stream_tool_call, vec![obs(200, sse, tool_sse)], true),
+        ("stream tool text only", checks::oai_stream_tool_call, vec![obs(200, sse, text_sse)], false),
+        ("stream tool no done", checks::oai_stream_tool_call, vec![obs(200, sse, &tool_sse.replace("data: [DONE]\n\n", ""))], false),
+        ("stream tool said stop", checks::oai_stream_tool_call, vec![obs(200, sse, &tool_sse.replace("\"tool_calls\"}", "\"stop\"}"))], false),
+        ("stream tool bad args", checks::oai_stream_tool_call, vec![obs(200, sse, &tool_sse.replace("{\\\"ci", "[\\\"ci"))], false),
         ("seed ok", checks::oai_seed, vec![chat("a"), chat("a"), chat("b")], true),
         ("seed greedy", checks::oai_seed, vec![chat("a"), chat("a"), chat("a")], false),
         ("seed unstable", checks::oai_seed, vec![chat("a"), chat("b"), chat("c")], false),
