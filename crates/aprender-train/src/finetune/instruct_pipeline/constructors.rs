@@ -392,7 +392,7 @@ impl InstructPipeline {
     ///
     /// # Errors
     /// Returns `Error::ConfigError` naming the file when it cannot be read.
-    fn load_trained_adapter(
+    pub(super) fn load_trained_adapter(
         model_dir: &Path,
         lora_layers: &mut [LoRALayer],
         num_layers: usize,
