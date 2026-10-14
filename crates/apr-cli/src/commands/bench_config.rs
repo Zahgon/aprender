@@ -143,6 +143,7 @@
             None,  // brick
             false, // json
             &[],   // percentiles (use defaults)
+            None,
         );
         // Should fail - file doesn't exist
         assert!(result.is_err());
@@ -161,6 +162,7 @@
             None,  // brick
             false, // json
             &[],   // percentiles
+            None,
         );
         // Should fail - it's a directory not a file
         assert!(result.is_err());
@@ -180,6 +182,7 @@
             Some("invalid_brick_xyz"), // invalid brick name
             false,                     // json
             &[],                       // percentiles
+            None,
         );
         // Should fail - either no inference feature or invalid brick
         assert!(result.is_err());
@@ -199,6 +202,7 @@
             None,  // brick
             false, // json
             &[],   // percentiles
+            None,
         );
         // Will fail since it's not a real model, but tests the path
         assert!(result.is_err());
@@ -209,13 +213,13 @@
         // Test .apr extension
         let mut file_apr = NamedTempFile::with_suffix(".apr").expect("create temp file");
         file_apr.write_all(b"not a real apr").expect("write");
-        let result = run(file_apr.path(), 1, 1, 16, None, false, None, false, &[]);
+        let result = run(file_apr.path(), 1, 1, 16, None, false, None, false, &[], None);
         assert!(result.is_err()); // Will fail - invalid format
 
         // Test .safetensors extension
         let mut file_st = NamedTempFile::with_suffix(".safetensors").expect("create temp file");
         file_st.write_all(b"not a real safetensors").expect("write");
-        let result = run(file_st.path(), 1, 1, 16, None, false, None, false, &[]);
+        let result = run(file_st.path(), 1, 1, 16, None, false, None, false, &[], None);
         assert!(result.is_err()); // Will fail - invalid format
     }
 
@@ -228,7 +232,7 @@
     fn test_brick_benchmark_rms_norm() {
         // Create a dummy file
         let file = NamedTempFile::with_suffix(".gguf").expect("create temp file");
-        let _result = run(file.path(), 1, 1, 16, None, false, Some("rms_norm"), false, &[]);
+        let _result = run(file.path(), 1, 1, 16, None, false, Some("rms_norm"), false, &[], None);
         // May pass or fail depending on implementation, but should not panic
         // The important thing is the brick name is recognized
     }
@@ -247,6 +251,7 @@
             Some("nonexistent_brick"),
             false,
             &[],
+            None,
         );
         assert!(result.is_err());
         // Error message should mention unknown brick type
@@ -404,7 +409,7 @@
     fn test_run_empty_file() {
         let file = NamedTempFile::with_suffix(".gguf").expect("create temp file");
         // File is empty - should fail validation
-        let result = run(file.path(), 1, 1, 16, None, false, None, false, &[]);
+        let result = run(file.path(), 1, 1, 16, None, false, None, false, &[], None);
         assert!(result.is_err());
     }
 
@@ -412,7 +417,7 @@
     fn test_run_unknown_extension() {
         let mut file = NamedTempFile::with_suffix(".xyz").expect("create temp file");
         file.write_all(b"some content").expect("write");
-        let result = run(file.path(), 1, 1, 16, None, false, None, false, &[]);
+        let result = run(file.path(), 1, 1, 16, None, false, None, false, &[], None);
         assert!(result.is_err());
     }
 
@@ -420,7 +425,7 @@
     fn test_run_no_extension() {
         let mut file = NamedTempFile::new().expect("create temp file");
         file.write_all(b"some content").expect("write");
-        let result = run(file.path(), 1, 1, 16, None, false, None, false, &[]);
+        let result = run(file.path(), 1, 1, 16, None, false, None, false, &[], None);
         assert!(result.is_err());
     }
 

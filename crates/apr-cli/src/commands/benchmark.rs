@@ -92,12 +92,76 @@ fn print_results(result: &BenchResult) {
     output::kv("Performance Grade", grade);
 }
 
+/// G1.3 (#5356): where `apr bench` measures, given `--backend` and whether a
+/// CUDA device is usable in this build on this host.
+///
+/// Returns `(use_cuda, cuda_required)`. Without `--backend` the old automatic
+/// choice stands. An explicit `cuda` is never quietly downgraded: a CPU number
+/// reported for a run the user asked to put on the GPU is the wrong
+/// measurement wearing the right label (I-17, explicit wins). `wgpu` is a
+/// value the shared flag accepts and this command has no path for, so it is
+/// refused rather than measured on something else.
+#[cfg(feature = "inference")]
+fn bench_cuda_choice(backend: Option<&str>, cuda_ready: bool) -> Result<(bool, bool)> {
+    match backend {
+        None => Ok((cuda_ready, false)),
+        Some("cpu") => Ok((false, false)),
+        Some("cuda") if cuda_ready => Ok((true, true)),
+        Some("cuda") => {
+            let why = if cfg!(feature = "cuda") {
+                "no CUDA device is visible on this host"
+            } else {
+                "this build has no CUDA backend (cargo install aprender --features cuda)"
+            };
+            Err(CliError::FeatureDisabled(format!(
+                "--backend cuda was requested, but {why}. apr bench refuses rather than \
+                 measure CPU under the name of the run you asked for; pass --backend cpu \
+                 to measure CPU deliberately."
+            )))
+        }
+        Some(other) => Err(CliError::FeatureDisabled(format!(
+            "--backend {other}: apr bench measures on cuda or cpu only, so this run would \
+             have measured a different backend than the one named"
+        ))),
+    }
+}
+
+/// The error for a CUDA benchmark that failed after `--backend cuda` was
+/// asked for; the automatic path falls back to CPU instead (GH-284).
+#[cfg(feature = "cuda")]
+fn cuda_required_failed(what: &str) -> CliError {
+    CliError::ValidationFailed(format!(
+        "--backend cuda: {what}; not falling back to CPU because the GPU was asked for"
+    ))
+}
+
+/// A GGUF CUDA benchmark failed: Ok means measure CPU instead. GH-284 falls
+/// back on a CUDA capability mismatch (e.g. a missing QkNorm kernel); an
+/// explicit `--backend cuda` refuses instead (#5356).
+#[cfg(feature = "cuda")]
+fn cuda_fallback_allowed(err: &str, cuda_required: bool, config: &BenchConfig) -> Result<()> {
+    if cuda_required {
+        return Err(cuda_required_failed(&format!("CUDA benchmark failed: {err}")));
+    }
+    if !config.quiet {
+        eprintln!(
+            "{}",
+            format!("CUDA init failed, falling back to CPU: {err}").yellow()
+        );
+    }
+    Ok(())
+}
+
 /// Realizar-based benchmark for model inference
 ///
 /// Supports all formats: GGUF, APR, and SafeTensors.
 /// Automatically uses CUDA GPU acceleration when available for GGUF.
 #[cfg(feature = "inference")]
-fn run_realizar_benchmark(path: &Path, config: &BenchConfig) -> Result<BenchResult> {
+fn run_realizar_benchmark(
+    path: &Path,
+    config: &BenchConfig,
+    backend: Option<&str>,
+) -> Result<BenchResult> {
     use realizar::format::{detect_format, ModelFormat};
 
     // Read first 8 bytes for format detection
@@ -139,11 +203,12 @@ fn run_realizar_benchmark(path: &Path, config: &BenchConfig) -> Result<BenchResu
 
     // Route to format-specific benchmark
     // GH-192: All formats now support CUDA acceleration
-    let use_cuda = cuda_available && cuda_devices > 0;
+    let (use_cuda, cuda_required) =
+        bench_cuda_choice(backend, cuda_available && cuda_devices > 0)?;
     let tracer = TracerImpl::new_local();
     match format {
-        ModelFormat::Gguf => run_gguf_benchmark(path, config, use_cuda, &tracer),
-        ModelFormat::Apr => run_apr_benchmark(path, config, use_cuda, &tracer),
+        ModelFormat::Gguf => run_gguf_benchmark(path, config, use_cuda, cuda_required, &tracer),
+        ModelFormat::Apr => run_apr_benchmark(path, config, use_cuda, cuda_required, &tracer),
         ModelFormat::SafeTensors => run_safetensors_benchmark(path, config, use_cuda, &tracer),
     }
 }
@@ -154,6 +219,7 @@ fn run_gguf_benchmark(
     path: &Path,
     config: &BenchConfig,
     use_cuda: bool,
+    cuda_required: bool,
     tracer: &TracerImpl,
 ) -> Result<BenchResult> {
     use realizar::gguf::{GGUFModel, QuantizedGenerateConfig};
@@ -235,26 +301,13 @@ fn run_gguf_benchmark(
             tracer,
         ) {
             Ok(result) => return Ok(result),
-            Err(e) => {
-                // GH-284: Fall back to CPU on CUDA capability mismatch (e.g. missing QkNorm kernel)
-                if !config.quiet {
-                    eprintln!(
-                        "{}",
-                        format!("CUDA init failed, falling back to CPU: {e}").yellow()
-                    );
-                }
-                let cpu_start = Instant::now();
-                return run_cpu_benchmark(
-                    &prompt_tokens,
-                    &gen_config,
-                    config,
-                    cpu_start,
-                    path,
-                    tracer,
-                );
-            }
+            Err(e) => cuda_fallback_allowed(&e.to_string(), cuda_required, config)?,
         }
+        let cpu_start = Instant::now();
+        return run_cpu_benchmark(&prompt_tokens, &gen_config, config, cpu_start, path, tracer);
     }
+    #[cfg(not(feature = "cuda"))]
+    let _ = cuda_required;
     run_cpu_benchmark(&prompt_tokens, &gen_config, config, start, path, tracer)
 }
 
@@ -310,11 +363,15 @@ fn handle_zero_generation_fallback(
 fn try_cuda_benchmark(
     path: &Path,
     config: &BenchConfig,
+    cuda_required: bool,
     tracer: &TracerImpl,
 ) -> Result<Option<BenchResult>> {
     let result = run_apr_cuda_benchmark(path, config, tracer)?;
     if result.total_tokens > 0 {
         return Ok(Some(result));
+    }
+    if cuda_required {
+        return Err(cuda_required_failed("the GPU generated 0 tokens"));
     }
     if !config.quiet {
         eprintln!(
@@ -332,16 +389,19 @@ fn run_apr_benchmark(
     path: &Path,
     config: &BenchConfig,
     use_cuda: bool,
+    cuda_required: bool,
     tracer: &TracerImpl,
 ) -> Result<BenchResult> {
     use realizar::apr_transformer::{AprTransformer, GenerateConfig};
 
     #[cfg(feature = "cuda")]
     if use_cuda {
-        if let Some(result) = try_cuda_benchmark(path, config, tracer)? {
+        if let Some(result) = try_cuda_benchmark(path, config, cuda_required, tracer)? {
             return Ok(result);
         }
     }
+    #[cfg(not(feature = "cuda"))]
+    let _ = cuda_required;
 
     if !config.quiet {
         eprintln!("{}", "Loading APR model (CPU)...".yellow());

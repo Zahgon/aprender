@@ -1408,6 +1408,7 @@ fn dispatch_profiling_commands(cli: &Cli) -> Option<Result<(), CliError>> {
             fast,
             brick,
             percentiles,
+            backend: BackendArg { backend },
         } => crate::error::resolve_model_path(file).and_then(|r| {
             bench::run(
                 &r,
@@ -1419,6 +1420,7 @@ fn dispatch_profiling_commands(cli: &Cli) -> Option<Result<(), CliError>> {
                 brick.as_deref(),
                 cli.json,
                 percentiles,
+                backend.as_deref(),
             )
         }),
 

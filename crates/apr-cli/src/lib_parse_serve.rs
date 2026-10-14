@@ -595,6 +595,8 @@
         // compare` lives in `aprender-cgp` and `rag transcribe` names its own
         // three values. A source scan of this crate finds neither.
         let expected: Vec<(String, String, Vec<String>)> = [
+            // G1.3 (#5356): the throughput command takes the shared declaration.
+            ("bench", "backend", &crate::BACKEND_VALUES[..]),
             ("cgp profile compare", "backends", &cgp::cli::CGP_BACKEND_VALUES[..]),
             ("chat", "backend", &crate::BACKEND_VALUES[..]),
             ("distill", "backend", &crate::DISTILL_BACKEND_VALUES[..]),
@@ -698,4 +700,37 @@
         let err = parse_cli(vec!["apr", "distill", "t.apr", "--backend", "cda"])
             .expect_err("`apr distill --backend cda` must NOT parse");
         assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
+    }
+
+    /// G1.3 (#5356): `apr bench` is the throughput command and had no
+    /// `--backend` at all. It now shares the pinned declaration, so every
+    /// known value parses and lands in the arg (sibling test below for the rest).
+    #[test]
+    fn test_bench_accepts_known_backends_5356() {
+        for value in crate::BACKEND_VALUES {
+            let cli = parse_cli(vec!["apr", "bench", "model.gguf", "--backend", value])
+                .unwrap_or_else(|e| panic!("`apr bench --backend {value}` must parse: {e}"));
+            match *cli.command {
+                Commands::Extended(ExtendedCommands::Bench { ref backend, .. }) => {
+                    assert_eq!(backend.backend.as_deref(), Some(value));
+                }
+                _ => panic!("Expected Bench command"),
+            }
+        }
+    }
+
+    /// An unknown value is a parse error, not a string carried to the
+    /// runner. Omitting the flag leaves the automatic choice (`None`).
+    #[test]
+    fn test_bench_rejects_unknown_backend_5356() {
+        let err = parse_cli(vec!["apr", "bench", "model.gguf", "--backend", "cda"])
+            .expect_err("`apr bench --backend cda` must NOT parse");
+        assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
+        let cli = parse_cli(vec!["apr", "bench", "model.gguf"]).expect("bare bench parses");
+        match *cli.command {
+            Commands::Extended(ExtendedCommands::Bench { ref backend, .. }) => {
+                assert_eq!(backend.backend, None);
+            }
+            _ => panic!("Expected Bench command"),
+        }
     }

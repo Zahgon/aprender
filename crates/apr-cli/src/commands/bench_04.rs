@@ -8,4 +8,6 @@ include!("bench_config.rs");
 include!("bench_bench.rs");
 include!("bench_calculate_stats.rs");
 include!("bench_brick_name.rs");
+#[cfg(feature = "inference")]
+include!("bench_backend_5356.rs");
 }

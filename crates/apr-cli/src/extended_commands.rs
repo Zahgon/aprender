@@ -144,6 +144,10 @@ pub enum ExtendedCommands {
             value_parser = crate::commands::bench::parse_percentile
         )]
         percentiles: Vec<f64>,
+        // G1.3 (#5356): the throughput command takes the same pinned `--backend`
+        // as `apr run`, `apr chat` and `apr serve run` (see `BackendArg`).
+        #[command(flatten)]
+        backend: BackendArg,
     },
     /// Evaluate model perplexity (spec H13: PPL <= 20) or classification metrics
     Eval {

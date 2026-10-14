@@ -173,6 +173,34 @@ pub(crate) fn parse_percentile(s: &str) -> std::result::Result<f64, String> {
     Ok(value)
 }
 
+/// `apr bench --brick`: the brick benchmark, or why it cannot run.
+fn run_brick_dispatch(
+    brick_name: &str,
+    backend: Option<&str>,
+    warmup: usize,
+    iterations: usize,
+    path: &Path,
+) -> Result<()> {
+    // G1.3 (#5356): a brick benchmark has no device choice to make, so a
+    // `--backend` beside it would be accepted and ignored. Refuse it.
+    if let Some(b) = backend {
+        return Err(CliError::ValidationFailed(format!(
+            "--backend {b} does not apply to --brick; drop one of the two"
+        )));
+    }
+    #[cfg(feature = "inference")]
+    {
+        run_brick_benchmark(brick_name, warmup, iterations, path)
+    }
+    #[cfg(not(feature = "inference"))]
+    {
+        let _ = (brick_name, warmup, iterations, path);
+        Err(CliError::ValidationFailed(
+            "--brick requires the 'inference' feature. Build with: cargo build --features inference".to_string()
+        ))
+    }
+}
+
 pub(crate) fn run(
     path: &Path,
     warmup: usize,
@@ -183,6 +211,7 @@ pub(crate) fn run(
     brick: Option<&str>,
     json: bool,
     percentiles: &[f64],
+    backend: Option<&str>,
 ) -> Result<()> {
     // Defence in depth: the clap value_parser rejects out-of-range points, but
     // `run` is also reachable from non-clap callers.
@@ -201,17 +230,7 @@ pub(crate) fn run(
 
     // If --brick is specified, run brick-specific benchmark
     if let Some(brick_name) = brick {
-        #[cfg(feature = "inference")]
-        {
-            return run_brick_benchmark(brick_name, warmup, iterations, path);
-        }
-        #[cfg(not(feature = "inference"))]
-        {
-            let _ = brick_name;
-            return Err(CliError::ValidationFailed(
-                "--brick requires the 'inference' feature. Build with: cargo build --features inference".to_string()
-            ));
-        }
+        return run_brick_dispatch(brick_name, backend, warmup, iterations, path);
     }
 
     let config = BenchConfig {
@@ -233,7 +252,7 @@ pub(crate) fn run(
             println!("{}", "Using realizar inference engine".cyan());
             println!();
         }
-        run_realizar_benchmark(path, &config)?
+        run_realizar_benchmark(path, &config, backend)?
     };
 
     #[cfg(not(feature = "inference"))]
