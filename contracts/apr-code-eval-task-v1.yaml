@@ -64,7 +64,7 @@ proof_obligations:
   - id: ACE-TASK-PO-001
     type: precondition
     property: "Loader refuses an empty task set and a duplicate id (ACE-TASK-001)"
-    formal: "load(T) = Err ⇐ |T| = 0 ∨ ∃ duplicate id"
+    formal: "(|T| = 0 ∨ ∃ duplicate id) ⇒ load(T) = Err"
   - id: ACE-TASK-PO-002
     type: invariant
     property: "No loaded task has an empty fail-to-pass list (ACE-TASK-002)"

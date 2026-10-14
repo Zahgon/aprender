@@ -64,7 +64,7 @@ proof_obligations:
   - id: ACE-VER-PO-001
     type: equivalence
     property: "RESOLVED matches the SWE-bench rule exactly (ACE-VER-001)"
-    formal: "verdict = RESOLVED ⇔ pre(t, out) ∧ ok ∧ F2P ⊆ executed ∧ all_pass(F2P ∪ P2P)"
+    formal: "(verdict = RESOLVED ⇒ R) ∧ (R ⇒ verdict = RESOLVED), R := pre(t, out) ∧ ok ∧ F2P ⊆ executed ∧ all_pass(F2P ∪ P2P)"
   - id: ACE-VER-PO-002
     type: invariant
     property: "Empty output gives EMPTY whatever the report says (ACE-VER-002)"
