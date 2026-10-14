@@ -190,3 +190,40 @@ qa_gate:
   - validation
   - falsification
   pass_criteria: All falsification tests pass; render output byte-equivalent to HuggingFace reference
+
+falsification_tests:
+  - id: FALSIFY-CHAT-001-T
+    rule: "The ChatML template wraps a user turn in im_start and im_end markers"
+    prediction: "ctx_01_qwen2_chatml_format passes: format_conversation on a user message 'What is 2+2?' returns text containing <|im_start|>user, the message content and <|im_end|>. It checks substrings, not byte-equality with the HuggingFace rendering"
+    test: "cargo test -p aprender-core --lib text::chat_template::tests::ctx_01_qwen2_chatml_format"
+    if_fails: "The ChatML template lost its turn markers or the user content"
+  - id: FALSIFY-CHAT-003-T
+    rule: "A tokenizer config with no chat_template is an error, not a silent default"
+    prediction: "ctl_04_missing_template_error passes: HuggingFaceTemplate::from_json on JSON that has no chat_template key returns Err"
+    test: "cargo test -p aprender-core --lib text::chat_template::tests::ctl_04_missing_template_error"
+    if_fails: "A missing template is silently replaced by a default"
+  - id: FALSIFY-CHAT-762-T1
+    rule: "A system-only Llama 2 conversation keeps its system prompt"
+    prediction: "falsify_ct_762_llama2_system_only_not_dropped passes: format_conversation on a lone system message keeps its content and emits the <<SYS>> block markers"
+    test: "cargo test -p aprender-serve --lib chat_template::contract_tests::falsify_ct_762_llama2_system_only_not_dropped"
+    if_fails: "A system-only message is dropped again"
+  - id: FALSIFY-CHAT-762-T2
+    rule: "Multiple system messages concatenate instead of overwriting"
+    prediction: "falsify_ct_762_llama2_multiple_system_messages_preserved passes: the output contains both 'First rule.' and 'Second rule.'"
+    test: "cargo test -p aprender-serve --lib chat_template::contract_tests::falsify_ct_762_llama2_multiple_system_messages_preserved"
+    if_fails: "A later system message overwrites an earlier one"
+  - id: FALSIFY-CHAT-762-T3
+    rule: "[system, user] emits exactly one BOS"
+    prediction: "falsify_ct_762_llama2_system_user_still_correct passes: the output starts with '<s>[INST] <<SYS>>' followed by the system text, the closing '<</SYS>>' and '2+2? [/INST]', and contains exactly one <s>"
+    test: "cargo test -p aprender-serve --lib chat_template::contract_tests::falsify_ct_762_llama2_system_user_still_correct"
+    if_fails: "A double BOS is emitted for a system plus user prompt"
+  - id: FALSIFY-CHAT-762-T4
+    rule: "A new round opens with <s> only after a completed assistant turn"
+    prediction: "falsify_ct_762_llama2_multiturn_round_separator_preserved passes: a two-round conversation contains exactly two <s> and the boundary '</s><s>[INST] q2 [/INST]'"
+    test: "cargo test -p aprender-serve --lib chat_template::contract_tests::falsify_ct_762_llama2_multiturn_round_separator_preserved"
+    if_fails: "The round separator is missing or duplicated"
+  - id: FALSIFY-CHAT-763-T
+    rule: "The raw fallback template newline-separates messages"
+    prediction: "falsify_ct_763_rawtemplate_separates_messages passes: the raw template's output does not contain 'HelloWorld', contains 'Hello\\n' and 'World\\n', and keeps the third message 'Again'"
+    test: "cargo test -p aprender-serve --lib chat_template::contract_tests::falsify_ct_763_rawtemplate_separates_messages"
+    if_fails: "Raw-template messages are bare-concatenated into an unparseable prompt"

@@ -222,3 +222,25 @@ status_history:
       companion-side bench with APR_AGENT_REPEAT_PENALTY=1.2 +
       APR_AGENT_REPEAT_LAST_N=64 once #1843's bench plumbing
       (Phase 3) lands.
+
+falsification_tests:
+  - id: FALSIFY-QWEN3_MOE_REPETITION_PENALTY_V1_001-T
+    rule: "repeat_penalty 1.0 leaves the sampled token unchanged"
+    prediction: "rep_penalty_v1_001_no_op_at_one passes: greedy sample_from_logits over [3, 5, 2, 4] with recent tokens [1, 1, 1] and repeat_penalty 1.0 still returns index 1, the unpenalised argmax"
+    test: "cargo test -p aprender-serve --lib infer::qwen3_moe_generate::sample_from_logits_tests::rep_penalty_v1_001_no_op_at_one"
+    if_fails: "A penalty of 1.0 changes the output, so existing callers regress"
+  - id: FALSIFY-QWEN3_MOE_REPETITION_PENALTY_V1_002-T1
+    rule: "repeat_penalty above 1.0 down-weights a token in the window"
+    prediction: "rep_penalty_v1_002_down_weights_repeated passes: greedy decode over [3, 5, 2, 4] with recent [1, 1] and penalty 2.0 returns index 3, because logit 1 drops to 2.5 below 4.0"
+    test: "cargo test -p aprender-serve --lib infer::qwen3_moe_generate::sample_from_logits_tests::rep_penalty_v1_002_down_weights_repeated"
+    if_fails: "The penalty is not applied to a repeated token"
+  - id: FALSIFY-QWEN3_MOE_REPETITION_PENALTY_V1_002-T2
+    rule: "A token repeated in the window is penalised once, never compounded"
+    prediction: "rep_penalty_v1_002_repeats_penalise_once passes: greedy decode over [1, 10, 10, 4] with recent [2; 8] returns 1, and apply_repeat_penalty with recent [2, 2, 2] and penalty 2.0 turns the logits into [1, 10, 5, 4], halving logit 2 exactly once"
+    test: "cargo test -p aprender-serve --lib infer::qwen3_moe_generate::sample_from_logits_tests::rep_penalty_v1_002_repeats_penalise_once"
+    if_fails: "The penalty compounds per repeat occurrence"
+  - id: FALSIFY-QWEN3_MOE_REPETITION_PENALTY_V1_003-T
+    rule: "repeat_last_n bounds the penalty window"
+    prediction: "rep_penalty_v1_003_window_bounds passes: over logits [1, 10, 9, 3] with recent [1, 3, 3] and penalty 1.5, repeat_last_n 2 returns 1 (token 1 outside the window) and repeat_last_n 3 returns 2 (10/1.5 < 9)"
+    test: "cargo test -p aprender-serve --lib infer::qwen3_moe_generate::sample_from_logits_tests::rep_penalty_v1_003_window_bounds"
+    if_fails: "The window is ignored or off by one"

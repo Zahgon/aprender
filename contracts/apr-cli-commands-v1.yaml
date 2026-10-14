@@ -972,3 +972,30 @@ falsification:
       re-check its thresholds so a non-clap caller also fails closed. The
       shared validator is crates/apr-cli/src/commands/threshold_arg.rs.
     enforcement: "cargo test -p apr-cli --test cli_commands nan_threshold_never_reports_a_failing_lint_gate_as_ok"
+
+falsification_tests:
+  - id: FALSIFY-CLI-001-T
+    rule: "Every command this contract registers appears in apr --help"
+    prediction: "test_all_contract_commands_exist passes: each name in registered_commands() (the mirror of this file's commands: list) is found in the apr --help output"
+    test: "cargo test -p apr-cli --test cli_commands test_all_contract_commands_exist"
+    if_fails: "A registered command was removed or renamed in the binary without a contract edit"
+  - id: FALSIFY-CLI-002-T
+    rule: "Every command apr --help lists, other than help, is registered here"
+    prediction: "test_no_unregistered_commands passes: each subcommand parsed from apr --help except help is a member of registered_commands()"
+    test: "cargo test -p apr-cli --test cli_commands test_no_unregistered_commands"
+    if_fails: "A subcommand shipped in the binary with no entry in this registry"
+  - id: FALSIFY-CLI-003-T
+    rule: "Every registered command exits 0 on --help, so none panics on it either"
+    prediction: "test_all_commands_respond_to_help passes: apr <cmd> --help reports status success for every registered command; a panic exits 101 and would be collected as a failure, which covers FALSIFY-CLI-004 as well"
+    test: "cargo test -p apr-cli --test cli_commands test_all_commands_respond_to_help"
+    if_fails: "A command's --help exits non-zero or panics"
+  - id: FALSIFY-CLI-005-T
+    rule: "The command count in apr --help equals the count this contract registers"
+    prediction: "test_command_count_matches passes: assert_eq! of the help-listed count and the registered count"
+    test: "cargo test -p apr-cli --test cli_commands test_command_count_matches"
+    if_fails: "The binary and this registry drifted in size"
+  - id: FALSIFY-CLI-THRESHOLD-NAN-001-T
+    rule: "A NaN or out-of-domain threshold never disarms a lint gate"
+    prediction: "nan_threshold_never_reports_a_failing_lint_gate_as_ok passes: for 5 lint commands (kv-timeline-lint, attn-parity-lint, attn-viz-lint, explain-token-lint ddp-metrics-lint) the fixture fails at the shipped defaults (control), still exits non-zero with the disarming threshold appended, and the report never prints the gate as Ok. It checks non-zero, not exit 2 specifically, and does not call run() without clap"
+    test: "cargo test -p apr-cli --test cli_commands nan_threshold_never_reports_a_failing_lint_gate_as_ok"
+    if_fails: "A threshold flag again accepts NaN or a negative value and the gate reports Ok on a violating input"

@@ -146,3 +146,35 @@ lib_name_strategy:
     name = "aprender-compute"  # crates.io name
     [lib]
     name = "trueno"            # Rust import: use trueno::*;
+
+falsification_tests:
+  - id: FALSIFY-BUILD-001-T
+    rule: "Every workspace package name is unique"
+    prediction: "test_no_duplicate_workspace_members passes: no package name from cargo metadata occurs twice"
+    test: "cargo test -p aprender-core --test monorepo_invariants test_no_duplicate_workspace_members"
+    if_fails: "Two workspace members carry the same package name"
+  - id: FALSIFY-BUILD-003-T
+    rule: "The workspace holds at least 60 members"
+    prediction: "test_minimum_workspace_member_count passes: the workspace member count from cargo metadata is >= 60"
+    test: "cargo test -p aprender-core --test monorepo_invariants test_minimum_workspace_member_count"
+    if_fails: "Crates were dropped from or excluded out of the workspace"
+  - id: FALSIFY-BUILD-004-T
+    rule: "The root Cargo.toml has no active [patch.crates-io] section"
+    prediction: "test_no_patch_in_root_cargo_toml passes: no line of the root Cargo.toml, after leading whitespace, starts with [patch.crates-io]"
+    test: "cargo test -p aprender-core --test monorepo_invariants test_no_patch_in_root_cargo_toml"
+    if_fails: "A crates.io patch override was put back into the root manifest"
+  - id: FALSIFY-BUILD-005-T
+    rule: "Every workspace member's manifest exists on disk"
+    prediction: "test_all_workspace_dirs_have_cargo_toml passes: every manifest_path cargo metadata reports is an existing file"
+    test: "cargo test -p aprender-core --test monorepo_invariants test_all_workspace_dirs_have_cargo_toml"
+    if_fails: "A member's Cargo.toml is missing after a merge or deletion"
+  - id: FALSIFY-BUILD-006-T
+    rule: "Every package name starts with aprender, apart from apr-cli and apr-format"
+    prediction: "test_all_crate_names_use_aprender_prefix passes: each workspace package name starts with aprender or is in the allowlist [apr-cli, apr-format]; the contract text names only apr-cli as the exception, and the test also admits apr-format"
+    test: "cargo test -p aprender-core --test monorepo_invariants test_all_crate_names_use_aprender_prefix"
+    if_fails: "A package was named outside the aprender-* convention"
+  - id: FALSIFY-BUILD-007-T
+    rule: "No member manifest sits deeper than <dir>/<name>/Cargo.toml"
+    prediction: "test_flat_layout_no_nested_crates passes: every member manifest path relative to the workspace root has at most 3 components. It checks depth only, not that the first component is crates/"
+    test: "cargo test -p aprender-core --test monorepo_invariants test_flat_layout_no_nested_crates"
+    if_fails: "A crate was nested inside another crate's directory"

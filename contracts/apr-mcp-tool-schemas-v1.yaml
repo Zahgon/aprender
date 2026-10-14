@@ -327,3 +327,25 @@ falsification:
 # YAML but missing from the test-side codegen-constant tables.
 # All six assertions in the `falsification.FALSIFY-MCP-008.assertions`
 # block above are now load-bearing at both layers.
+
+falsification_tests:
+  - id: FALSIFY-MCP-008-T1
+    rule: "Every migrated tool's live inputSchema is identical to the schema derived from this contract"
+    prediction: "migrated_tools_match_yaml_contract_byte_for_byte passes: the migrated-tool list is non-empty, every tool on it has an entry here, and the inputSchema the server's tool definition emits equals (assert_eq! on parsed JSON) the schema built from that entry's args and required list. It walks the test's own migrated-tool list, so it does not check that tools/list returns exactly the names listed here"
+    test: "cargo test -p aprender-mcp --test falsify_mcp_008 migrated_tools_match_yaml_contract_byte_for_byte"
+    if_fails: "A tool's live inputSchema drifted from this contract"
+  - id: FALSIFY-MCP-008-T2
+    rule: "Every migrated tool's live description is byte-identical to this contract's description"
+    prediction: "tool_descriptions_match_yaml_contract passes: for each migrated tool the server's tool definition carries a description equal (assert_eq!) to the description string in this contract"
+    test: "cargo test -p aprender-mcp --test falsify_mcp_008 tool_descriptions_match_yaml_contract"
+    if_fails: "A tool's description was hand-edited in Rust or drifted from this contract"
+  - id: FALSIFY-MCP-008-T3
+    rule: "Every generated schema constant parses as JSON and matches this contract"
+    prediction: "codegen_constants_parse_and_match_yaml_for_every_tool passes: each APR_<TOOL>_SCHEMA constant build.rs emits parses as JSON and equals the schema derived from its entry here, independent of the server wiring"
+    test: "cargo test -p aprender-mcp --test falsify_mcp_008 codegen_constants_parse_and_match_yaml_for_every_tool"
+    if_fails: "build.rs emitted a schema constant that is not valid JSON or does not match this contract"
+  - id: FALSIFY-MCP-008-T4
+    rule: "Every generated description constant matches this contract"
+    prediction: "codegen_description_constants_match_yaml passes: each APR_<TOOL>_DESCRIPTION constant equals the description string in its entry here"
+    test: "cargo test -p aprender-mcp --test falsify_mcp_008 codegen_description_constants_match_yaml"
+    if_fails: "build.rs emitted a description constant that differs from this contract"
