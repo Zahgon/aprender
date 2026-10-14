@@ -91,9 +91,16 @@ fn missing_lora_alpha(adapter: &Path) -> CliError {
 }
 
 /// Whether an adapter tensor name is the A half of a LoRA pair, in any
-/// naming this merge accepts (`.lora_a` or PEFT's `.lora_A.weight`).
+/// naming this merge accepts (`.lora_a`, PEFT's `.lora_A.weight`, or PEFT's
+/// `.lora_A.{adapter_name}.weight`).
 fn is_lora_a_name(name: &str) -> bool {
-    name.ends_with(".lora_a") || name.ends_with(".lora_A.weight")
+    name.ends_with(".lora_a") || (name.contains(".lora_A.") && name.ends_with(".weight"))
+}
+
+/// Whether an adapter tensor is LoRA state of any kind (A, B, DoRA magnitude,
+/// …). Every such tensor must be consumed by the merge, or it refuses.
+fn is_lora_tensor_name(name: &str) -> bool {
+    name.to_ascii_lowercase().contains("lora_")
 }
 
 /// Read LoRA rank/alpha from adapter metadata.
@@ -280,25 +287,30 @@ fn adapter_pair_names(base_name: &str) -> Vec<(String, String)> {
             } else {
                 "mlp"
             };
-            candidates.push(peft_pair(&format!(
-                "base_model.model.model.layers.{layer}.{module}.{hf_proj}"
-            )));
+            push_peft_pairs(
+                &mut candidates,
+                &format!("base_model.model.model.layers.{layer}.{module}.{hf_proj}"),
+            );
         }
     }
     // 3. HF PEFT (#4674): `base_model.model.{stem}.lora_A.weight`, or the
     //    bare `{stem}.lora_A.weight` when the wrapper prefix was stripped.
     if let Some(stem) = base_name.strip_suffix(".weight") {
-        candidates.push(peft_pair(&format!("base_model.model.{stem}")));
-        candidates.push(peft_pair(stem));
+        push_peft_pairs(&mut candidates, &format!("base_model.model.{stem}"));
+        push_peft_pairs(&mut candidates, stem);
     }
     candidates
 }
 
-fn peft_pair(stem: &str) -> (String, String) {
-    (
-        format!("{stem}.lora_A.weight"),
-        format!("{stem}.lora_B.weight"),
-    )
+/// PEFT pair names for a module stem: as saved (`lora_A.weight`) and with
+/// the default adapter-name infix kept (`lora_A.default.weight`).
+fn push_peft_pairs(candidates: &mut Vec<(String, String)>, stem: &str) {
+    for infix in ["", ".default"] {
+        candidates.push((
+            format!("{stem}.lora_A{infix}.weight"),
+            format!("{stem}.lora_B{infix}.weight"),
+        ));
+    }
 }
 
 /// Backfill architecture + C-03 dims from tensor shapes/names when the base
@@ -532,19 +544,20 @@ fn verify_merged_runnable(out: &Path) -> Result<()> {
 
 /// #4674: refuse a merge that is partial or changed nothing.
 ///
-/// A partial merge (some adapter A-tensors matched no base tensor) ships a
+/// A partial merge (some adapter LoRA tensor was not consumed: an A or B that
+/// matched no base tensor, an orphan half, a DoRA magnitude, …) ships a
 /// model that carries only part of the trained delta under a "merged" name.
 /// A merge whose every matched pair left its base weight bit-identical (an
 /// untrained, zero-B adapter) is a copy of the base. Both exit non-zero.
 fn check_merge_complete(
     adapter_names: &std::collections::HashSet<String>,
-    matched_a: &std::collections::HashSet<String>,
+    matched_lora: &std::collections::HashSet<String>,
     merged_count: u64,
     changed_count: u64,
 ) -> Result<()> {
     let mut unmatched: Vec<&String> = adapter_names
         .iter()
-        .filter(|n| is_lora_a_name(n) && !matched_a.contains(*n))
+        .filter(|n| is_lora_tensor_name(n) && !matched_lora.contains(*n))
         .collect();
     if !unmatched.is_empty() {
         unmatched.sort();
@@ -552,7 +565,7 @@ fn check_merge_complete(
             "Partial merge: {} of {} adapter LoRA tensors matched no base tensor \
              (first unmatched: {}). Refusing to write a merge that drops part of the adapter.",
             unmatched.len(),
-            unmatched.len() + matched_a.len(),
+            unmatched.len() + matched_lora.len(),
             unmatched[0]
         )));
     }
@@ -611,7 +624,7 @@ fn run_merge(
     let engine = MergeEngine::new();
     let mut merged_count = 0u64;
     let mut changed_count = 0u64;
-    let mut matched_a: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut matched_lora: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // Read base model as V2 to preserve metadata INCLUDING embedded tokenizer.
     // Previous code used AprWriter (v1) which lost the tokenizer section.
@@ -684,7 +697,16 @@ fn run_merge(
             if merged != base_data {
                 changed_count += 1;
             }
-            matched_a.insert(a_name);
+            // #4674: one adapter pair merged into two base tensors is a wrong
+            // merge (the delta was trained for one of them).
+            if !matched_lora.insert(a_name.clone()) {
+                return Err(CliError::ValidationFailed(format!(
+                    "Adapter tensor {a_name} matches more than one base tensor (second: {}). \
+                     Refusing an ambiguous merge.",
+                    ti.name
+                )));
+            }
+            matched_lora.insert(b_name);
             merged
         } else {
             base_data
@@ -710,7 +732,7 @@ fn run_merge(
              '{{module}}.lora_A.weight'. Refusing to write a no-op merge."
         )));
     }
-    check_merge_complete(&adapter_names, &matched_a, merged_count, changed_count)?;
+    check_merge_complete(&adapter_names, &matched_lora, merged_count, changed_count)?;
 
     let bytes = writer.write().map_err(|e| {
         CliError::ValidationFailed(format!("Failed to serialize merged model: {e}"))

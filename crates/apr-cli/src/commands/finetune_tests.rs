@@ -1954,5 +1954,112 @@ fn merge_4674_peft_names_resolve_against_both_base_layouts() {
         "base_model.model.model.layers.3.self_attn.v_proj.lora_B.weight".to_string(),
     )));
     assert!(is_lora_a_name("x.q_proj.lora_A.weight"));
+    assert!(is_lora_a_name("x.q_proj.lora_A.default.weight"));
     assert!(!is_lora_a_name("x.q_proj.lora_B.weight"));
+}
+
+#[test]
+fn merge_4674_orphan_b_half_refuses() {
+    let adapter = write_adapter_4674(
+        &[
+            ("lora.0.q_proj.lora_a", vec![4, 32], 0.3),
+            ("lora.0.q_proj.lora_b", vec![32, 4], 0.5),
+            // A B half with no A: nothing consumes it.
+            ("lora.0.v_proj.lora_b", vec![32, 4], 0.5),
+        ],
+        Some(8.0),
+    );
+    let (res, dir) = merge_4674(adapter.path());
+    let err = res.expect_err("an orphan lora_b must refuse");
+    assert!(err.to_string().contains("lora.0.v_proj.lora_b"), "{err}");
+    assert!(!dir.path().join("merged.apr").exists());
+}
+
+#[test]
+fn merge_4674_peft_default_infix_partial_refuses() {
+    let adapter = write_adapter_4674(
+        &[
+            (
+                "base_model.model.model.layers.0.self_attn.q_proj.lora_A.default.weight",
+                vec![4, 32],
+                0.3,
+            ),
+            (
+                "base_model.model.model.layers.0.self_attn.q_proj.lora_B.default.weight",
+                vec![32, 4],
+                0.5,
+            ),
+            // Layer 9 is not in the base.
+            (
+                "base_model.model.model.layers.9.self_attn.q_proj.lora_A.default.weight",
+                vec![4, 32],
+                0.3,
+            ),
+            (
+                "base_model.model.model.layers.9.self_attn.q_proj.lora_B.default.weight",
+                vec![32, 4],
+                0.5,
+            ),
+        ],
+        Some(8.0),
+    );
+    let (res, dir) = merge_4674(adapter.path());
+    let err = res.expect_err("an unmatched infixed PEFT pair must refuse");
+    assert!(err.to_string().contains("layers.9"), "{err}");
+    assert!(!dir.path().join("merged.apr").exists());
+}
+
+#[test]
+fn merge_4674_one_pair_two_bases_refuses() {
+    use aprender::format::v2::{AprV2Metadata, AprV2Writer};
+    let hidden = 32usize;
+    // A base that carries layer 0's q projection under BOTH spellings:
+    // `lora.0.q_proj.*` resolves against each.
+    let mut md = AprV2Metadata::new("transformer_lm");
+    md.architecture = Some("qwen2".to_string());
+    md.hidden_size = Some(hidden);
+    md.vocab_size = Some(64);
+    md.intermediate_size = Some(hidden);
+    md.rms_norm_eps = Some(1e-6);
+    md.custom
+        .insert("num_hidden_layers".to_string(), serde_json::json!(1));
+    md.custom
+        .insert("num_attention_heads".to_string(), serde_json::json!(4));
+    md.custom
+        .insert("num_key_value_heads".to_string(), serde_json::json!(2));
+    let vocab: Vec<String> = (0..64).map(|i| format!("t{i}")).collect();
+    md.custom
+        .insert("tokenizer.vocabulary".to_string(), serde_json::json!(vocab));
+    md.custom
+        .insert("tokenizer.merges".to_string(), serde_json::json!(["t0 t1"]));
+    let mut w = AprV2Writer::new(md);
+    w.add_f32_tensor(
+        "token_embd.weight",
+        vec![64, hidden],
+        &vec![0.02; 64 * hidden],
+    );
+    for name in [
+        "blk.0.attn_q.weight",
+        "model.layers.0.self_attn.q_proj.weight",
+    ] {
+        w.add_f32_tensor(name, vec![hidden, hidden], &vec![1.0; hidden * hidden]);
+    }
+    let dir = tempfile::tempdir().expect("tmpdir");
+    let base = dir.path().join("base.apr");
+    std::fs::write(&base, w.write().expect("write base")).expect("write base file");
+    let adapter = write_adapter_4674(
+        &[
+            ("lora.0.q_proj.lora_a", vec![4, 32], 0.3),
+            ("lora.0.q_proj.lora_b", vec![32, 4], 0.5),
+        ],
+        Some(8.0),
+    );
+    let out = dir.path().join("merged.apr");
+    let err = run_merge(Some(&base), Some(adapter.path()), Some(&out), true)
+        .expect_err("one pair merged into two base tensors must refuse");
+    assert!(
+        err.to_string().contains("more than one base tensor"),
+        "{err}"
+    );
+    assert!(!out.exists());
 }
