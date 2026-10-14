@@ -24,7 +24,7 @@ pub struct PerformanceContract {
     pub falsification: Vec<FalsificationCheck>,
     /// Absorb any extra fields from domain-specific contract schemas
     #[serde(flatten, default)]
-    pub extra: std::collections::HashMap<String, serde_yaml_ng::Value>,
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -48,7 +48,7 @@ pub struct PerformanceBound {
     pub min_bandwidth_gbps: Option<f64>,
     /// Absorb domain-specific bound fields (operation, competitor, etc.)
     #[serde(flatten, default)]
-    pub extra: std::collections::HashMap<String, serde_yaml_ng::Value>,
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 /// Accept both `size: 1024` (single int) and `size: [1024, 1024, 1024]` (sequence).
@@ -101,7 +101,7 @@ pub struct FalsificationCheck {
     #[serde(default)]
     pub check: String,
     #[serde(flatten, default)]
-    pub extra: std::collections::HashMap<String, serde_yaml_ng::Value>,
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 /// Result of verifying a single contract.
@@ -123,7 +123,7 @@ impl ContractVerification {
 pub fn load_contract(path: &Path) -> Result<PerformanceContract> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read contract: {}", path.display()))?;
-    let contract: PerformanceContract = serde_yaml_ng::from_str(&content)
+    let contract: PerformanceContract = serde_saphyr::from_str_with_options(&content, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false })
         .with_context(|| format!("Failed to parse contract: {}", path.display()))?;
     Ok(contract)
 }
@@ -630,8 +630,8 @@ mod tests {
     #[test]
     fn test_contract_yaml_roundtrip() {
         let contract = sample_contract();
-        let yaml = serde_yaml_ng::to_string(&contract).unwrap();
-        let parsed: PerformanceContract = serde_yaml_ng::from_str(&yaml).unwrap();
+        let yaml = serde_saphyr::to_string(&contract).unwrap();
+        let parsed: PerformanceContract = serde_saphyr::from_str_with_options(&yaml, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false }).unwrap();
         assert_eq!(parsed.name, contract.name);
         assert_eq!(parsed.kernel, contract.kernel);
         assert_eq!(parsed.bounds.len(), 1);
