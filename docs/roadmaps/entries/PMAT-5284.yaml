@@ -1,0 +1,18 @@
+- id: PMAT-5284
+  github_issue: 5284
+  item_type: task
+  title: 'apr code eval E3: hermetic sandbox runner'
+  status: planned
+  priority: high
+  assigned_to: null
+  created: 2026-10-14T11:19:38Z
+  updated: 2026-10-14T11:19:38Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 5281

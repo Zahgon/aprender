@@ -96,48 +96,48 @@ falsification_tests:
   - id: FALSIFY-ACE-SBX-001
     name: network_probe_refused
     prediction: "A candidate that resolves and connects to a public host gets a connection error; the probe test reports refused."
-    test_harness: "PLANNED (#5284, crate not yet built): unit test falsify_ace_sbx_001_network_refused in the sandbox module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_sbx_001"
     expected_output: "test result: ok"
     if_fails: "The sandbox has network; a candidate could fetch an answer."
   - id: FALSIFY-ACE-SBX-002
     name: tag_only_image_refused
     prediction: "image 'rust:1.89' (no digest) and a digest that does not match the pulled image are both refused before start."
-    test_harness: "PLANNED (#5284, crate not yet built): unit test falsify_ace_sbx_002_unpinned_image_refused in the sandbox module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_sbx_002"
     expected_output: "test result: ok"
     if_fails: "A floating tag lets the environment drift between nights."
   - id: FALSIFY-ACE-SBX-003
     name: runaway_killed
     prediction: "A candidate with an infinite loop is killed at wall_s and reported killed_by=timeout; a 2 GiB allocation under a 512 MiB cap is reported killed_by=oom."
-    test_harness: "PLANNED (#5284, crate not yet built): unit test falsify_ace_sbx_003_limits_enforced in the sandbox module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_sbx_003"
     expected_output: "test result: ok"
     if_fails: "A runaway candidate hangs the night or is mis-scored."
   - id: FALSIFY-ACE-SBX-004
     name: host_paths_unreadable
     prediction: "Reading the container socket path and a planted host file from inside the run fails."
-    test_harness: "PLANNED (#5284, crate not yet built): unit test falsify_ace_sbx_004_host_isolated in the sandbox module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_sbx_004"
     expected_output: "test result: ok"
     if_fails: "A candidate can escape to the host or read other tasks."
   - id: FALSIFY-ACE-SBX-005
     name: env_seeded_and_scrubbed
     prediction: "Inside the run SEED equals the requested seed and GH_TOKEN/HF_TOKEN are unset even when set on the host."
-    test_harness: "PLANNED (#5284, crate not yet built): unit test falsify_ace_sbx_005_env in the sandbox module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_sbx_005"
     expected_output: "test result: ok"
     if_fails: "Runs are not reproducible, or a credential is exposed to model-written code."
   - id: FALSIFY-ACE-SBX-006
     name: repeat_run_identical
     prediction: "Three runs of the gold edit on the smoke task give identical reports apart from wall_ms."
-    test_harness: "PLANNED (#5284, crate not yet built): unit test falsify_ace_sbx_006_deterministic in the sandbox module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_sbx_006"
     expected_output: "test result: ok"
     if_fails: "Scores move without the model changing."
   - id: FALSIFY-ACE-SBX-007
     name: missing_report_is_error
     prediction: "A test command that exits 0 without writing a report gives status=sandbox_error and tests_executed=0."
-    test_harness: "PLANNED (#5284, crate not yet built): unit test falsify_ace_sbx_007_no_report_is_error in the sandbox module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_sbx_007"
     expected_output: "test result: ok"
     if_fails: "exit 0 with zero tests reads as a pass."
   - id: FALSIFY-ACE-SBX-008
     name: no_state_between_runs
     prediction: "A marker file written in run 1 is absent in run 2 of the same task."
-    test_harness: "PLANNED (#5284, crate not yet built): unit test falsify_ace_sbx_008_clean_slate in the sandbox module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_sbx_008"
     expected_output: "test result: ok"
     if_fails: "One task's run can poison the next."
