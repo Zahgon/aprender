@@ -316,6 +316,16 @@ pub fn cases(model: &str) -> Vec<Case> {
             requests: vec![post(ochat, ollama_chat(model, true, json!({})))],
             check: ollama_done,
         },
+        Case {
+            id: "ollama.chat.length",
+            shape: Shape::Ollama,
+            row: "R-5",
+            requests: vec![post(
+                ochat,
+                ollama_chat(model, true, json!({"num_predict": 1})),
+            )],
+            check: ollama_length,
+        },
     ]
 }
 

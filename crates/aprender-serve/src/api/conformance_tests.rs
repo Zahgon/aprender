@@ -286,9 +286,23 @@ fn check_case_table() {
         ("ollama done early", checks::ollama_done, vec![obs(200, nd, &ollama_nd.replace("\"done\":false", "\"done\":true"))], false),
         ("ollama done no reason", checks::ollama_done, vec![obs(200, nd, &ollama_nd.replace(",\"done_reason\":\"stop\"", ""))], false),
         ("ollama done 404", checks::ollama_done, vec![obs(404, nd, "")], false),
+        ("ollama length ok", checks::ollama_length, vec![obs(200, nd, &ollama_nd.replace("\"stop\"", "\"length\""))], true),
+        ("ollama length said stop", checks::ollama_length, vec![obs(200, nd, ollama_nd)], false),
+        ("ollama length no reason", checks::ollama_length, vec![obs(200, nd, &ollama_nd.replace(",\"done_reason\":\"stop\"", ""))], false),
     ];
     for (name, check, observed, want_pass) in rows {
         let got = check(&observed);
         assert_eq!(got.is_ok(), want_pass, "{name}: {got:?}");
     }
+}
+
+/// R-5 on the Ollama shape: a `num_predict` cap must surface as
+/// `done_reason: "length"`, and the OpenAI length case on the same router is
+/// the control that the cap was hit at all.
+#[test]
+fn demo_router_ollama_length_reports_length() {
+    let rt = runtime();
+    let cells = run_suite(|r| send_in_process(&rt, r));
+    assert_eq!(verdict_of(&cells, "oai.chat.length"), &Verdict::Pass);
+    assert_eq!(verdict_of(&cells, "ollama.chat.length"), &Verdict::Pass);
 }

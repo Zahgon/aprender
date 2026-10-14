@@ -481,3 +481,21 @@ pub fn ollama_done(obs: &[Observed]) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// `num_predict: 1` streamed: the last NDJSON line must say
+/// `done_reason: "length"`, as `ollama serve` does when the cap cuts the turn.
+pub fn ollama_length(obs: &[Observed]) -> Result<(), String> {
+    ollama_done(obs)?;
+    let last = one(obs)?
+        .body
+        .lines()
+        .rfind(|l| !l.trim().is_empty())
+        .ok_or("stream carried no lines")?;
+    let v: Value = serde_json::from_str(last).map_err(|e| format!("last line ({e})"))?;
+    match str_at(&v, "/done_reason")? {
+        "length" => Ok(()),
+        other => Err(format!(
+            "done_reason {other:?} at num_predict 1 (want length)"
+        )),
+    }
+}
