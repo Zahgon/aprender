@@ -1,0 +1,114 @@
+# apr-code-eval-harness-v1 — the HARNESS node of the apr code eval ontology (APR-CODE-EVAL-001).
+#
+# The harness is the one call the CLI makes: task set in, receipt out. SWE-bench validates
+# every instance against its gold patch in the evaluation image before scoring, and drops
+# instances whose tests do not behave the same way twice. Here those steps, and the rule
+# that the receipt names what actually ran, are equations with planted-failure tests.
+metadata:
+  version: "1.0.0"
+  created: "2026-10-14"
+  author: PAIML Engineering
+  kind: kernel
+  registry: true
+  description: |
+    End-to-end evaluation for the `apr code` eval (epic #5281, ticket #5286): validates a
+    task set through the sandbox-backed runner (contracts/apr-code-eval-runner-v1.yaml),
+    runs the driver (contracts/apr-code-eval-driver-v1.yaml) and writes the receipt
+    (contracts/apr-code-eval-receipt-v1.yaml).
+  references:
+    - "docs/specifications/apr-code-eval-v1.md §3 (gold validation), §4 (flakes: gold runs three times), §7 (receipt)"
+    - "SWE-bench (2024) — gold patches are unified diffs, validated in the instance image before evaluation"
+    - "SWE-bench Verified (2024) — instances with unreliable tests removed from the set"
+name: apr-code-eval-harness
+version: "1.0.0"
+status: PROPOSED
+scope: "end-to-end evaluation of the apr code eval harness (ticket #5286)"
+description: |
+  evaluate(set, runner, agent, cfg, run, k, cutoff) refuses tasks without an environment,
+  validates every task through the runner (null edit once, gold edit as a unified diff
+  three times), runs the driver over the validated suite, and returns the receipt with
+  the suite's task set digest and image digests in place of the caller's.
+
+equations:
+  ACE-HAR-001:
+    description: "Gold and null validation run in the sandbox; gold is a unified diff and must apply"
+    formula: "resolved(t, e) ⟺ applies(udiff(e), snapshot(t)) ∧ verdict(run(overlay(apply(e), hidden(t)))) = resolved;  resolved(t, ∅) uses the snapshot"
+  ACE-HAR-002:
+    description: "The gold edit runs three times and every report agrees, or the suite is refused"
+    formula: "∃ i ∈ {1, 2}. report(i) ≠ report(0) ⇒ evaluate = Err(flake(t)) ∧ agent_calls = 0"
+  ACE-HAR-003:
+    description: "Every task has an environment before anything runs"
+    formula: "M = { t ∈ set | env(t) = ∅ } ≠ ∅ ⇒ evaluate = Err(M) ∧ engine_calls = 0 ∧ agent_calls = 0"
+  ACE-HAR-004:
+    description: "No receipt without a validated suite and a complete driver run"
+    formula: "Suite::build = Err ⇒ agent_calls = 0 ∧ evaluate = Err;  run_suite = Err ⇒ evaluate = Err"
+  ACE-HAR-005:
+    description: "The receipt names the suite that ran"
+    formula: "receipt.task_set_digest = digest(set) ∧ dom(receipt.image_digests) = ids(suite) ∧ ∀ t. receipt.image_digests(t) = digest(env(t).image)"
+  ACE-HAR-006:
+    description: "Seeded evaluations of the same inputs are the same run"
+    formula: "inputs₁ = inputs₂ ⇒ same_run(evaluate₁, evaluate₂);  output₁ ≠ output₂ ⇒ ¬same_run"
+
+proof_obligations:
+  - id: ACE-HAR-PO-001
+    type: invariant
+    property: "The null edit runs once and the gold edit three times; a gold edit that does not apply, or is not a unified diff, fails the task without a run (ACE-HAR-001)"
+    formal: "¬applies(udiff(e)) ⇒ resolved = false ∧ engine_calls = 0"
+  - id: ACE-HAR-PO-002
+    type: invariant
+    property: "A disagreement on any of the gold runs refuses the suite, naming the task (ACE-HAR-002)"
+    formal: "∃ i. report(i) ≠ report(0) ⇒ Err(Sandbox(t, flake))"
+  - id: ACE-HAR-PO-003
+    type: invariant
+    property: "Missing environments are listed in manifest order and nothing runs (ACE-HAR-003)"
+    formal: "M ≠ ∅ ⇒ engine_calls + agent_calls = 0"
+  - id: ACE-HAR-PO-004
+    type: invariant
+    property: "A dead engine during validation and a dead model during the run each return Err (ACE-HAR-004)"
+    formal: "engine = Err ∨ agent = Err ⇒ evaluate = Err"
+  - id: ACE-HAR-PO-005
+    type: invariant
+    property: "The caller's digests are replaced; an environment for a task outside the set is not reported (ACE-HAR-005)"
+    formal: "∀ t. t ∈ dom(receipt.image_digests) ⟺ t ∈ ids(suite)"
+  - id: ACE-HAR-PO-006
+    type: invariant
+    property: "Two evaluations differing only in start time are the same run and comparable; a different model output is not the same run (ACE-HAR-006)"
+    formal: "same_run(e₁, e₂) ∧ comparable(e₁, e₂) = Ok"
+
+falsification_tests:
+  - id: FALSIFY-ACE-HAR-001
+    name: gold_and_null_run_in_the_sandbox
+    prediction: "The null edit is not resolved after one run; the gold diff is resolved after three; a stale diff and a SEARCH/REPLACE gold are not resolved and never run; a set with such a gold is GoldFails, a set whose snapshot already passes is NullResolves, and the model is never called."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_har_001"
+    expected_output: "test result: ok"
+    if_fails: "Tasks that cannot be solved, or that need no change, are scored."
+  - id: FALSIFY-ACE-HAR-002
+    name: a_flaky_gold_refuses_the_suite
+    prediction: "Flipping the outcome on gold run 1, 2 or 3 each returns Err(Sandbox) for task a with a flake message after all gold runs and no model call."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_har_002"
+    expected_output: "test result: ok"
+    if_fails: "A task with unreliable tests changes the score from night to night."
+  - id: FALSIFY-ACE-HAR-003
+    name: every_task_needs_an_environment
+    prediction: "Tasks a, b, c with an environment for b only return NoEnvironment([a, c]) with no engine and no model call."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_har_003"
+    expected_output: "test result: ok"
+    if_fails: "A run spends hours before failing on the task that has no image."
+  - id: FALSIFY-ACE-HAR-004
+    name: failures_write_no_receipt
+    prediction: "A dead engine gives Err(Suite) after one call and no model call; a dead model gives Err(Driver) after one call; no run directory is left."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_har_004"
+    expected_output: "test result: ok"
+    if_fails: "A broken backend produces a receipt that reads as a model score."
+  - id: FALSIFY-ACE-HAR-005
+    name: digests_are_those_of_the_suite_that_ran
+    prediction: "With a bogus caller digest and an extra environment, the receipt carries the set's digest and exactly the images of a and b; pass@1 is 1.0 over two rows."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_har_005"
+    expected_output: "test result: ok"
+    if_fails: "A receipt names a task set or image that did not run."
+  - id: FALSIFY-ACE-HAR-006
+    name: seeded_evaluations_are_the_same_run
+    prediction: "Two evaluations a day apart are same_run and comparable; one with a wrong answer is not same_run."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_har_006"
+    expected_output: "test result: ok"
+    if_fails: "The nightly determinism check cannot tell a rerun from a different run."

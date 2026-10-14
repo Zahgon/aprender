@@ -1,0 +1,100 @@
+# apr-code-eval-prompt-v1 — the PROMPT node of the apr code eval ontology (APR-CODE-EVAL-001).
+#
+# The single-turn agent behind `apr code eval` turns one driver request into one chat
+# prompt. Aider's benchmark states the edit format in the system message with a worked
+# example and shows each file whole; SWE-bench's harness never shows the hidden tests.
+# Here those rules, and the check that the example parses under its own format, are
+# equations with planted-failure tests.
+metadata:
+  version: "1.0.0"
+  created: "2026-10-14"
+  author: PAIML Engineering
+  kind: kernel
+  registry: true
+  description: |
+    Prompt rendering for the `apr code` eval (epic #5281, ticket #5286): a driver Request
+    (contracts/apr-code-eval-driver-v1.yaml) becomes a system and a user message for one
+    completion; the reply is parsed by contracts/apr-code-eval-edit-v1.yaml.
+  references:
+    - "docs/specifications/apr-code-eval-v1.md §8 (agent input, edit formats, two attempts)"
+    - "Aider code editing benchmark (2023) — edit format and a worked example in the system prompt"
+    - "SWE-bench (2024) — the model sees the issue and the repository, never the hidden tests"
+name: apr-code-eval-prompt
+version: "1.0.0"
+status: PROPOSED
+scope: "prompt rendering of the apr code eval harness (ticket #5286)"
+description: |
+  render(request) returns Prompt { system, user }. system holds the role, the rules of
+  the run's edit format and an example reply; user holds the task id and prompt, every
+  file of the working tree in path order, and on attempt 2 the driver's feedback.
+
+equations:
+  ACE-PRM-001:
+    description: "Every file of the working tree is shown verbatim, in path order, in a fence that cannot close early"
+    formula: "∀ (p, b) ∈ files. p · fence(b) · b · fence(b) ⊆ user ∧ order(user) = order(dom(files));  fence(b) = backtick^(max(3, longest_run(b) + 1))"
+  ACE-PRM-002:
+    description: "Hidden tests and the gold edit never reach the prompt"
+    formula: "∀ s ∈ text(hidden(t)) ∪ {gold(t)} ∪ dom(hidden(t)). s ∉ system ∧ s ∉ user"
+  ACE-PRM-003:
+    description: "The system message carries the run's format example, which parses under that format and applies"
+    formula: "example(f) ⊆ system(f) ∧ apply(before, parse(f, example(f))) = after ∧ ∀ g ≠ f. example(g) ∉ system(f)"
+  ACE-PRM-004:
+    description: "Feedback is shown on attempt 2 only"
+    formula: "fb ⊆ user ⟺ attempt = 2 ∧ feedback = fb;  feedback = ∅ ⇒ render(attempt 2) = render(attempt 1)"
+  ACE-PRM-005:
+    description: "Rendering is a function of the request; the agentic format is refused"
+    formula: "r₁ = r₂ ⇒ render(r₁) = render(r₂);  f = agentic ⇒ render = Err(NeedsToolLoop)"
+
+proof_obligations:
+  - id: ACE-PRM-PO-001
+    type: invariant
+    property: "A file containing backtick runs of 3 and 4 is fenced with 5, and files appear in path order (ACE-PRM-001)"
+    formal: "longest_run(b) = 4 ⇒ |fence(b)| = 5"
+  - id: ACE-PRM-PO-002
+    type: invariant
+    property: "No hidden test text, hidden test name or path, or gold text is in either message, for every text format and both attempts (ACE-PRM-002)"
+    formal: "∀ f ∈ {whole, search_replace, udiff}. ∀ a ∈ {1, 2}. leak(render) = ∅"
+  - id: ACE-PRM-PO-003
+    type: invariant
+    property: "Each text format's example parses and turns answer() into 42; no other format's example is shown (ACE-PRM-003)"
+    formal: "∀ f. apply(before, parse(f, example(f))) = after"
+  - id: ACE-PRM-PO-004
+    type: invariant
+    property: "Attempt 1 ignores feedback; attempt 2 shows it; attempt 2 with no feedback equals attempt 1 (ACE-PRM-004)"
+    formal: "attempt = 1 ⇒ fb ∉ user"
+  - id: ACE-PRM-PO-005
+    type: invariant
+    property: "Two renders of one request are equal; the agentic format returns NeedsToolLoop and has no example (ACE-PRM-005)"
+    formal: "render(r) = render(r) ∧ example(agentic) = ∅"
+
+falsification_tests:
+  - id: FALSIFY-ACE-PRM-001
+    name: every_file_verbatim_in_path_order
+    prediction: "README, src/a.rs and src/z.rs appear in that order, each body verbatim; the file with backtick runs of 3 and 4 is in a 5-backtick fence; fence_for gives 3, 3, 4 and 5 on the table rows."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_prm_001"
+    expected_output: "test result: ok"
+    if_fails: "The model sees a truncated or reordered tree and edits text that is not in the file."
+  - id: FALSIFY-ACE-PRM-002
+    name: hidden_tests_and_gold_never_shown
+    prediction: "For whole, search_replace and udiff on attempts 1 and 2, neither message contains the hidden test body, its name, its path or the gold text."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_prm_002"
+    expected_output: "test result: ok"
+    if_fails: "The score measures copying the answer, not solving the task."
+  - id: FALSIFY-ACE-PRM-003
+    name: the_format_example_parses_and_applies
+    prediction: "Each text format's example parses under that format and turns answer() into 42 when applied; each system message contains its own example and no other."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_prm_003"
+    expected_output: "test result: ok"
+    if_fails: "The prompt teaches a format the parser rejects, and every reply is a FORMAT_ERROR."
+  - id: FALSIFY-ACE-PRM-004
+    name: feedback_only_on_attempt_two
+    prediction: "Attempt 1 with feedback shows none; attempt 2 shows it under its heading; attempt 2 without feedback renders the same as attempt 1."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_prm_004"
+    expected_output: "test result: ok"
+    if_fails: "Attempt 1 is scored with information only attempt 2 may have."
+  - id: FALSIFY-ACE-PRM-005
+    name: deterministic_and_agentic_refused
+    prediction: "Two renders of the same request are equal for every text format; the agentic format returns NeedsToolLoop and example(agentic) is None."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_prm_005"
+    expected_output: "test result: ok"
+    if_fails: "Seeded runs differ by prompt, or an agentic run silently gets a single-turn prompt."

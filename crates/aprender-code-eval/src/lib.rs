@@ -9,10 +9,14 @@
 //! - [`driver`]: validated tasks, a model and a sandbox → per-attempt records (ACE-DRV).
 //! - [`receipt`]: per-attempt records and run provenance → the §7 run receipt (ACE-RCP).
 //! - [`runner`]: a tree and its task's pinned environment → one sandbox run (ACE-RUN).
+//! - [`harness`]: a task set, a runner and a model → a validated suite run and its receipt (ACE-HAR).
+//! - [`prompt`]: one driver request → one chat prompt for a single-turn model (ACE-PRM).
 
 pub mod driver;
 pub mod edit;
+pub mod harness;
 pub mod metric;
+pub mod prompt;
 pub mod receipt;
 pub mod runner;
 pub mod sandbox;

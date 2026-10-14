@@ -105,7 +105,7 @@ pub fn materialize(dir: &Path, tree: &Files) -> Result<(), String> {
 /// Runs each tree in its task's image through a container [`Engine`].
 #[derive(Debug)]
 pub struct Sandboxed<E> {
-    engine: E,
+    pub(crate) engine: E,
     envs: BTreeMap<String, TaskEnv>,
     root: PathBuf,
     home: Option<PathBuf>,
@@ -134,6 +134,12 @@ impl<E: Engine> Sandboxed<E> {
             tag: tag.to_string(),
             runs: 0,
         }
+    }
+
+    /// Whether `id` has an environment.
+    #[must_use]
+    pub fn has_env(&self, id: &str) -> bool {
+        self.envs.contains_key(id)
     }
 
     /// ACE-RUN-005: task id → image digest, for the receipt.

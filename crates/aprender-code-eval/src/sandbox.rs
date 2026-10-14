@@ -549,6 +549,11 @@ pub fn wait_deadline(
 }
 
 impl Cli {
+    /// `<engine> --version`, trimmed: the receipt's `sandbox.engine_version`.
+    pub fn version(&self) -> Result<String, SandboxError> {
+        Ok(self.output(&["--version"])?.trim().to_string())
+    }
+
     fn output(&self, args: &[&str]) -> Result<String, SandboxError> {
         let out = Command::new(&self.bin)
             .args(args)
