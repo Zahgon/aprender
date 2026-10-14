@@ -339,6 +339,7 @@ pv,pv migrate,6,x86_64-linux,NONE,no,6,contracts-pv,crates/aprender-contracts-cl
 pv,pv mirai,6,x86_64-linux,NONE,no,6,contracts-pv,crates/aprender-contracts-cli/src/cli.rs:333,low
 pv,pv obligations,6,x86_64-linux,NONE,no,6,contracts-pv,crates/aprender-contracts-cli/src/cli.rs:409,high
 pv,pv ontology export,6,x86_64-linux,NONE,no,6,contracts-pv,crates/aprender-contracts-cli/src/cli.rs:746,high
+pv,pv ontology read,6,x86_64-linux,NONE,no,6,contracts-pv,crates/aprender-contracts-cli/src/cli.rs:769,high
 pv,pv ontology tbox,6,x86_64-linux,NONE,no,6,contracts-pv,crates/aprender-contracts-cli/src/cli.rs:758,high
 pv,pv pipeline,6,x86_64-linux,NONE,no,6,contracts-pv,crates/aprender-contracts-cli/src/cli.rs:397,low
 pv,pv probar,6,x86_64-linux,NONE,no,6,contracts-pv,crates/aprender-contracts-cli/src/cli.rs:55,low
