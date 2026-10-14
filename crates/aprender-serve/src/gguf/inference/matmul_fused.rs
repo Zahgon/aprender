@@ -160,9 +160,9 @@ impl OwnedQuantizedModel {
         //   BF16/F16   GH-368: decode 2-byte floats, BF16 = f32::from_bits(bits << 16)
         //   APR Q4/Q8  GH-478: per-tensor scratch dequant (F32 expansion bounded to
         //              one tensor's working set, not 4 × num_params at load time)
-        //   Q4_0/Q8_0/Q4_K/Q5_K/Q6_K  #3418 (FT-GGMLT-020/024): the one ggml
-        //              table's fused matvec_into row
-        //   otherwise  #3418 (FT-GGMLT-019): any id with a to_float row in the one
+        //   otherwise  #3418 (FT-GGMLT-020/024/031): any id with a row in the one
+        //              ggml table's fused matvec_into column takes it;
+        //              #3418 (FT-GGMLT-019): else any id with a to_float row in the one
         //              ggml table (Q4_1/Q5_0/Q5_1/Q2_K/Q3_K, IQ*) takes the dequant
         //              fallback, once per call; anything else is refused by id
         let data = &weight.data;
@@ -192,10 +192,9 @@ impl OwnedQuantizedModel {
                 let w = crate::apr::dequant::dequantize_apr_q8(data, in_dim * out_dim);
                 dequant_f32_matmul(input, w, "APR-Q8", in_dim, out_dim, seq_len)
             },
-            GGUF_TYPE_Q4_0 | GGUF_TYPE_Q8_0 | GGUF_TYPE_Q4_K | GGUF_TYPE_Q5_K | GGUF_TYPE_Q6_K => {
-                self.fused_matmul_table(input, weight, in_dim, out_dim, seq_len)
-            },
-            _ => self.dequant_fallback_or_refuse(input, weight, in_dim, out_dim, seq_len),
+            // #3418 (FT-GGMLT-031): membership is the table's matvec column,
+            // not a list here; no row falls back inside fused_matmul_table.
+            _ => self.fused_matmul_table(input, weight, in_dim, out_dim, seq_len),
         }
     }
 

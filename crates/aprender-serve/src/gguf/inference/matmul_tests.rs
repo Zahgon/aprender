@@ -2083,4 +2083,54 @@ mod to_float_matmul_tests_3418 {
             }
         }
     }
+
+    /// #3418 (FT-GGMLT-031): every id with a row in the one table's matvec
+    /// column reaches it through fused_matmul, bit for bit the row run per
+    /// input row; the match in fused_matmul keeps no list of its own.
+    #[test]
+    fn every_matvec_row_is_reached_by_fused_matmul_3418() {
+        use crate::gguf::ggml_type_table::matvec_into;
+        use crate::gguf::types::{GGUF_TYPE_BF16, GGUF_TYPE_F16, GGUF_TYPE_F32};
+        let model = create_test_model(64, 100);
+        let (in_dim, out_dim) = (256, 6);
+        let mut seen = 0;
+        for id in 0u32..=40 {
+            if [GGUF_TYPE_F32, GGUF_TYPE_F16, GGUF_TYPE_BF16].contains(&id) {
+                continue;
+            }
+            let Some(matvec) = matvec_into(id) else {
+                continue;
+            };
+            let t = traits(id).expect("a matvec row is a sized ggml type");
+            let data = finite_blocks(id, t.type_size, in_dim * out_dim / t.blck_size);
+            let weight = OwnedQuantizedTensor {
+                data: data.clone(),
+                in_dim,
+                out_dim,
+                qtype: id,
+            };
+            for seq_len in [1usize, 3] {
+                let input: Vec<f32> = (0..seq_len * in_dim)
+                    .map(|i| ((i % 23) as f32 - 11.0) / 8.0)
+                    .collect();
+                let mut want = vec![0.0f32; seq_len * out_dim];
+                for (x, out) in input
+                    .chunks_exact(in_dim)
+                    .zip(want.chunks_exact_mut(out_dim))
+                {
+                    matvec(&data, x, in_dim, out_dim, out).expect("the table row");
+                }
+                let got = model.fused_matmul(&input, &weight).expect("fused_matmul");
+                assert!(
+                    got.iter().any(|v| *v != 0.0),
+                    "{} seq {seq_len}: all zero",
+                    t.name
+                );
+                let bits = |v: &[f32]| v.iter().map(|f| f.to_bits()).collect::<Vec<_>>();
+                assert_eq!(bits(&got), bits(&want), "{} seq {seq_len}", t.name);
+            }
+            seen += 1;
+        }
+        assert!(seen >= 5, "only {seen} matvec rows were tried");
+    }
 }

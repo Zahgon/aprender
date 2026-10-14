@@ -1,5 +1,5 @@
 metadata:
-  version: 1.25.0
+  version: 1.26.0
   created: '2026-09-20'
   author: PAIML Engineering
   description: |
@@ -44,7 +44,7 @@ metadata:
   - 'GitHub #3418 (serve sizes from TRAITS, one table), #3430 (M1), #3431 (M2 reconciliation), #3421 (epic), #3563 (pin-derived artifacts, general case)'
 
 name: ggml-type
-version: 1.25.0
+version: 1.26.0
 scope: aprender-quant (trueno_quant) ggml tensor-type enum and TRAITS table
 
 description: |
@@ -599,6 +599,18 @@ falsification_tests:
   evidence: |
     Quorum 2026-10-13 (sonnet+haiku, planted fact F4 caught by haiku): 2/2 a.
     Wrong-row mutant killed on intel 2026-10-14.
+- id: FT-GGMLT-031
+  rule: OwnedQuantizedModel::fused_matmul keeps no list of fused types; every id past F32/BF16/F16/APR Q4/Q8 goes to fused_matmul_table, which runs the one table's matvec_into row and falls back (dequant or refuse) only when the id has none, so a new matvec row is reached without editing the match (#3418, quorum handoff/quorum-la074-a1-fusedarm.md 2/2 a)
+  prediction: |
+    every_matvec_row_is_reached_by_fused_matmul_3418: for every id 0..=40 except
+    F32/F16/BF16 with a matvec_into row (>= 5 seen), fused_matmul at seq_len 1 and 3
+    equals the row run per input row, bit for bit, and is not all zero. Sending the
+    catch-all arm to the dequant fallback is RED.
+  test: cargo test -p aprender-serve --lib every_matvec_row_is_reached
+  if_fails: 'a type with a fused matvec row is matmul-ed by dequant instead, or a row added to the table never reaches the fused path because the match kept its own list.'
+  evidence: |
+    Quorum 2026-10-14 (sonnet+haiku, planted fact F4 caught by both): 2/2 a.
+    Dequant-arm mutant killed on intel 2026-10-14.
 
 kani_harnesses:
 - id: KANI-GGMLT-001
