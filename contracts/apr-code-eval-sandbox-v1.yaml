@@ -39,7 +39,7 @@ equations:
     formula: "image_ref(t) matches '^[^@]+@sha256:[0-9a-f]{64}$'  ∧  digest_pulled = digest_declared"
   ACE-SBX-003:
     description: "Every resource is bounded"
-    formula: "wall_s < ∞ ∧ cpus < ∞ ∧ mem_bytes < ∞ ∧ pids < ∞ ∧ disk_bytes < ∞"
+    formula: "wall_s < ∞ ∧ cpus < ∞ ∧ mem_bytes < ∞ ∧ pids < ∞ ∧ disk_bytes < ∞  ∧  (killed_by ≠ ⊥ ⇒ status ≠ ok)  ∧  (status = ok ⇒ killed_by = ⊥)"
     note: "A breach ends the run with killed_by ∈ {timeout, oom, pids, disk}; it is a status, never a pass."
   ACE-SBX-004:
     description: "Filesystem isolation: only the task dir (read-only) and a tmpfs workdir are mounted"

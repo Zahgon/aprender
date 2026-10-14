@@ -31,6 +31,8 @@ description: |
   TIMEOUT / SANDBOX_ERROR (from the sandbox status), NO_TESTS (0 F2P tests executed),
   then RESOLVED or FAILED. Only RESOLVED counts toward a pass. Every label stays in the
   denominator. pre(t, out) := edits(out) ≠ ∅ ∧ parses(out, fmt(t)) ∧ applies(edits(out), snapshot(t)).
+  pass(x) := x ∈ executed ∧ outcome(x) = passed, so an F2P or P2P test that never ran is not a
+  pass; all_pass(S) := ∀ x ∈ S. pass(x). rep.status = ok implies rep.killed_by = ⊥ (ACE-SBX-003).
   ACE-VER-006 is the function itself; every other equation is a consequence of it.
 
 equations:
