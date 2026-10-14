@@ -200,6 +200,8 @@ mod tests {
             less_than_or_equals: None,
             resolves: None,
             severity: crate::ontology::shapes::Severity::Violation,
+            iri: None,
+            message: None,
         }
     }
 
@@ -304,6 +306,8 @@ mod tests {
             ignored_properties: vec![],
             properties: vec![],
             allow_empty: None,
+            iri: None,
+            target_nodes: vec![],
         }
     }
 

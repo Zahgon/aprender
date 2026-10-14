@@ -207,6 +207,12 @@ fn carry_extract_warnings(report: &mut Report, warnings: &[extract::json::Warnin
             focus: iri("json", &w.contract),
             shape: w.contract.clone(),
             path: Some(w.path.clone()),
+            value: None,
+            source: shapes::SourceShape::Node(format!(
+                "{}shape/{}",
+                crate::ontology::rdf::ONT_BASE,
+                w.contract
+            )),
             component: "extract:json",
             message: w.to_string(),
         });
@@ -1149,6 +1155,8 @@ mod tests {
             ignored_properties: Vec::new(),
             properties: Vec::new(),
             allow_empty: None,
+            iri: None,
+            target_nodes: vec![],
         }
     }
 

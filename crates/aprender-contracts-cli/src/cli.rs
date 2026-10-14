@@ -776,4 +776,21 @@ pub enum OntologyCommand {
         #[arg(long)]
         base: Option<String>,
     },
+    /// Validate a data graph against a SHACL shapes graph (each Turtle or N-Triples) and print the W3C
+    /// `sh:ValidationReport`, every result carrying focus node, path, value, source shape, component, severity
+    /// and message. Exit 0 if the data conforms, 1 if it does not (the report is still printed), 2 if a file
+    /// cannot be read or its syntax is unknown, 3 if a file is malformed or the shapes use a SHACL term outside
+    /// the validator's subset (the refusal names the term and the shape)
+    Validate {
+        /// The shapes graph
+        shapes: PathBuf,
+        /// The data graph (it may be the same file as the shapes graph)
+        data: PathBuf,
+        /// `turtle`, `ntriples` or `json`
+        #[arg(long, default_value = "turtle")]
+        format: String,
+        /// The base IRI both files resolve relative IRIs against (default: each file's own `file://` IRI)
+        #[arg(long)]
+        base: Option<String>,
+    },
 }

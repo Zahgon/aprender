@@ -122,6 +122,11 @@ pub struct PropertyShape {
     pub less_than_or_equals: Option<String>,
     pub resolves: Option<String>,
     pub severity: Severity,
+    /// The property shape's IRI when the shapes graph names it (a Turtle shapes graph, §14.6 S4); `None` for a
+    /// blank-node property shape, which a report keys by its node shape and path (§14.2).
+    pub iri: Option<String>,
+    /// `sh:message`: every result of this property shape carries it at the head of its message (§14.2).
+    pub message: Option<String>,
 }
 
 /// A node shape: a target class, an open/closed switch, and its property shapes.
@@ -138,6 +143,42 @@ pub struct NodeShape {
     /// verdict, but the shape is still named in the gate's `declines[]`. Not SHACL; pv's own key, and it
     /// must carry its reason: an exemption with no reason is a silent one.
     pub allow_empty: Option<String>,
+    /// The shape's IRI when the shapes graph names it; `None` is `ont:shape/<id>`, as [`to_turtle`] writes it.
+    pub iri: Option<String>,
+    /// `sh:targetNode`: read only from a Turtle shapes graph (§14.6 S4); the contract dialect still refuses it.
+    pub target_nodes: Vec<String>,
+}
+
+impl NodeShape {
+    /// The IRI a report names this shape by.
+    #[must_use]
+    pub fn iri(&self) -> String {
+        self.iri
+            .clone()
+            .unwrap_or_else(|| format!("{}shape/{}", crate::ontology::rdf::ONT_BASE, self.id))
+    }
+}
+
+/// The shape a result's `sh:sourceShape` names (§14.2 R-FEEDBACK), keyed so that no blank-node label is in it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SourceShape {
+    /// A node shape, by IRI: the source of `sh:closed`.
+    Node(String),
+    /// A property shape the shapes graph names by IRI.
+    Property(String),
+    /// A blank-node property shape: its node shape's IRI and its `sh:path`.
+    Blank { node: String, path: String },
+}
+
+impl SourceShape {
+    /// The comparison key: `<iri>`, or `<node> / <path>` for a blank-node property shape.
+    #[must_use]
+    pub fn key(&self) -> String {
+        match self {
+            Self::Node(i) | Self::Property(i) => format!("<{i}>"),
+            Self::Blank { node, path } => format!("<{node}> / <{path}>"),
+        }
+    }
 }
 
 /// One `sh:ValidationResult`.
@@ -147,6 +188,9 @@ pub struct ValidationResult {
     pub focus: String,
     pub shape: String,
     pub path: Option<String>,
+    /// `sh:value`: the value node that failed, for every component that has one (all but `minCount`/`maxCount`).
+    pub value: Option<Term>,
+    pub source: SourceShape,
     pub component: &'static str,
     pub message: String,
 }
@@ -431,6 +475,8 @@ fn parse_node_shape(
         ignored_properties,
         properties,
         allow_empty: allow_empty_of(id, map, depth)?,
+        iri: None,
+        target_nodes: Vec::new(),
     })
 }
 
@@ -514,6 +560,8 @@ fn parse_property(
             .and_then(serde_yaml::Value::as_str)
             .map(String::from),
         severity,
+        iri: None,
+        message: None,
     })
 }
 
@@ -731,7 +779,7 @@ pub fn validate(graph: &Graph, shapes: &[NodeShape]) -> Report {
     let mut report = Report::default();
     let mut focus_seen: BTreeSet<String> = BTreeSet::new();
     for shape in shapes {
-        for focus in instances_closed(graph, &shape.target_class) {
+        for focus in focus_nodes(graph, shape) {
             let focus = focus.as_str();
             focus_seen.insert(focus.to_string());
             validate_focus(graph, shape, focus, &mut report.results);
@@ -743,19 +791,50 @@ pub fn validate(graph: &Graph, shapes: &[NodeShape]) -> Report {
     report
 }
 
+/// The focus nodes of a shape: the instances of its target class, and its `sh:targetNode`s, in byte order.
+fn focus_nodes(graph: &Graph, shape: &NodeShape) -> BTreeSet<String> {
+    let mut out: BTreeSet<String> = shape.target_nodes.iter().cloned().collect();
+    if !shape.target_class.is_empty() {
+        out.extend(instances_closed(graph, &shape.target_class));
+    }
+    out
+}
+
 fn validate_focus(graph: &Graph, shape: &NodeShape, focus: &str, out: &mut Vec<ValidationResult>) {
-    let mut push =
-        |severity: Severity, path: Option<&str>, component: &'static str, message: String| {
-            out.push(ValidationResult {
-                severity,
-                focus: focus.to_string(),
-                shape: shape.id.clone(),
-                path: path.map(String::from),
-                component,
-                message,
-            });
-        };
+    let node_iri = shape.iri();
+    let mut result = |source: &SourceShape,
+                      severity: Severity,
+                      path: Option<&str>,
+                      component: &'static str,
+                      message: String,
+                      value: Option<&Term>| {
+        out.push(ValidationResult {
+            severity,
+            focus: focus.to_string(),
+            shape: shape.id.clone(),
+            path: path.map(String::from),
+            value: value.cloned(),
+            source: source.clone(),
+            component,
+            message,
+        });
+    };
     for p in &shape.properties {
+        let source = match &p.iri {
+            Some(i) => SourceShape::Property(i.clone()),
+            None => SourceShape::Blank {
+                node: node_iri.clone(),
+                path: p.path.clone(),
+            },
+        };
+        let mut push =
+            |severity, path: Option<&str>, component, message: String, value: Option<&Term>| {
+                let message = match &p.message {
+                    Some(m) => format!("{m}: {message}"),
+                    None => message,
+                };
+                result(&source, severity, path, component, message, value);
+            };
         let values = graph.objects(focus, &p.path);
         check_counts(p, &values, &mut push);
         for v in &values {
@@ -764,7 +843,15 @@ fn validate_focus(graph: &Graph, shape: &NodeShape, focus: &str, out: &mut Vec<V
         check_pairs(graph, focus, p, &values, &mut push);
     }
     if shape.closed {
-        check_closed(graph, shape, focus, &mut push);
+        let source = SourceShape::Node(node_iri);
+        check_closed(
+            graph,
+            shape,
+            focus,
+            &mut |severity, path, component, message, value| {
+                result(&source, severity, path, component, message, value);
+            },
+        );
     }
 }
 
@@ -772,7 +859,7 @@ fn validate_focus(graph: &Graph, shape: &NodeShape, focus: &str, out: &mut Vec<V
 fn check_counts(
     p: &PropertyShape,
     values: &[&Term],
-    push: &mut impl FnMut(Severity, Option<&str>, &'static str, String),
+    push: &mut impl FnMut(Severity, Option<&str>, &'static str, String, Option<&Term>),
 ) {
     if let Some(min) = p.min_count {
         if values.len() < min {
@@ -785,6 +872,7 @@ fn check_counts(
                     values.len(),
                     short(&p.path)
                 ),
+                None,
             );
         }
     }
@@ -810,6 +898,7 @@ fn check_counts(
                     short(&p.path),
                     named.join(", ")
                 ),
+                None,
             );
         }
     }
@@ -821,7 +910,7 @@ fn check_pairs(
     focus: &str,
     p: &PropertyShape,
     values: &[&Term],
-    push: &mut impl FnMut(Severity, Option<&str>, &'static str, String),
+    push: &mut impl FnMut(Severity, Option<&str>, &'static str, String, Option<&Term>),
 ) {
     for (other, strict, component) in [
         (p.less_than.as_deref(), true, "lessThan"),
@@ -853,6 +942,7 @@ fn check_pairs(
                             term_short(w),
                             short(other)
                         ),
+                        Some(*v),
                     );
                 }
             }
@@ -865,7 +955,7 @@ fn check_closed(
     graph: &Graph,
     shape: &NodeShape,
     focus: &str,
-    push: &mut impl FnMut(Severity, Option<&str>, &'static str, String),
+    push: &mut impl FnMut(Severity, Option<&str>, &'static str, String, Option<&Term>),
 ) {
     let allowed: BTreeSet<&str> = shape
         .properties
@@ -874,17 +964,22 @@ fn check_closed(
         .chain(shape.ignored_properties.iter().map(String::as_str))
         .chain(std::iter::once(RDF_TYPE))
         .collect();
+    // One result per TRIPLE, with the object as `sh:value` (SHACL §4.8.1; W3C node/closed-002 expects one per value).
     for pred in graph.predicates_of(focus) {
         if !allowed.contains(pred) {
-            push(
-                Severity::Violation,
-                Some(pred),
-                "closed",
-                format!(
-                    "carries {}, which the closed shape does not declare",
-                    short(pred)
-                ),
-            );
+            for v in graph.objects(focus, pred) {
+                push(
+                    Severity::Violation,
+                    Some(pred),
+                    "closed",
+                    format!(
+                        "carries {} {}, which the closed shape does not declare",
+                        short(pred),
+                        term_short(v)
+                    ),
+                    Some(v),
+                );
+            }
         }
     }
 }
@@ -893,7 +988,7 @@ fn check_value(
     graph: &Graph,
     p: &PropertyShape,
     v: &Term,
-    push: &mut impl FnMut(Severity, Option<&str>, &'static str, String),
+    push: &mut impl FnMut(Severity, Option<&str>, &'static str, String, Option<&Term>),
 ) {
     check_kind_and_type(graph, p, v, push);
     check_lexical(p, v, push);
@@ -918,6 +1013,7 @@ fn check_value(
                             "value {i} fails the nested shape: {}",
                             violations.join("; ")
                         ),
+                        Some(v),
                     );
                 }
             }
@@ -926,6 +1022,7 @@ fn check_value(
                 Some(&p.path),
                 "node",
                 format!("{v} is a literal; `node` needs an IRI"),
+                Some(v),
             ),
         }
     }
@@ -1085,7 +1182,7 @@ fn check_kind_and_type(
     graph: &Graph,
     p: &PropertyShape,
     v: &Term,
-    push: &mut impl FnMut(Severity, Option<&str>, &'static str, String),
+    push: &mut impl FnMut(Severity, Option<&str>, &'static str, String, Option<&Term>),
 ) {
     let path = Some(p.path.as_str());
     if let Some(kind) = p.node_kind {
@@ -1099,6 +1196,7 @@ fn check_kind_and_type(
                 path,
                 "nodeKind",
                 format!("{v} is not of nodeKind {kind:?}"),
+                Some(v),
             );
         }
     }
@@ -1110,12 +1208,14 @@ fn check_kind_and_type(
                 path,
                 "datatype",
                 format!("\"{value}\" is not a well-formed {}", short(dt)),
+                Some(v),
             ),
             _ => push(
                 p.severity,
                 path,
                 "datatype",
                 format!("{v} is not a {}", short(dt)),
+                Some(v),
             ),
         }
     }
@@ -1127,6 +1227,7 @@ fn check_kind_and_type(
                 path,
                 "class",
                 format!("{v} is not an instance of {}", short(class)),
+                Some(v),
             );
         }
     }
@@ -1136,7 +1237,7 @@ fn check_kind_and_type(
 fn check_lexical(
     p: &PropertyShape,
     v: &Term,
-    push: &mut impl FnMut(Severity, Option<&str>, &'static str, String),
+    push: &mut impl FnMut(Severity, Option<&str>, &'static str, String, Option<&Term>),
 ) {
     let path = Some(p.path.as_str());
     let lexical: &str = match v {
@@ -1167,6 +1268,7 @@ fn check_lexical(
                     term_short(v),
                     listed.join(", ")
                 ),
+                Some(v),
             );
         }
     }
@@ -1177,6 +1279,7 @@ fn check_lexical(
                 path,
                 "pattern",
                 format!("{}: {lexical:?} does not match /{src}/", short(&p.path)),
+                Some(v),
             );
         }
     }
@@ -1187,6 +1290,7 @@ fn check_lexical(
             path,
             "minLength",
             format!("{}: length {len} is below minLength", short(&p.path)),
+            Some(v),
         );
     }
     if p.max_length.is_some_and(|m| len > m) {
@@ -1195,6 +1299,7 @@ fn check_lexical(
             path,
             "maxLength",
             format!("{}: length {len} is above maxLength", short(&p.path)),
+            Some(v),
         );
     }
 }

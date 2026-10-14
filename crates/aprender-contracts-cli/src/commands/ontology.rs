@@ -17,6 +17,9 @@ use std::path::Path;
 
 use provable_contracts::ontology::owl;
 use provable_contracts::ontology::read::{self, Syntax};
+use provable_contracts::ontology::report;
+use provable_contracts::ontology::shapes::{self, Report};
+use provable_contracts::ontology::shapes_rdf::{self, RdfTerm, RdfTriple};
 use provable_contracts::ontology::sigma::Sigma;
 
 use crate::cli::OntologyCommand;
@@ -58,6 +61,15 @@ pub fn run(command: &OntologyCommand) -> Result<(), Box<dyn std::error::Error>> 
             base,
         } => {
             read_rdf(input, syntax.as_deref(), base.as_deref());
+            Ok(())
+        }
+        OntologyCommand::Validate {
+            shapes,
+            data,
+            format,
+            base,
+        } => {
+            validate_rdf(shapes, data, format, base.as_deref());
             Ok(())
         }
     }
@@ -127,3 +139,95 @@ fn file_iri(path: &Path) -> String {
     let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     format!("file://{}", abs.display())
 }
+
+/// Read one RDF file for `validate`: exit 2 when it cannot be read or its syntax is unknown, 3 when malformed.
+/// Why `validate` stopped before a report: the exit code and the message.
+#[derive(Debug)]
+pub(crate) struct Refusal {
+    pub code: i32,
+    pub message: String,
+}
+
+fn refuse(code: i32, message: String) -> Refusal {
+    Refusal { code, message }
+}
+
+/// Read one RDF file for `validate`: 2 when it cannot be read or its syntax is unknown, 3 when malformed.
+fn read_for_validate(input: &Path, base: Option<&str>) -> Result<Vec<RdfTriple>, Refusal> {
+    let syntax = Syntax::for_path(input)
+        .ok_or_else(|| refuse(2, format!("{}: not .ttl or .nt", input.display())))?;
+    let text = std::fs::read_to_string(input)
+        .map_err(|e| refuse(2, format!("cannot read {}: {e}", input.display())))?;
+    let base = base.map_or_else(|| file_iri(input), str::to_string);
+    let graph = read::read(&text, syntax, Some(&base))
+        .map_err(|e| refuse(3, format!("{}: {e}", input.display())))?;
+    Ok(graph
+        .iter()
+        .map(|t| RdfTriple {
+            subject: rdf_term(&t.subject),
+            predicate: t.predicate.clone(),
+            object: rdf_term(&t.object),
+        })
+        .collect())
+}
+
+/// The reader's term as the validator's input term. This command is the one place both are named (R-15).
+fn rdf_term(t: &read::InputTerm) -> RdfTerm {
+    match t {
+        read::InputTerm::Iri(i) => RdfTerm::Iri(i.clone()),
+        read::InputTerm::Blank(b) => RdfTerm::Blank(b.clone()),
+        read::InputTerm::Literal {
+            lexical,
+            datatype,
+            lang,
+        } => RdfTerm::Literal {
+            lexical: lexical.clone(),
+            datatype: datatype.clone(),
+            lang: lang.clone(),
+        },
+    }
+}
+
+/// The validator's report on `data_path` against `shapes_path`, or the refusal: 3 for a shapes graph outside the
+/// subset or a data graph the validator cannot hold, naming the term.
+pub(crate) fn validate_files(
+    shapes_path: &Path,
+    data_path: &Path,
+    base: Option<&str>,
+) -> Result<Report, Refusal> {
+    let shapes_graph = read_for_validate(shapes_path, base)?;
+    let data_graph = read_for_validate(data_path, base)?;
+    let shapes = shapes_rdf::shapes(&shapes_graph)
+        .map_err(|e| refuse(3, format!("{}: {e}", shapes_path.display())))?;
+    let data = shapes_rdf::data_graph(&data_graph)
+        .map_err(|e| refuse(3, format!("{}: {e}", data_path.display())))?;
+    Ok(shapes::validate(&data, &shapes))
+}
+
+/// `pv ontology validate` (CRUX §14.6 S4): the in-house validator on any shapes and data graph, its report
+/// written as a W3C `sh:ValidationReport`. A shapes graph outside the subset is refused, never half-checked.
+fn validate_rdf(shapes_path: &Path, data_path: &Path, format: &str, base: Option<&str>) {
+    if !matches!(format, "turtle" | "ntriples" | "json") {
+        eprintln!("error: unknown format {format:?}: use turtle, ntriples or json");
+        std::process::exit(2);
+    }
+    let r = validate_files(shapes_path, data_path, base).unwrap_or_else(|e| {
+        eprintln!("error: {}", e.message);
+        std::process::exit(e.code);
+    });
+    match format {
+        "json" => println!(
+            "{}",
+            serde_json::to_string_pretty(&report::to_json(&r)).unwrap_or_default()
+        ),
+        "ntriples" => print!("{}", report::to_ntriples(&r)),
+        _ => print!("{}", report::to_turtle(&r)),
+    }
+    if !r.conforms() {
+        std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+#[path = "ontology_validate_tests.rs"]
+mod validate_tests;
