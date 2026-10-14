@@ -194,12 +194,14 @@ fn reconcile_and_emit(
 ) -> Result<()> {
     // #3793: a constrained output refused after it was produced (Truncated, SchemaViolation)
     // follows the same rule: the machine surfaces emit it beside the refusal, the human one
-    // stays silent, and the run exits non-zero
-    let reconciled = reconcile_accelerator(accel_forced, result).and_then(|()| {
-        result.constraint_refusal.clone().map_or(Ok(()), |r| {
-            Err(crate::error::CliError::ConstraintRefused(r))
+    // stays silent, and the run exits non-zero. #3720: so does an empty completion.
+    let reconciled = reconcile_accelerator(accel_forced, result)
+        .and_then(|()| {
+            result.constraint_refusal.clone().map_or(Ok(()), |r| {
+                Err(crate::error::CliError::ConstraintRefused(r))
+            })
         })
-    });
+        .and_then(|()| require_answer(result));
     if reconciled.is_ok() || emits_machine_output(stream, output_format, benchmark) {
         print_run_output(
             result,
@@ -209,6 +211,7 @@ fn reconcile_and_emit(
             benchmark,
             stream,
             accel_forced,
+            reconciled.as_ref().err(),
         )?;
     }
     reconciled
@@ -310,34 +313,57 @@ fn refuse_forced_accelerator_without_forward(source: &str, accel_forced: bool) -
     }
 }
 
-/// [`run_model`], where a constrained run refused before it produced output (#3793) still
-/// answers a machine-readable request: the refusal document on stdout, then the error.
+/// [`run_model`], where a run that ended before it had a result still answers a
+/// machine-readable request (#3720 rule 1, one document on every exit; #3793 for a
+/// constrained run refused before it produced output): the error document on stdout, then
+/// the error, unchanged, so the exit code is the error's own.
 fn run_model_answering_refusals(
     source: &str,
     options: &RunOptions,
 ) -> Result<super::run::RunResult> {
-    match run_model(source, options) {
-        Err(crate::error::CliError::ConstraintRefused(refusal)) => {
-            if emits_machine_output(options.stream, &options.output_format, options.benchmark) {
-                let doc = serde_json::json!({
-                    "model": source,
-                    "text": serde_json::Value::Null,
-                    "finish_reason": refusal.finish_reason,
-                    "refusal": refusal.to_json(),
-                });
-                println!(
-                    "{}",
-                    if options.stream {
-                        serde_json::to_string(&doc).unwrap_or_default()
-                    } else {
-                        serde_json::to_string_pretty(&doc).unwrap_or_default()
-                    }
-                );
-            }
-            Err(crate::error::CliError::ConstraintRefused(refusal))
+    run_model(source, options).map_err(|e| {
+        if emits_machine_output(options.stream, &options.output_format, options.benchmark) {
+            let doc = error_document(&e, source, options.stream);
+            println!(
+                "{}",
+                if options.stream {
+                    serde_json::to_string(&doc).unwrap_or_default()
+                } else {
+                    serde_json::to_string_pretty(&doc).unwrap_or_default()
+                }
+            );
         }
-        other => other,
+        e
+    })
+}
+
+/// The one document a run that ended before it had a result writes: the model it was asked
+/// to run, `"text": null`, and the #3720 envelope (plus `"event": "final"` on a `--stream`
+/// run). A constrained refusal also carries its `finish_reason` and `refusal` (#3793).
+fn error_document(e: &crate::error::CliError, source: &str, stream: bool) -> serde_json::Value {
+    let mut doc = e.envelope();
+    doc["model"] = source.into();
+    doc["text"] = serde_json::Value::Null;
+    if let crate::error::CliError::ConstraintRefused(refusal) = e {
+        doc["finish_reason"] = refusal.finish_reason.into();
+        doc["refusal"] = refusal.to_json();
     }
+    if stream {
+        doc["event"] = "final".into();
+    }
+    doc
+}
+
+/// #3720 `empty_completion`: a run that produced no answer (zero tokens, or only
+/// whitespace) is a FAILURE naming why, never exit 0 with "".
+fn require_answer(result: &super::run::RunResult) -> Result<()> {
+    if !result.text.trim().is_empty() {
+        return Ok(());
+    }
+    Err(crate::error::CliError::EmptyCompletion(format!(
+        "empty completion: generation produced no text ({} tokens generated)",
+        result.tokens_generated.unwrap_or(0)
+    )))
 }
 
 /// Does [`print_run_output`] emit a MACHINE-readable document for these flags?
@@ -600,6 +626,7 @@ fn print_trace_config(
 /// the final blob. The JSONL wire contract is identical to what a true
 /// streaming implementation would produce; when realizar grows a callback the
 /// emit point can move into the decode loop without touching consumers.
+#[allow(clippy::too_many_arguments)]
 fn print_run_output(
     result: &RunResult,
     source: &str,
@@ -608,17 +635,18 @@ fn print_run_output(
     benchmark: bool,
     stream: bool,
     accel_forced: bool,
+    error: Option<&crate::error::CliError>,
 ) -> Result<()> {
     // --stream takes precedence — emit JSONL stream. This implies json-style
     // structured output regardless of --format. (--stream --json is the same
     // as --stream alone.)
     if stream && !benchmark {
-        return print_stream_output(result, source, max_tokens, accel_forced);
+        return print_stream_output(result, source, max_tokens, accel_forced, error);
     }
 
     // GH-240/GH-250: JSON output mode with accurate token counts
     if output_format == "json" && !benchmark {
-        let json = build_final_json(result, source, max_tokens, accel_forced);
+        let json = final_document(result, source, max_tokens, accel_forced, error);
         println!(
             "{}",
             serde_json::to_string_pretty(&json).unwrap_or_default()
@@ -649,8 +677,39 @@ fn print_run_output(
     Ok(())
 }
 
-/// Build the terminal JSON blob shared by `--json` and `--stream` final events.
+/// [`final_document`] for a run that ended `ok`.
+#[cfg(test)]
 fn build_final_json(
+    result: &RunResult,
+    source: &str,
+    max_tokens: usize,
+    accel_forced: bool,
+) -> serde_json::Value {
+    final_document(result, source, max_tokens, accel_forced, None)
+}
+
+/// The terminal JSON document shared by `--json` and `--stream` final events, with the
+/// #3720 envelope: `status` always, `error` iff the run did not end `ok`.
+fn final_document(
+    result: &RunResult,
+    source: &str,
+    max_tokens: usize,
+    accel_forced: bool,
+    error: Option<&crate::error::CliError>,
+) -> serde_json::Value {
+    let mut doc = run_result_json(result, source, max_tokens, accel_forced);
+    let envelope = error.map_or_else(
+        || serde_json::json!({ "status": crate::error::RunStatus::Ok.as_str() }),
+        crate::error::CliError::envelope,
+    );
+    if let (Some(doc), Some(envelope)) = (doc.as_object_mut(), envelope.as_object()) {
+        doc.extend(envelope.clone());
+    }
+    doc
+}
+
+/// The run's own fields (model, text, tokens, timings, usage, backend, refusal).
+fn run_result_json(
     result: &RunResult,
     source: &str,
     max_tokens: usize,
@@ -760,23 +819,38 @@ fn print_stream_output(
     source: &str,
     max_tokens: usize,
     accel_forced: bool,
+    error: Option<&crate::error::CliError>,
 ) -> Result<()> {
     use std::io::Write;
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
-    write_stream_output(&mut out, result, source, max_tokens, accel_forced)?;
+    write_stream_output_with(&mut out, result, source, max_tokens, accel_forced, error)?;
     out.flush()?;
     Ok(())
 }
 
 /// Write the stream NDJSON to a generic `Write` sink. Extracted from
 /// [`print_stream_output`] for direct testing without stdout capture.
+#[cfg(test)]
 pub(crate) fn write_stream_output<W: std::io::Write>(
     out: &mut W,
     result: &RunResult,
     source: &str,
     max_tokens: usize,
     accel_forced: bool,
+) -> std::io::Result<()> {
+    write_stream_output_with(out, result, source, max_tokens, accel_forced, None)
+}
+
+/// [`write_stream_output`] for a run that may have ended in an error (#3720): the terminal
+/// `final` event carries the envelope.
+pub(crate) fn write_stream_output_with<W: std::io::Write>(
+    out: &mut W,
+    result: &RunResult,
+    source: &str,
+    max_tokens: usize,
+    accel_forced: bool,
+    error: Option<&crate::error::CliError>,
 ) -> std::io::Result<()> {
     if let Some(tokens) = result.generated_tokens.as_deref() {
         let texts = result.token_texts.as_deref().unwrap_or(&[]);
@@ -791,7 +865,7 @@ pub(crate) fn write_stream_output<W: std::io::Write>(
         }
     }
 
-    let mut final_blob = build_final_json(result, source, max_tokens, accel_forced);
+    let mut final_blob = final_document(result, source, max_tokens, accel_forced, error);
     if let Some(obj) = final_blob.as_object_mut() {
         obj.insert(
             "event".to_string(),

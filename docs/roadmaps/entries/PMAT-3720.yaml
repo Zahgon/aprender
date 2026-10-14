@@ -1,0 +1,23 @@
+- id: PMAT-3720
+  github_issue: 3720
+  item_type: task
+  title: 'apr response contract: status envelope, empty_completion, model_digest'
+  status: in_progress
+  priority: critical
+  assigned_to: null
+  created: 2026-10-14T11:09:45Z
+  updated: 2026-10-14T11:09:45Z
+  spec: null
+  acceptance_criteria:
+  - 'weights digest: apr run --json and serve (/v1/chat/completions: a model_digest field and the x-apr-model-digest header) carry the sha256 of the model file actually loaded, plus the apr version+sha; a case row checks it against sha256sum of the file.'
+  - 'seed determinism: the same model, prompt, seed and sampling params give byte-identical output twice in a row on each backend, for run and serve; where a backend cannot guarantee it the response says deterministic: false with the reason.'
+  - 'empty completion = error: a generation that produces zero tokens (or only a stripped think block) exits non-zero from apr run / returns an HTTP error from serve, naming why; never rc 0 with "".'
+  - 'refused vs did-not-run: distinct exit codes and JSON status values for REFUSED (a capability or limit, with the reason), FAILED (ran and errored) and OK, documented in --help and the contract, with a case row per state.'
+  - 'these become cells in the SHACL release shape (#3715).'
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 4000

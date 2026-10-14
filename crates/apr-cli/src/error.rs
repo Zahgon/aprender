@@ -144,6 +144,34 @@ pub enum CliError {
     /// line. Which refusal is its first word, and `--json` carries it as `refusal.kind`.
     #[error("{0}")]
     ConstraintRefused(ConstraintRefusal),
+
+    /// #3720 `empty_completion`: generation ran and produced no answer (zero tokens, or only
+    /// whitespace). Never exit 0 with "".
+    #[error("{0}")]
+    EmptyCompletion(String),
+}
+
+/// #3720: how a command ended, as every machine-readable `apr run` document reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunStatus {
+    /// It finished.
+    Ok,
+    /// A capability, limit or policy said no; the reason is named.
+    Refused,
+    /// The work ran and errored.
+    Failed,
+}
+
+impl RunStatus {
+    /// The contract's spelling (`contracts/apr-response-contract-v1.yaml`).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Refused => "refused",
+            Self::Failed => "failed",
+        }
+    }
 }
 
 impl CliError {
@@ -187,7 +215,79 @@ impl CliError {
             // #3793: every constrained-decoding refusal. The kind is the message's first word
             // and `refusal.kind` in `--json`, so one code does not hide which it was.
             Self::ConstraintRefused(_) => 15,
+            // #3720: "the work ran and produced no answer", the same code as a failed
+            // inference; the envelope's `error.kind` tells them apart.
+            Self::EmptyCompletion(_) => 8,
         }
+    }
+
+    /// #3720 `error.kind`: one snake_case name per variant, never re-mapped.
+    #[must_use]
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::FileNotFound(_) => "file_not_found",
+            Self::NotAFile(_) => "not_a_file",
+            Self::InvalidFormat(_) => "invalid_format",
+            Self::InvalidInput(_) => "invalid_input",
+            Self::InvalidModelFile { .. } => "invalid_model_file",
+            Self::MissingCompanionFile(_) => "missing_companion_file",
+            Self::Io(_) => "io_error",
+            Self::ValidationFailed(_) => "validation_failed",
+            Self::Aprender(_) => "aprender_error",
+            Self::ModelLoadFailed(_) => "model_load_failed",
+            Self::InferenceFailed(_) => "inference_failed",
+            Self::FeatureDisabled(_) => "feature_disabled",
+            Self::NetworkError(_) => "network_error",
+            Self::HttpNotFound(_) => "http_not_found",
+            Self::NotImplemented(_) => "not_implemented",
+            Self::ParityFailed(_) => "parity_failed",
+            Self::BackendUnavailable(_) => "backend_unavailable",
+            // Which constraint refusal it was stays in `refusal.kind` (#3793).
+            Self::ConstraintRefused(_) => "constraint_refused",
+            Self::EmptyCompletion(_) => "empty_completion",
+        }
+    }
+
+    /// #3720 `status`: REFUSED when a capability, limit or policy said no (no model, bad
+    /// input, a build or host without the capability, a gate that refused the backend, a
+    /// constraint the output could not meet); FAILED when the work ran and errored.
+    #[must_use]
+    pub fn status(&self) -> RunStatus {
+        match self {
+            Self::FileNotFound(_)
+            | Self::NotAFile(_)
+            | Self::InvalidFormat(_)
+            | Self::InvalidInput(_)
+            | Self::InvalidModelFile { .. }
+            | Self::MissingCompanionFile(_)
+            | Self::FeatureDisabled(_)
+            | Self::HttpNotFound(_)
+            | Self::NotImplemented(_)
+            | Self::ParityFailed(_)
+            | Self::BackendUnavailable(_)
+            | Self::ConstraintRefused(_) => RunStatus::Refused,
+            Self::Io(_)
+            | Self::ValidationFailed(_)
+            | Self::Aprender(_)
+            | Self::ModelLoadFailed(_)
+            | Self::InferenceFailed(_)
+            | Self::NetworkError(_)
+            | Self::EmptyCompletion(_) => RunStatus::Failed,
+        }
+    }
+
+    /// #3720: the `status` + `error` fields of a machine-readable document for this error.
+    /// `exit_code` is exactly the process's.
+    #[must_use]
+    pub fn envelope(&self) -> serde_json::Value {
+        serde_json::json!({
+            "status": self.status().as_str(),
+            "error": {
+                "kind": self.kind(),
+                "message": self.to_string(),
+                "exit_code": self.exit_code_value(),
+            },
+        })
     }
 }
 

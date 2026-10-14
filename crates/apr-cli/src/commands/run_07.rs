@@ -13,4 +13,5 @@ include!("run_tests_stream_output.rs");
 include!("run_tests_accel_reconcile.rs");
 include!("run_tests_usage_3718.rs");
 include!("run_tests_top_k_default_3754.rs");
+include!("run_tests_response_contract.rs");
 }
