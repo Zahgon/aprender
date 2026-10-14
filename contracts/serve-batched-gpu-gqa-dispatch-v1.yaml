@@ -49,10 +49,11 @@ proof_obligations:
     kind: safety
     statement: "batch_generate_gpu never dispatches a GQA model (kv_dim != hidden_dim) into the MHA-only forward_batch_with_gpu_ffn batched branch."
     discharged_by: FALSIFY-SERVE-GQA-BATCH-NO-CRASH
-falsification:
+falsification_tests:
   - id: FALSIFY-SERVE-GQA-BATCH-NO-CRASH
     description: "A GQA model run through batch_generate_gpu with >=32 prompts returns Ok with one sequence per prompt (no CUDA GEMM mismatch, no OOB slice panic). Discharges C-SERVE-GQA-DISPATCH-001/002 and PO-SERVE-GQA-DISPATCH-001."
     test: "cargo test -p aprender-serve --lib falsify_pmat841_batched_gpu_gqa_no_crash"
+    prediction: "batch_generate_gpu on a GQA model with 32 prompts returns Ok with 32 sequences, each retaining its prompt tokens"
     evidence: |
       RED (guard stashed): Err(UnsupportedOperation { operation: "batch_matmul_gpu_prefer_cuda",
       reason: "Matrix B size 8192 doesn't match k*n=64*192=12288" }) — the fixture-scale twin of the

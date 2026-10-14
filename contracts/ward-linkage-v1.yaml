@@ -89,7 +89,7 @@ proof_obligations:
   formal: "ward(X_ref, k=2) ≡ {1,4,5} | {0,2,3} (up to label permutation)"
   tolerance: 0.0
 
-falsification:
+falsification_tests:
   - id: FALSIFY-WARD-001
     description: |
       AgglomerativeClustering(Linkage::Ward) with n_clusters=2 on the reference
@@ -97,7 +97,8 @@ falsification:
       C-WARD-001/002/003 by asserting the permutation-invariant partition:
       labels[1]==labels[4]==labels[5] ∧ labels[0]==labels[2]==labels[3]
       ∧ labels[1] != labels[0].
-    test: "falsify_hc_004_ward_matches_scipy"
+    test: "cargo test -p aprender-core --lib falsify_hc_004_ward_matches_scipy"
+    prediction: "Ward linkage yields the scipy partition {1,4,5} | {0,2,3}"
     evidence: |
       cargo test -p aprender-core --lib falsify_hc_004_ward_matches_scipy
       RED  (buggy coefficient (n1*n2/(n1+n2))*centroid_dist): partition

@@ -121,40 +121,49 @@ proof_obligations:
   formal: "65520.0 ⇒ f16(65520.0) == 0x7C00"
   applies_to: finite
 
-falsification:
+falsification_tests:
   - id: FALSIFY-SOLVE-F16-RNE-001
     description: "solve f32_to_f16 round-to-nearest-even on known divergences (255.99 -> 0x5C00, 65520.0 -> +Inf, subnormal half-way -> 0x0001). Discharges C-QSF16-001/002/003."
     test: "cargo test -p aprender-solve --lib falsify_f32_to_f16_known_rne_divergences"
+    prediction: "255.99 -> 0x5C00, 65520.0 -> 0x7C00 (+Inf), the subnormal half-way case -> 0x0001"
     evidence: "RED 0x5BFF/0x7BFF/0x0000 (round-toward-zero truncation) -> GREEN 0x5C00/0x7C00/0x0001 (half RNE oracle)"
   - id: FALSIFY-SOLVE-F16-TIES-001
     description: "solve f32_to_f16 ties round to even (2049.0, 2048.5, 1000.5) match the half oracle. Discharges C-QSF16-001."
     test: "cargo test -p aprender-solve --lib falsify_f32_to_f16_ties_to_even"
+    prediction: "2049.0, 2048.5 and 1000.5 each encode to half::f16::from_f32(v).to_bits()"
     evidence: "each tie equals half::f16::from_f32(v).to_bits()"
   - id: FALSIFY-SOLVE-F16-PARITY-001
     description: "solve f32_to_f16 strided exhaustive sweep over all 2^32 f32 inputs is bit-identical to half. Discharges C-QSF16-004."
     test: "cargo test -p aprender-solve --lib falsify_f32_to_f16_bit_identical_to_half_on_grid"
+    prediction: "every sampled f32 input on the strided grid encodes to half::f16::from_f32(v).to_bits() (NaN canonicalized)"
     evidence: "every sampled input's f16 bits equal half::f16::from_f32(v).to_bits() (NaN canonicalized)"
   - id: FALSIFY-QUANT-F16-RNE-001
     description: "quant f32_to_f16 (delegates to half) round-to-nearest-even on the known divergence cases. Locks C-QSF16-001/002/003 against a future truncation regression."
     test: "cargo test -p aprender-quant --lib falsify_quant_f32_to_f16_rne_known_divergences"
+    prediction: "255.99 -> 0x5C00, 65520.0 -> 0x7C00, the subnormal half-way case -> 0x0001"
     evidence: "GREEN 0x5C00/0x7C00/0x0001; would go RED if a hand-rolled truncation impl were reintroduced"
   - id: FALSIFY-QUANT-F16-PARITY-001
     description: "quant f32_to_f16 strided exhaustive sweep over all 2^32 f32 inputs is bit-identical to half. Discharges C-QSF16-004."
     test: "cargo test -p aprender-quant --lib falsify_quant_f32_to_f16_bit_identical_to_half"
+    prediction: "every sampled f32 input on the strided grid encodes to half::f16::from_f32(v).to_bits() (NaN canonicalized)"
     evidence: "every sampled input's f16 bits equal half::f16::from_f32(v).to_bits() (NaN canonicalized)"
   - id: FALSIFY-CONVERT-F16-RNE-001
     description: "convert_report f32_to_f16 round-to-nearest-even on known divergences (255.99 -> 0x5C00, 65520.0 -> +Inf 0x7C00). Discharges C-QSF16-005. RED on the old truncating apr-convert-fp16 encoder."
     test: "cargo test -p aprender-core --lib falsify_convert_f32_to_f16_known_rne_divergences"
+    prediction: "255.99 -> 0x5C00 and 65520.0 -> 0x7C00 (+Inf), not 0x5BFF/0x7BFF"
     evidence: "RED 0x5BFF/0x7BFF (round-toward-zero) -> GREEN 0x5C00/0x7C00 (half RNE oracle)"
   - id: FALSIFY-CONVERT-F16-TIES-001
     description: "convert_report f32_to_f16 ties with a NON-ZERO discarded mantissa (low13==0x1000, kept LSB odd) round to even UP, where truncation rounds DOWN. Strengthens C-QSF16-005; RED on the old impl."
     test: "cargo test -p aprender-core --lib falsify_convert_f32_to_f16_ties_to_even_nonzero_discard"
+    prediction: "0.12689209 -> 0x3010 (round to even up), not 0x300F; same for 8332.0 and -0.13079834"
     evidence: "0.12689209 -> RED 0x300F (truncate) -> GREEN 0x3010 (RNE); also 8332.0, -0.13079834"
   - id: FALSIFY-CONVERT-F16-SUBNORMAL-001
     description: "convert_report f32_to_f16 subnormal ties round to even (not half-up) and carry across the subnormal->normal boundary. Discharges the subnormal half of C-QSF16-005."
     test: "cargo test -p aprender-core --lib falsify_convert_f32_to_f16_subnormal_rne"
+    prediction: "5.1528215e-5 -> 0x0360 (even, not 0x0361); 6.100591e-5 -> 0x0400 (not flushed to 0x0000)"
     evidence: "5.1528215e-5 -> 0x0360 (even, not half-up 0x0361); 6.100591e-5 -> 0x0400 (was flushed to 0x0000)"
   - id: FALSIFY-CONVERT-F16-PARITY-001
     description: "convert_report f32_to_f16 strided exhaustive sweep over all 2^32 f32 inputs is bit-identical to half. Discharges C-QSF16-004/005."
     test: "cargo test -p aprender-core --lib falsify_convert_f32_to_f16_bit_identical_to_half_on_grid"
+    prediction: "every sampled f32 input on the strided grid encodes to half::f16::from_f32(v).to_bits() (NaN canonicalized)"
     evidence: "every sampled input's f16 bits equal half::f16::from_f32(v).to_bits() (NaN canonicalized); old impl ~251.6M divergences"

@@ -45,10 +45,11 @@ proof_obligations:
     kind: correctness
     statement: "When DRY fires, the applied penalty exponent is (repeat_len - allowed_length), never (repeat_len + 1 - allowed_length); the penalty is not base-x too strong vs llama.cpp."
     discharged_by: FALSIFY-DRY-REPEAT-LEN-EXPONENT
-falsification:
+falsification_tests:
   - id: FALSIFY-DRY-REPEAT-LEN-EXPONENT
     description: "For context [7,7] with allowed_length 1, multiplier 1.0, base 1.75, the 1-token suffix [7] recurs at index 0 followed by candidate 7, so repeat_len = 1. The penalized logit for token 7 must be base_logit - multiplier*base^(1-1) = 5.0 - 1.0 = 4.0 (llama.cpp), NOT base_logit - multiplier*base^(2-1) = 5.0 - 1.75 = 3.25 (off-by-one). Discharges C-DRY-001, C-DRY-002 and PO-DRY-001."
     test: "cargo test -p aprender-serve --lib test_dry_penalty_exponent_matches_llama_cpp_repeat_len"
+    prediction: "context [7,7], allowed_length 1, multiplier 1.0, base 1.75: the penalized logit for token 7 is 4.0 (llama.cpp base^(repeat_len - allowed_length)), not 3.25"
     evidence: |
       RED (pre-fix): expected penalized logit 4 (penalty=1, repeat_len=1), got 3.25 — the penalty
       was base=1.75x too strong because match_len = end_pos + 1 included the candidate token.

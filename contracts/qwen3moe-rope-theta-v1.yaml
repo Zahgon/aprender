@@ -67,10 +67,11 @@ proof_obligations:
     In particular a = "llama" and a = "mistral" still map to 10_000.0.
     Discharges C-QWEN3MOE-ROPE-003.
 
-falsification:
+falsification_tests:
   - id: FALSIFY-QWEN3MOE-ROPE-001
     description: "Raw GGUF arch 'qwen3moe' resolves to 1e6, not the 10K default. Discharges C-QWEN3MOE-ROPE-001 / PO-QWEN3MOE-ROPE-001."
-    test: "qwen3moe_raw_arch_uses_1m_rope_base — default_rope_theta_for_architecture(\"qwen3moe\"): RED pre-fix = 10000.0, GREEN post-fix = 1_000_000.0. Same test asserts 'qwen3_moe'/'qwen3'/'qwen2' stay 1e6 and 'llama'/'mistral' stay 10000.0 (C-QWEN3MOE-ROPE-002/003)."
+    test: "cargo test -p aprender-serve --lib qwen3moe_raw_arch_uses_1m_rope_base"
+    prediction: "qwen3moe_raw_arch_uses_1m_rope_base — default_rope_theta_for_architecture(\"qwen3moe\"): RED pre-fix = 10000.0, GREEN post-fix = 1_000_000.0. Same test asserts 'qwen3_moe'/'qwen3'/'qwen2' stay 1e6 and 'llama'/'mistral' stay 10000.0 (C-QWEN3MOE-ROPE-002/003)."
     evidence: "cargo test -p aprender-serve --lib qwen3moe_raw_arch_uses_1m_rope_base"
 
 status_history:

@@ -72,13 +72,15 @@ proof_obligations:
       Standard scale 1.0: merged = 0.5 + 1.0*6.0 = 6.5.
       RED (pre-fix): BF16 bytes decoded as f32 → wrong length/garbage (index out of bounds).
 
-falsification:
+falsification_tests:
   - id: FALSIFY-LORA-MERGE-RSLORA-001
     description: "rsLoRA scaling honored in the CLI merge. Discharges F-LORA-MERGE-RSLORA-001."
     test: "cargo test -p aprender-train --lib test_lora_merge_rslora_scaling_pmat897"
+    prediction: "an rsLoRA adapter merges with scale alpha/sqrt(rank): merged = 4.0, not 1.0 (alpha/rank)"
     evidence: "RED on main: merged=1.0 (alpha/rank); GREEN: merged=4.0 (alpha/sqrt(rank))."
 
   - id: FALSIFY-LORA-MERGE-ADAPTER-DTYPE-001
     description: "BF16 adapter tensors decoded by real dtype. Discharges F-LORA-MERGE-ADAPTER-DTYPE-001."
     test: "cargo test -p aprender-train --lib test_lora_merge_bf16_adapter_dtype_pmat897"
+    prediction: "BF16 adapter tensors are decoded by their real dtype: merged = 6.5 = base + scale*(B@A), no index-out-of-bounds panic"
     evidence: "RED on main: index out of bounds (BF16 read as f32); GREEN: merged=6.5 = base+scale*(B@A)."

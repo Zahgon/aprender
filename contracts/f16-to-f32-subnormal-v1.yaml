@@ -68,12 +68,14 @@ proof_obligations:
     tolerance: 0.0
     applies_to: all
 
-falsification:
+falsification_tests:
   - id: FALSIFY-F16SUB-001
     description: "Smallest positive subnormal is not halved (onnx + safetensors readers). Discharges C-F16SUB-001 / PO-F16SUB-002."
-    test: "smallest_subnormal_not_halved (in both format::onnx::f16_tests and format::tensors::f16_tests) — RED 0x33000000 (2.9802322e-8) → GREEN 0x33800000 (5.9604645e-8 == half::f16::from_bits(1).to_f32())."
+    test: "cargo test -p aprender-core --lib f16_tests::smallest_subnormal_not_halved"
+    prediction: "smallest_subnormal_not_halved (in both format::onnx::f16_tests and format::tensors::f16_tests) — RED 0x33000000 (2.9802322e-8) → GREEN 0x33800000 (5.9604645e-8 == half::f16::from_bits(1).to_f32())."
     evidence: "cargo test -p aprender-core --lib f16_tests::smallest_subnormal_not_halved"
   - id: FALSIFY-F16SUB-002
     description: "Full-range bit-exact conversion vs the half oracle (onnx + safetensors readers). Discharges C-F16SUB-002 / C-F16SUB-003 / PO-F16SUB-001 / PO-F16SUB-003."
-    test: "all_bit_patterns_match_golden (in both format::onnx::f16_tests and format::tensors::f16_tests) — loops 0..=u16::MAX, skips NaN, compares against a self-contained golden oracle bit-verified against half::f16. RED mismatch count = 2046 (all subnormals); GREEN = 0."
+    test: "cargo test -p aprender-core --lib f16_tests::all_bit_patterns_match_golden"
+    prediction: "all_bit_patterns_match_golden (in both format::onnx::f16_tests and format::tensors::f16_tests) — loops 0..=u16::MAX, skips NaN, compares against a self-contained golden oracle bit-verified against half::f16. RED mismatch count = 2046 (all subnormals); GREEN = 0."
     evidence: "cargo test -p aprender-core --lib f16_tests::all_bit_patterns_match_golden"

@@ -64,24 +64,29 @@ proof_obligations:
     formal: "∀ df ≥ 1: t_distribution_pvalue(t, df) ∈ [0,1] ∧ is_finite; ∀ df1,df2 ≥ 1: f_distribution_pvalue(f, df1, df2) ∈ [0,1] ∧ is_finite (finite for df ≥ 72 where the incomplete_beta gamma prefactor overflowed f32)"
     applies_to: C-IBETA-004
 
-falsification:
+falsification_tests:
   - id: FALSIFY-STATS-BETA-001
     description: "I_x(a,b) equals the scipy oracle for a != 1 (and still for a == 1). Discharges C-IBETA-001 + C-IBETA-002."
-    test: "test_incomplete_beta_matches_scipy_oracle — I_0.4(2,3): RED 0.2624 → GREEN 0.5248; I_0.5(4,0.5): RED 0.00555 → GREEN 0.022204; I_0.5(2.5,2.5): RED 0.8 → GREEN 0.5; a==1 identity regression-guarded."
+    test: "cargo test -p aprender-core --lib test_incomplete_beta_matches_scipy_oracle"
+    prediction: "test_incomplete_beta_matches_scipy_oracle — I_0.4(2,3): RED 0.2624 → GREEN 0.5248; I_0.5(4,0.5): RED 0.00555 → GREEN 0.022204; I_0.5(2.5,2.5): RED 0.8 → GREEN 0.5; a==1 identity regression-guarded."
     evidence: "cargo test -p aprender-core --lib test_incomplete_beta_matches_scipy_oracle"
   - id: FALSIFY-STATS-BETA-002
     description: "One-sample t-test p-value matches scipy (downstream of the beta fix). Discharges C-IBETA-003."
-    test: "test_ttest_1samp_pvalue_matches_scipy — RED 0.1151 (falsely significant) → GREEN 0.2302 == scipy.stats.ttest_1samp."
+    test: "cargo test -p aprender-core --lib test_ttest_1samp_pvalue_matches_scipy"
+    prediction: "test_ttest_1samp_pvalue_matches_scipy — RED 0.1151 (falsely significant) → GREEN 0.2302 == scipy.stats.ttest_1samp."
     evidence: "cargo test -p aprender-core --lib test_ttest_1samp_pvalue_matches_scipy"
   - id: FALSIFY-HT-CHI2-FINITE
     description: "Discharges OBLIG-CHISQUARE-PVALUE-FINITE (C-IBETA-004): chi-square p-value is finite and scipy-accurate for df in {72,100,200}. RED on the raw-space gamma overflow (NaN), GREEN after ln_gamma."
     test: "cargo test -p aprender-core --lib falsify_ht_chi2_pvalue_finite_large_df"
+    prediction: "the chi-square p-value is finite (not NaN) and matches scipy for df in {72,100,200}"
     evidence: "cargo test -p aprender-core --lib falsify_ht_chi2_pvalue_finite_large_df"
   - id: FALSIFY-HT-T-FINITE
     description: "Discharges OBLIG-HYPOTHESIS-PVALUE-FINITE (C-IBETA-004): two-tailed t p-value is finite and scipy-accurate for df in {72,100,200}."
     test: "cargo test -p aprender-core --lib falsify_ht_t_pvalue_finite_large_df"
+    prediction: "the two-tailed t p-value is finite and matches scipy for df in {72,100,200}"
     evidence: "cargo test -p aprender-core --lib falsify_ht_t_pvalue_finite_large_df"
   - id: FALSIFY-HT-F-FINITE
     description: "Discharges OBLIG-HYPOTHESIS-PVALUE-FINITE (C-IBETA-004): one-way ANOVA F p-value is finite and scipy-accurate for df2 in {72,100,200}."
     test: "cargo test -p aprender-core --lib falsify_ht_f_pvalue_finite_large_df"
+    prediction: "the one-way ANOVA F p-value is finite and matches scipy for df2 in {72,100,200}"
     evidence: "cargo test -p aprender-core --lib falsify_ht_f_pvalue_finite_large_df"

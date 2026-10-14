@@ -71,11 +71,11 @@ proof_obligations:
     tolerance: 0.001
     applies_to: "df <= 30"
 
-falsification:
+falsification_tests:
   - id: FALSIFY-STATS-TTEST-003
     description: "Exact two-tailed t p-value matches scipy.stats.t.sf for df>30 and the small-df path is unchanged. Discharges C-TTEST-001..004 and PO-TTEST-001/002."
-    test: "test_t_distribution_pvalue_exact_all_df_matches_scipy — df=40,t=2.04: RED 0.041350 (normal approx) -> GREEN 0.047992 (scipy t.sf); df=40,t=2.02 significance-flip: RED 0.043383 (<0.05, falsely significant) -> GREEN 0.050116 (>0.05); df=5,t=2.0 regression 0.101939 unchanged."
-    command: "cargo test -p aprender-core --lib test_t_distribution_pvalue_exact_all_df_matches_scipy"
+    test: "cargo test -p aprender-core --lib test_t_distribution_pvalue_exact_all_df_matches_scipy"
+    prediction: "test_t_distribution_pvalue_exact_all_df_matches_scipy — df=40,t=2.04: RED 0.041350 (normal approx) -> GREEN 0.047992 (scipy t.sf); df=40,t=2.02 significance-flip: RED 0.043383 (<0.05, falsely significant) -> GREEN 0.050116 (>0.05); df=5,t=2.0 regression 0.101939 unchanged."
     red: "0.041350 (2*normal_cdf(-2.04), the deleted df>30 shortcut) at df=40, t=2.04"
     green: "0.047992 (2*scipy.stats.t.sf(2.04, 40), the exact incomplete-beta tail) at df=40, t=2.04"
     scipy_reference: "2*scipy.stats.t.sf(2.04, 40) = 0.0479916; 2*scipy.stats.t.sf(2.02, 40) = 0.0501163; 2*scipy.stats.t.sf(2.0, 5) = 0.1019395"

@@ -103,14 +103,15 @@ proof_obligations:
   formal: "imp[1] > imp[0] for the PMAT-851 reference regression tree"
   tolerance: 0.1
 
-falsification:
+falsification_tests:
   - id: FALSIFY-MDI-001
     description: |
       compute_regression_tree_feature_importances on the PMAT-851 reference tree
       (root split feature 0 over 20 samples; right child split feature 1 over 10
       samples separating variance 2500 -> 0) must rank feature 1 above feature 0
       and match the weighted-variance-decrease formula. Discharges C-MDI-001/003.
-    test: "test_regression_mdi_outranks_by_variance_decrease_not_count"
+    test: "cargo test -p aprender-core --lib test_regression_mdi_outranks_by_variance_decrease_not_count"
+    prediction: "MDI ranks feature 1 (variance decrease 25000) above feature 0 and matches the weighted-variance-decrease formula"
     evidence: |
       cargo test -p aprender-core --lib test_regression_mdi_outranks_by_variance_decrease_not_count
       RED  (count-only: imp[f] += count_regression_tree_samples(node)): importances
@@ -125,7 +126,8 @@ falsification:
       split over 12 samples (gini 0.5) whose right child splits 6 samples
       (gini 0.5 -> pure) must give feature 0 = 3.0 and feature 1 = 3.0, NOT
       feature 0 = 12 and feature 1 = 6. Discharges C-MDI-001/002.
-    test: "test_classification_mdi_uses_gini_decrease_not_count"
+    test: "cargo test -p aprender-core --lib test_classification_mdi_uses_gini_decrease_not_count"
+    prediction: "feature 0 = 3.0 and feature 1 = 3.0 (weighted gini decrease), not 12 and 6 (subtree sample counts)"
     evidence: |
       cargo test -p aprender-core --lib test_classification_mdi_uses_gini_decrease_not_count
       RED  (count-only): importances = [12.0, 6.0] → assertion (imp[0] == 3.0) FAILS.
@@ -136,7 +138,8 @@ falsification:
       per-node impurity at fit time so feature_importances() (averaged +
       normalized) ranks the high-variance-decrease feature 1 above feature 0 and
       sums to 1. Discharges the fit-time precondition (MDI-PRE-001) and C-MDI-003.
-    test: "test_fitted_regressor_feature_importances_mdi_ranking"
+    test: "cargo test -p aprender-core --lib test_fitted_regressor_feature_importances_mdi_ranking"
+    prediction: "a fitted RandomForestRegressor gives importances[1] > importances[0] and sum(importances) = 1.0"
     evidence: |
       cargo test -p aprender-core --lib test_fitted_regressor_feature_importances_mdi_ranking
       GREEN: importances[1] > importances[0] and sum(importances) ≈ 1.0.

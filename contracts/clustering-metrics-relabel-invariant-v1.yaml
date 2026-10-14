@@ -76,8 +76,9 @@ proof_obligations:
       For any bijection sigma on the label set, DB(X, sigma.L) == DB(X, L); the
       gapped encoding [0,0,2,2,2] yields the same score (0.4150) as [0,0,1,1,1].
 
-falsification:
+falsification_tests:
   - id: FALSIFY-CLUSTER-RELABEL-001
     description: "CH and DB are relabeling-invariant and match the sklearn oracle for a gapped (non-contiguous) labeling. Discharges C-CLUSTER-RELABEL-001/002/003."
-    test: "clustering_metrics_relabel_invariant_pmat_871 — CH: gapped RED 3.4380 → GREEN 10.3140 == contiguous; DB: gapped RED 0.3721 → GREEN 0.4150 == contiguous. sklearn reference: CH=10.3140, DB=0.4150 for both [0,0,1,1,1] and [0,0,2,2,2]."
+    test: "cargo test -p aprender-core --lib clustering_metrics_relabel_invariant_pmat_871"
+    prediction: "clustering_metrics_relabel_invariant_pmat_871 — CH: gapped RED 3.4380 → GREEN 10.3140 == contiguous; DB: gapped RED 0.3721 → GREEN 0.4150 == contiguous. sklearn reference: CH=10.3140, DB=0.4150 for both [0,0,1,1,1] and [0,0,2,2,2]."
     evidence: "cargo test -p aprender-core --lib clustering_metrics_relabel_invariant_pmat_871"
