@@ -25,6 +25,12 @@
 //!   `admit --cell C --removed-by R ...` appends a `Refused` row.
 //! - `admission-check --file F` every §2.1 cell resolved exactly once; prints the
 //!   summary JSON. Exit 1 if inadmissible, 10 if admissible but S-7 (no cell admitted).
+//! - `pp-tg --apr-url U --competitor-url U --model M [--competitor-model M]
+//!   [--runs N] --tag T --rc-sha S --competitor-name N --competitor-version V
+//!   --competitor-sha S --host H --gpu G --driver-cuda D --gguf-sha S --quant Q
+//!   --ctx N [--batch N] --out FILE` (#5305): pp512/tg128 phases from apr serve and
+//!   a llama-server comparator through this one client (never llama-bench); appends
+//!   one `crux-perf-receipt-v1` line to FILE and prints the three ratios.
 
 use aprender_review_experiment::build_corpus::{
     choose, g_candidates, is_green, p_candidates, r_candidates, seal, Mutant, Pr, PER_CLASS,
@@ -52,6 +58,7 @@ fn run_flagged_cmd(c: &str, args: &[String]) -> ExitCode {
         "review" => review(&f),
         "not-run" => not_run(&f),
         "admit" => admit(&f),
+        "pp-tg" => pp_tg_cmd(&f),
         _ => score_cmd(&f),
     });
     to_exit_code(result, c)
@@ -76,7 +83,7 @@ fn to_exit_code(result: Result<(), String>, label: &str) -> ExitCode {
 /// Prints the top-level usage line and exits 2 (unknown/missing command).
 fn usage() -> ExitCode {
     eprintln!(
-        "Usage: rex <prereg|prereg-check|corpus-build|review|not-run|score|admit|admission-check> (see the example docs)"
+        "Usage: rex <prereg|prereg-check|corpus-build|review|not-run|score|admit|admission-check|pp-tg> (see the example docs)"
     );
     ExitCode::from(2)
 }
@@ -87,7 +94,9 @@ fn main() -> ExitCode {
         Some("prereg") => prereg_cmd(false),
         Some("prereg-check") => prereg_cmd(true),
         Some("admission-check") => admission_check(&args[1..]),
-        Some(c @ ("review" | "not-run" | "score" | "admit")) => run_flagged_cmd(c, &args[1..]),
+        Some(c @ ("review" | "not-run" | "score" | "admit" | "pp-tg")) => {
+            run_flagged_cmd(c, &args[1..])
+        }
         Some("corpus-build") if args.len() >= 5 => run_corpus_build_cmd(&args[1..]),
         _ => usage(),
     }
@@ -500,4 +509,76 @@ fn admission_check(a: &[String]) -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+/// `pp-tg` (#5305): one same-session receipt, apr serve against a llama-server
+/// comparator, both driven by `post` with the same shot body.
+fn pp_tg_cmd(f: &Flags) -> Result<(), String> {
+    use aprender_review_experiment::crux_perf::{Cell, Competitor, CruxPerfReceipt, MIN_RUNS};
+    use aprender_review_experiment::pp_tg::{measure, prompt_set_sha, Engine, PP, TG};
+    use std::io::Write as _;
+
+    let num = |k: &str, default: Option<u64>| -> Result<u64, String> {
+        match (f.get(k), default) {
+            (Some(v), _) => v.parse().map_err(|e| format!("--{k} {v:?}: {e}")),
+            (None, Some(d)) => Ok(d),
+            (None, None) => Err(format!("--{k} is required")),
+        }
+    };
+    let small = |k: &str, default| {
+        num(k, default).and_then(|n| u32::try_from(n).map_err(|e| format!("--{k}: {e}")))
+    };
+    let runs = usize::try_from(num("runs", Some(MIN_RUNS as u64))?).map_err(|e| e.to_string())?;
+    let model = need(f, "model")?;
+    let apr = Engine {
+        url: need(f, "apr-url")?,
+        model,
+    };
+    let competitor = Engine {
+        url: need(f, "competitor-url")?,
+        model: f.get("competitor-model").map_or(model, String::as_str),
+    };
+    let cell = Cell {
+        host: need(f, "host")?.into(),
+        gpu: need(f, "gpu")?.into(),
+        driver_cuda: need(f, "driver-cuda")?.into(),
+        model: model.into(),
+        gguf_sha256: need(f, "gguf-sha")?.into(),
+        quant: need(f, "quant")?.into(),
+        ctx: small("ctx", None)?,
+        batch: small("batch", Some(1))?,
+        prompt_set_sha: prompt_set_sha(PP, TG),
+    };
+    let comp = Competitor {
+        name: need(f, "competitor-name")?.into(),
+        version: Some(need(f, "competitor-version")?.into()),
+        binary_sha256: need(f, "competitor-sha")?.into(),
+    };
+    let out = need(f, "out")?;
+    let phases = |e: Engine<'_>| {
+        measure(e, runs, PP, TG, SEED, post).map_err(|err| format!("{}: {err:?}", e.url))
+    };
+    let apr_phases = phases(apr)?;
+    let comp_phases = phases(competitor)?;
+    let r = CruxPerfReceipt::new(
+        need(f, "tag")?.into(),
+        need(f, "rc-sha")?.into(),
+        cell,
+        comp,
+        apr_phases,
+        comp_phases,
+    );
+    let line = serde_json::to_string(&r).map_err(|e| e.to_string())?;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(out)
+        .map_err(|e| format!("{out}: {e}"))?;
+    writeln!(file, "{line}").map_err(|e| format!("{out}: {e}"))?;
+    let q = &r.ratio_vs_competitor;
+    println!(
+        "pp-tg cell {} n={} apr/{}: ttft {:.3} prefill {:.3} decode {:.3} (above 1 = apr slower)",
+        r.cell_id, r.n_runs, r.competitor.name, q.ttft, q.prefill, q.decode
+    );
+    Ok(())
 }

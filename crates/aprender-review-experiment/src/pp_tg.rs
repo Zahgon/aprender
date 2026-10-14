@@ -56,6 +56,13 @@ pub fn shot_body(model: &str, prompt: &str, tg: u64) -> Value {
 /// Probes a fitted prompt may spend before it gives up.
 pub const FIT_TRIES: usize = 8;
 
+/// The receipt's `prompt_set_sha`: the shape and the filler, which together
+/// fix every prompt the fit can send. A different shape starts a new series.
+#[must_use]
+pub fn prompt_set_sha(pp: u64, tg: u64) -> String {
+    crate::corpus::sha256_hex(format!("pp_tg/v1 pp={pp} tg={tg} filler={:?}", filler(1)).as_bytes())
+}
+
 /// `n` filler words. Each is one token on the Qwen and Llama vocabularies,
 /// but the fit below never relies on that: it reads the engine's own count.
 #[must_use]

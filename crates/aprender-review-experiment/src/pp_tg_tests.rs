@@ -244,3 +244,11 @@ fn a_dead_server_or_a_reply_without_usage_gives_no_phases() {
         Err(DriveError::Fit(_))
     ));
 }
+
+#[test]
+fn another_shape_is_another_prompt_set() {
+    let base = prompt_set_sha(PP, TG);
+    assert_eq!(base, prompt_set_sha(PP, TG));
+    assert_ne!(base, prompt_set_sha(PP, 64));
+    assert_ne!(base, prompt_set_sha(256, TG));
+}
