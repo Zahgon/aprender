@@ -297,6 +297,10 @@ pub(crate) struct RunResult {
     /// `SchemaViolation` from the second reader). The output is still emitted in `--json`,
     /// beside the refusal; the run then exits non-zero.
     pub constraint_refusal: Option<crate::error::ConstraintRefusal>,
+    /// #3720: sha256 (lower-case hex, the value `sha256sum` prints) of the model file actually
+    /// loaded, computed for a machine-readable run only. `None` for a text run, or a path that is
+    /// not one file (a model directory).
+    pub model_digest: Option<String>,
 }
 
 /// Resolve a user-supplied model argument into a [`ModelSource`].
@@ -362,6 +366,11 @@ pub(crate) fn run_model(source: &str, options: &RunOptions) -> Result<RunResult>
     // Check if input is required
     let input_path = options.input.as_ref();
 
+    // #3720: a machine-readable run reports the digest of the file it loaded. The file is
+    // hashed on its own thread beside inference, so it costs no wall time the run would not spend.
+    let digest = emits_machine_output(options.stream, &options.output_format, options.benchmark)
+        .then(|| spawn_model_digest(model_path.clone()));
+
     // Load and run model
     // BUG-RUN-001 FIX: Now receives InferenceOutput with actual token count
     let output = execute_inference(&model_path, input_path, options)?;
@@ -386,6 +395,18 @@ pub(crate) fn run_model(source: &str, options: &RunOptions) -> Result<RunResult>
         token_texts: output.token_texts,
         usage: output.usage,
         constraint_refusal: output.constraint_refusal,
+        model_digest: digest.and_then(|hashing| hashing.join().ok().flatten()),
+    })
+}
+
+/// #3720: hash the model file on its own thread: sha256, lower-case hex, the value `sha256sum`
+/// prints. `None` when the path is not a readable file (a model directory).
+fn spawn_model_digest(path: PathBuf) -> std::thread::JoinHandle<Option<String>> {
+    std::thread::spawn(move || {
+        path.is_file()
+            .then(|| crate::commands::manifest::sha256_of_file(&path).ok())
+            .flatten()
+            .map(|(_, hex)| hex)
     })
 }
 

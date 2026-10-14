@@ -344,6 +344,8 @@ fn error_document(e: &crate::error::CliError, source: &str, stream: bool) -> ser
     let mut doc = e.envelope();
     doc["model"] = source.into();
     doc["text"] = serde_json::Value::Null;
+    doc["apr_version"] = env!("CARGO_PKG_VERSION").into();
+    doc["apr_git_sha"] = env!("APR_GIT_SHA").into();
     if let crate::error::CliError::ConstraintRefused(refusal) = e {
         doc["finish_reason"] = refusal.finish_reason.into();
         doc["refusal"] = refusal.to_json();
@@ -727,6 +729,10 @@ fn run_result_json(
     let tokens_json = result.generated_tokens.as_deref().unwrap_or(&[]);
     serde_json::json!({
         "model": source,
+        // #3720: what produced this output: the loaded file's sha256 and the apr build.
+        "model_digest": result.model_digest,
+        "apr_version": env!("CARGO_PKG_VERSION"),
+        "apr_git_sha": env!("APR_GIT_SHA"),
         "text": result.text,
         "tokens": tokens_json,
         "tokens_generated": tokens_generated,

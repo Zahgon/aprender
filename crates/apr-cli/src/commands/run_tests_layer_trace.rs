@@ -23,6 +23,7 @@
             token_texts: None,
             usage: Default::default(),
             constraint_refusal: None,
+            model_digest: None,
         }
     }
 
