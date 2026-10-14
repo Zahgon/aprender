@@ -470,6 +470,16 @@ mod tests {
             c, 1,
             "an explicit check that cannot reach the network says so"
         );
+        // Nothing published: the listing answers 200 and `[]`.
+        let empty = HashMap::from([(LATEST.to_string(), b"[]".to_vec())]);
+        let (c, o) = update_with(&Fake(empty, false), &P, T, &Installs::User, exe, true);
+        assert_eq!(
+            (c, o[0].as_str()),
+            (0, "pv 0.69.0 is up to date"),
+            "nothing published (an empty listing)"
+        );
+        // #5055: a 404 on the listing (a private repository, no credentials) is not
+        // "nothing published". It is refused by name, never "up to date".
         let (c, o) = update_with(
             &Fake(HashMap::new(), false),
             &P,
@@ -478,10 +488,15 @@ mod tests {
             exe,
             true,
         );
-        assert_eq!(
-            (c, o[0].as_str()),
-            (0, "pv 0.69.0 is up to date"),
-            "nothing published (404s)"
+        assert_eq!(c, 1, "a 404 listing must not read as up to date: {o:?}");
+        assert!(
+            !o.iter().any(|l| l.contains("up to date")),
+            "a 404 listing must not read as up to date: {o:?}"
+        );
+        assert!(
+            o.iter()
+                .any(|l| l.contains("not visible without credentials")),
+            "the refusal names the cause: {o:?}"
         );
     }
 
