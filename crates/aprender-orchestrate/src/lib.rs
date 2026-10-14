@@ -103,6 +103,12 @@ pub mod mcp;
 #[cfg(feature = "agents")]
 pub mod agent;
 
+// #5205: the YAML helper is its own module so the bin's crate root shares it.
+#[cfg(feature = "native")]
+mod yaml;
+#[cfg(feature = "native")]
+pub(crate) use yaml::yaml_from_str;
+
 // Re-export key types for convenience
 pub use backend::{Backend, BackendSelector, OpComplexity};
 pub use numpy_converter::{NumPyConverter, NumPyOp};

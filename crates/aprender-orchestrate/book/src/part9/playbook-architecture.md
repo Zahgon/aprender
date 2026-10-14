@@ -72,7 +72,7 @@ All types derive `Serialize` and `Deserialize` for YAML/JSON roundtripping.
 - **`PipelineEvent`**: Tagged enum for JSONL event log entries.
 - **`InvalidationReason`**: Enum with `Display` impl for human-readable cache miss explanations.
 
-Global parameters use `HashMap<String, serde_yaml::Value>` to support strings, numbers, and booleans without type coercion.
+Global parameters use `HashMap<String, serde_json::Value>` (parsed from YAML by serde-saphyr) to support strings, numbers, and booleans without type coercion.
 
 ### parser.rs — Validation
 

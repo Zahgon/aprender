@@ -46,6 +46,10 @@ mod pipeline_analysis;
 #[cfg(feature = "native")]
 mod playbook;
 #[cfg(feature = "native")]
+mod yaml;
+#[cfg(feature = "native")]
+pub(crate) use yaml::yaml_from_str;
+#[cfg(feature = "native")]
 mod pytorch_converter;
 #[cfg(feature = "native")]
 mod report;

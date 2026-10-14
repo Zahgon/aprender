@@ -18,6 +18,19 @@ struct Binding {
     status: String,
 }
 
+/// The standard stage options (#5205). build.rs keeps its own private copy.
+fn yaml_from_str<T: serde::de::DeserializeOwned>(s: &str) -> Result<T, serde_saphyr::Error> {
+    serde_saphyr::from_str_with_options(
+        s,
+        serde_saphyr::options! {
+            strict_booleans: true,
+            merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary,
+            emit_comments: false,
+            reject_non_finite_typeless_float: false,
+        },
+    )
+}
+
 fn main() {
     // #4219: stamp APR_GIT_SHA for `--version` before anything can return early.
     build_sha::emit();
@@ -40,7 +53,7 @@ fn main() {
         }
     };
 
-    let bindings: BindingFile = match serde_yaml_ng::from_str(&yaml) {
+    let bindings: BindingFile = match yaml_from_str(&yaml) {
         Ok(b) => b,
         Err(_) => {
             println!("cargo:rustc-env=CONTRACT_BINDING_SOURCE=none");
@@ -99,7 +112,7 @@ fn main() {
                     .to_uppercase()
                     .replace('-', "_");
                 if let Ok(c) = std::fs::read_to_string(&p) {
-                    if let Ok(y) = serde_yaml_ng::from_str::<CY>(&c) {
+                    if let Ok(y) = yaml_from_str::<CY>(&c) {
                         for (n, eq) in &y.equations {
                             let k = provable_contracts::build_helper::env_key(&s, n);
                             if !eq.preconditions.is_empty() {

@@ -374,7 +374,7 @@ native = [
     "clap",           # CLI parsing
     "walkdir",        # Filesystem traversal
     "tracing",        # Logging
-    "serde_yaml",     # Config files
+    "serde-saphyr",   # Config files
     # ... native-only dependencies
 ]
 
