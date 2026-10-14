@@ -153,6 +153,13 @@ falsification_tests:
   red_state: a check passes a 404, an absent field, a truncated stream or a greedy seed
   green_state: every row matches its expected verdict (PASS)
   if_fails: the cases the demo router cannot reach are judged by untested checks
+- id: FALSIFY-ASM-008
+  rule: a streamed tool call is judged on the joined deltas and its finish_reason
+  prediction: oai_stream_tool_call passes delta.tool_calls[0] naming get_weather whose argument fragments join into a JSON object, finish_reason tool_calls and a final [DONE]; it fails a text-only stream, a stream without [DONE], finish_reason stop and arguments that do not join into an object
+  test: 'cargo test -p aprender-serve --lib api::conformance::tests::check_case_table'
+  red_state: the check reads only the first delta, or accepts any finish_reason
+  green_state: the five stream tool rows match their expected verdicts (PASS)
+  if_fails: an apr serve that streams a tool call as text passes R-2
 qa_gate:
   id: F-ASM-001
   name: Agent Conformance Suite Contract
@@ -162,5 +169,5 @@ qa_gate:
   - not_measured_is_not_pass
   - missing_cells_named
   - anthropic_checks_bite
-  pass_criteria: FALSIFY-ASM-001..007 PASS; the live cells over the certified matrix are the serve_conformance receipt, not a test
+  pass_criteria: FALSIFY-ASM-001..008 PASS; the live cells over the certified matrix are the serve_conformance receipt, not a test
   falsification: Make oai_chat_finish accept an absent finish_reason — FALSIFY-ASM-006 FAILS

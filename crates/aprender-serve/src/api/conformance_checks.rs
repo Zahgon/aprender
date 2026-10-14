@@ -234,6 +234,65 @@ pub fn oai_tool_call(obs: &[Observed]) -> Result<(), String> {
     }
 }
 
+/// One streamed tool-call delta folded into the running (name, arguments).
+fn fold_tool_delta(v: &Value, name: &mut String, args: &mut String) {
+    let Some(calls) = v
+        .pointer("/choices/0/delta/tool_calls")
+        .and_then(Value::as_array)
+    else {
+        return;
+    };
+    for call in calls
+        .iter()
+        .filter(|c| c.get("index").and_then(Value::as_u64).unwrap_or(0) == 0)
+    {
+        if let Some(n) = call.pointer("/function/name").and_then(Value::as_str) {
+            name.push_str(n);
+        }
+        if let Some(a) = call.pointer("/function/arguments").and_then(Value::as_str) {
+            args.push_str(a);
+        }
+    }
+}
+
+/// Streamed tool call (R-2): `delta.tool_calls[0]` names `get_weather`, its
+/// argument deltas join into a JSON object, `finish_reason` is `tool_calls`,
+/// and the stream ends with `[DONE]`.
+pub fn oai_stream_tool_call(obs: &[Observed]) -> Result<(), String> {
+    let events = sse(one(obs)?)?;
+    let (last, chunks) = events.split_last().ok_or("no events")?;
+    if last.1 != "[DONE]" {
+        return Err(format!("last data is {:?} (want [DONE])", snippet(&last.1)));
+    }
+    let (mut name, mut args, mut finish) = (String::new(), String::new(), None);
+    for (i, (_, data)) in chunks.iter().enumerate() {
+        let v: Value = serde_json::from_str(data)
+            .map_err(|e| format!("event {i} is not JSON ({e}): {}", snippet(data)))?;
+        fold_tool_delta(&v, &mut name, &mut args);
+        if let Some(f) = v
+            .pointer("/choices/0/finish_reason")
+            .and_then(Value::as_str)
+        {
+            finish = Some(f.to_string());
+        }
+    }
+    if name != "get_weather" {
+        return Err(format!(
+            "streamed tool_calls[0] calls {name:?} (want get_weather)"
+        ));
+    }
+    if !matches!(serde_json::from_str::<Value>(&args), Ok(Value::Object(_))) {
+        return Err(format!(
+            "streamed arguments {:?} is not a JSON object",
+            snippet(&args)
+        ));
+    }
+    match finish.as_deref() {
+        Some("tool_calls") => Ok(()),
+        other => Err(format!("stream finish_reason {other:?} (want tool_calls)")),
+    }
+}
+
 /// Anthropic message: `type: message`, a text block, a known `stop_reason`.
 pub fn anth_message(obs: &[Observed]) -> Result<(), String> {
     let v = ok_json(one(obs)?)?;

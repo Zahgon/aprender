@@ -148,6 +148,13 @@ fn weather_tool_oai() -> Value {
     })
 }
 
+/// `weather_tool_oai` with `stream: true`, for the streamed tool-call case.
+fn stream_tool_oai() -> Value {
+    let mut body = weather_tool_oai();
+    merge(&mut body, json!({"stream": true}));
+    body
+}
+
 fn weather_tool_anth() -> Value {
     json!({
         "tools": [{"name": "get_weather", "description": "Current weather for a city",
@@ -223,6 +230,13 @@ pub fn cases(model: &str) -> Vec<Case> {
             row: "R-2",
             requests: vec![post(chat, oai_chat(model, weather_tool_oai()))],
             check: oai_tool_call,
+        },
+        Case {
+            id: "oai.chat.stream_tool_call",
+            shape: Shape::OpenAi,
+            row: "R-2",
+            requests: vec![post(chat, oai_chat(model, stream_tool_oai()))],
+            check: oai_stream_tool_call,
         },
         Case {
             id: "anth.messages.stop_reason",
