@@ -23,7 +23,7 @@ use thiserror::Error;
 pub enum DemoError {
     /// YAML parsing failed.
     #[error("YAML parse error: {0}")]
-    YamlParse(#[from] serde_yaml::Error),
+    YamlParse(#[from] serde_saphyr::Error),
 
     /// Configuration validation failed.
     #[error("Validation error: {0}")]
@@ -198,7 +198,7 @@ pub struct DemoMeta {
 ///     type StepResult = TspStepResult;
 ///
 ///     fn from_yaml(yaml: &str) -> Result<Self, DemoError> {
-///         let config: TspConfig = serde_yaml::from_str(yaml)?;
+///         let config: TspConfig = crate::yaml::from_str(yaml)?;
 ///         Ok(Self::from_config(config))
 ///     }
 ///     // ... other methods
@@ -372,7 +372,7 @@ description: "Orbit demo"
 author: "Test"
 created: "2025-01-01"
 "#;
-        let meta: DemoMeta = serde_yaml::from_str(yaml).expect("deserialize");
+        let meta: DemoMeta = crate::yaml::from_str(yaml).expect("deserialize");
         assert_eq!(meta.id, "DEMO-001");
         assert_eq!(meta.demo_type, "orbit");
     }
@@ -417,7 +417,7 @@ description: "Test relation"
 source_transform: "identity"
 expected_relation: "unchanged"
 "#;
-        let mr: MetamorphicRelation = serde_yaml::from_str(yaml).expect("deserialize");
+        let mr: MetamorphicRelation = crate::yaml::from_str(yaml).expect("deserialize");
         assert!((mr.tolerance - 1e-10).abs() < 1e-15);
     }
 
@@ -457,7 +457,7 @@ expected_relation: "unchanged"
     #[test]
     fn test_demo_error_from_yaml() {
         let bad_yaml = "{{{{not valid yaml";
-        let result: Result<DemoMeta, _> = serde_yaml::from_str(bad_yaml);
+        let result: Result<DemoMeta, _> = crate::yaml::from_str(bad_yaml);
         assert!(result.is_err());
     }
 
@@ -521,7 +521,7 @@ condition: "accuracy >= threshold"
 tolerance: 0.001
 severity: "critical"
 "#;
-        let criterion: FalsificationCriterion = serde_yaml::from_str(yaml).expect("deserialize");
+        let criterion: FalsificationCriterion = crate::yaml::from_str(yaml).expect("deserialize");
         assert_eq!(criterion.id, "CRIT-001");
         assert_eq!(criterion.severity, Severity::Critical);
         assert!((criterion.tolerance - 0.001).abs() < 1e-10);
@@ -536,7 +536,7 @@ metric: "val"
 threshold: 1.0
 condition: "val > 0"
 "#;
-        let criterion: FalsificationCriterion = serde_yaml::from_str(yaml).expect("deserialize");
+        let criterion: FalsificationCriterion = crate::yaml::from_str(yaml).expect("deserialize");
         assert_eq!(criterion.severity, Severity::Major); // default
         assert!((criterion.tolerance - 0.0).abs() < 1e-15); // default
     }
@@ -567,7 +567,7 @@ source_transform: "time_reverse"
 expected_relation: "energy_unchanged"
 tolerance: 1e-6
 "#;
-        let mr: MetamorphicRelation = serde_yaml::from_str(yaml).expect("deserialize");
+        let mr: MetamorphicRelation = crate::yaml::from_str(yaml).expect("deserialize");
         assert_eq!(mr.id, "MR-Energy");
         assert!((mr.tolerance - 1e-6).abs() < 1e-15);
     }
@@ -610,7 +610,7 @@ id: "MIN-001"
 version: "0.1.0"
 demo_type: "test"
 "#;
-        let meta: DemoMeta = serde_yaml::from_str(yaml).expect("deserialize");
+        let meta: DemoMeta = crate::yaml::from_str(yaml).expect("deserialize");
         assert_eq!(meta.id, "MIN-001");
         assert!(meta.description.is_empty());
         assert!(meta.author.is_empty());
@@ -628,8 +628,8 @@ demo_type: "test"
             created: "2025-12-12".to_string(),
         };
 
-        let yaml = serde_yaml::to_string(&meta).expect("serialize");
-        let restored: DemoMeta = serde_yaml::from_str(&yaml).expect("deserialize");
+        let yaml = serde_saphyr::to_string(&meta).expect("serialize");
+        let restored: DemoMeta = crate::yaml::from_str(&yaml).expect("deserialize");
 
         assert_eq!(meta.id, restored.id);
         assert_eq!(meta.version, restored.version);
@@ -664,7 +664,7 @@ demo_type: "test"
             tolerance: 1e-8,
         };
 
-        let yaml = serde_yaml::to_string(&mr).expect("serialize");
+        let yaml = serde_saphyr::to_string(&mr).expect("serialize");
         assert!(yaml.contains("MR-Serial"));
         assert!(yaml.contains("identity"));
     }

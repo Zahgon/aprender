@@ -374,7 +374,7 @@ impl DemoEngine for OrbitalEngine {
     type StepResult = OrbitalStepResult;
 
     fn from_yaml(yaml: &str) -> Result<Self, DemoError> {
-        let config: OrbitConfig = serde_yaml::from_str(yaml)?;
+        let config: OrbitConfig = crate::yaml::from_str(yaml)?;
         Ok(Self::from_config(config))
     }
 

@@ -72,6 +72,7 @@ pub mod scenarios;
 #[cfg(feature = "tui")]
 pub mod tui;
 pub mod visualization;
+mod yaml;
 
 /// Prelude for convenient imports
 pub mod prelude {

@@ -279,7 +279,7 @@ impl TspInstanceYaml {
     ///
     /// Returns `TspInstanceError::ParseError` if YAML is invalid.
     pub fn from_yaml(yaml: &str) -> Result<Self, TspInstanceError> {
-        serde_yaml::from_str(yaml).map_err(|e| TspInstanceError::ParseError(e.to_string()))
+        crate::yaml::from_str(yaml).map_err(|e| TspInstanceError::ParseError(e.to_string()))
     }
 
     /// Load TSP instance from a YAML file.
@@ -299,7 +299,7 @@ impl TspInstanceYaml {
     ///
     /// Returns error if serialization fails.
     pub fn to_yaml(&self) -> Result<String, TspInstanceError> {
-        serde_yaml::to_string(self).map_err(|e| TspInstanceError::ParseError(e.to_string()))
+        serde_saphyr::to_string(self).map_err(|e| TspInstanceError::ParseError(e.to_string()))
     }
 
     /// Number of cities in the instance.
@@ -392,17 +392,23 @@ impl TspInstanceYaml {
         for i in 0..n {
             for j in 0..n {
                 for k in 0..n {
-                    if i != j && j != k && i != k {
-                        let direct = self.matrix[i][k];
-                        let via_j = self.matrix[i][j].saturating_add(self.matrix[j][k]);
-                        if direct > via_j {
-                            return Err(TspInstanceError::TriangleInequalityViolation { i, j, k });
-                        }
+                    if self.violates_triangle(i, j, k) {
+                        return Err(TspInstanceError::TriangleInequalityViolation { i, j, k });
                     }
                 }
             }
         }
         Ok(())
+    }
+
+    /// Whether distinct cities `i`, `j`, `k` violate `d(i,k) <= d(i,j) + d(j,k)`.
+    fn violates_triangle(&self, i: usize, j: usize, k: usize) -> bool {
+        if i == j || j == k || i == k {
+            return false;
+        }
+        let direct = self.matrix[i][k];
+        let via_j = self.matrix[i][j].saturating_add(self.matrix[j][k]);
+        direct > via_j
     }
 
     /// Compute tour length for given city sequence.

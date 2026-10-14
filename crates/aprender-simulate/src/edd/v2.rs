@@ -37,7 +37,7 @@ pub struct SimulationConfig {
     pub sim_type: String,
     /// Parameters as key-value pairs
     #[serde(default)]
-    pub parameters: HashMap<String, serde_yaml::Value>,
+    pub parameters: HashMap<String, serde_json::Value>,
 }
 
 /// Falsification configuration
@@ -90,7 +90,7 @@ pub struct ReplayStep {
     /// Step number
     pub step: u64,
     /// State snapshot
-    pub state: HashMap<String, serde_yaml::Value>,
+    pub state: HashMap<String, serde_json::Value>,
     /// Equation evaluations at this step
     #[serde(default)]
     pub equations: Vec<EquationEvaluation>,
@@ -173,7 +173,7 @@ pub fn load_yaml_experiment(path: &Path) -> Result<YamlExperiment, YamlLoadError
 
     // Parse YAML
     let experiment: YamlExperiment =
-        serde_yaml::from_str(&contents).map_err(|e| YamlLoadError::ParseError(e.to_string()))?;
+        crate::yaml::from_str(&contents).map_err(|e| YamlLoadError::ParseError(e.to_string()))?;
 
     // Validate required fields
     validate_experiment(&experiment)?;
@@ -243,7 +243,7 @@ impl ReplayRecorder {
     }
 
     /// Record a step
-    pub fn record_step(&mut self, step: u64, state: HashMap<String, serde_yaml::Value>) {
+    pub fn record_step(&mut self, step: u64, state: HashMap<String, serde_json::Value>) {
         contract_pre_iterator!();
         self.timeline.push(ReplayStep {
             step,
@@ -256,7 +256,7 @@ impl ReplayRecorder {
     pub fn record_step_with_equations(
         &mut self,
         step: u64,
-        state: HashMap<String, serde_yaml::Value>,
+        state: HashMap<String, serde_json::Value>,
         equations: Vec<EquationEvaluation>,
     ) {
         contract_pre_iterator!();
@@ -296,7 +296,7 @@ impl ReplayExporter {
     /// # Errors
     /// Returns error if serialization or file write fails
     pub fn export_yaml(replay: &ReplayFile, path: &Path) -> Result<(), std::io::Error> {
-        let yaml = serde_yaml::to_string(replay)
+        let yaml = serde_saphyr::to_string(replay)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         std::fs::write(path, yaml)
     }
@@ -508,7 +508,7 @@ impl SchemaValidator {
     /// Returns error if YAML is invalid or doesn't conform to schema
     pub fn validate_experiment(&self, yaml_content: &str) -> Result<(), SchemaValidationError> {
         // Parse YAML to JSON Value
-        let yaml_value: serde_json::Value = serde_yaml::from_str(yaml_content)
+        let yaml_value: serde_json::Value = crate::yaml::from_str(yaml_content)
             .map_err(|e| SchemaValidationError::YamlParseError(e.to_string()))?;
 
         self.validate_against_schema(&yaml_value, &self.experiment_schema)
@@ -519,7 +519,7 @@ impl SchemaValidator {
     /// # Errors
     /// Returns error if YAML is invalid or doesn't conform to schema
     pub fn validate_emc(&self, yaml_content: &str) -> Result<(), SchemaValidationError> {
-        let yaml_value: serde_json::Value = serde_yaml::from_str(yaml_content)
+        let yaml_value: serde_json::Value = crate::yaml::from_str(yaml_content)
             .map_err(|e| SchemaValidationError::YamlParseError(e.to_string()))?;
 
         self.validate_against_schema(&yaml_value, &self.emc_schema)
@@ -1118,14 +1118,14 @@ falsification:
         let mut state1 = HashMap::new();
         state1.insert(
             "tour_length".to_string(),
-            serde_yaml::Value::Number(1234.into()),
+            serde_json::Value::Number(1234.into()),
         );
         recorder.record_step(0, state1);
 
         let mut state2 = HashMap::new();
         state2.insert(
             "tour_length".to_string(),
-            serde_yaml::Value::Number(1198.into()),
+            serde_json::Value::Number(1198.into()),
         );
         recorder.record_step(1, state2);
 
@@ -1350,7 +1350,7 @@ falsification:
             let mut state = HashMap::new();
             state.insert(
                 "tour_length".to_string(),
-                serde_yaml::Value::Number((1000 - step * 50).into()),
+                serde_json::Value::Number((1000 - step * 50).into()),
             );
             recorder.record_step(step, state);
         }

@@ -526,7 +526,7 @@ impl ExperimentRunner {
         let expected = test
             .expected
             .get("value")
-            .and_then(serde_yaml::Value::as_f64);
+            .and_then(serde_json::Value::as_f64);
 
         let tolerance = test.tolerance.unwrap_or(1e-6);
 
@@ -1263,7 +1263,7 @@ mod tests {
                         parameters: HashMap::new(),
                         expected: {
                             let mut m = HashMap::new();
-                            m.insert("value".to_string(), serde_yaml::Value::from(10.0));
+                            m.insert("value".to_string(), serde_json::Value::from(10.0));
                             m
                         },
                         tolerance: Some(0.001),
@@ -1303,7 +1303,7 @@ mod tests {
             parameters: HashMap::new(),
             expected: {
                 let mut m = HashMap::new();
-                m.insert("value".to_string(), serde_yaml::Value::from(5.0));
+                m.insert("value".to_string(), serde_json::Value::from(5.0));
                 m
             },
             tolerance: Some(0.01),
