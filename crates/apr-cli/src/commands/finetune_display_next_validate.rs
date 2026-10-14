@@ -58,6 +58,44 @@ fn read_sidecar_lora_params(adapter: &Path) -> (Option<u32>, Option<f32>) {
     (rank, alpha)
 }
 
+/// Read LoRA rank/alpha from a PEFT `adapter_config.json` next to the
+/// adapter (`r` / `lora_alpha`, as HF PEFT's `save_pretrained` writes them).
+fn read_peft_config_lora_params(adapter: &Path) -> (Option<u32>, Option<f32>) {
+    let Some(config) = adapter.parent().map(|d| d.join("adapter_config.json")) else {
+        return (None, None);
+    };
+    let Ok(text) = std::fs::read_to_string(&config) else {
+        return (None, None);
+    };
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return (None, None);
+    };
+    let rank = json
+        .get("r")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|v| u32::try_from(v).ok());
+    let alpha = json
+        .get("lora_alpha")
+        .and_then(serde_json::Value::as_f64)
+        .map(|v| v as f32);
+    (rank, alpha)
+}
+
+fn missing_lora_alpha(adapter: &Path) -> CliError {
+    CliError::ValidationFailed(format!(
+        "Adapter '{}' carries no lora_alpha (checked the adapter metadata, metadata.json \
+         and adapter_config.json). The merge scale is alpha/rank, so a guessed alpha \
+         would merge a wrongly scaled delta. Refusing to merge.",
+        adapter.display()
+    ))
+}
+
+/// Whether an adapter tensor name is the A half of a LoRA pair, in any
+/// naming this merge accepts (`.lora_a` or PEFT's `.lora_A.weight`).
+fn is_lora_a_name(name: &str) -> bool {
+    name.ends_with(".lora_a") || name.ends_with(".lora_A.weight")
+}
+
 /// Read LoRA rank/alpha from adapter metadata.
 fn read_adapter_lora_params(adapter: &Path) -> Result<(u32, f32)> {
     // Handle safetensors adapter (from wgpu training pipeline)
@@ -84,8 +122,14 @@ fn read_adapter_lora_params(adapter: &Path) -> Result<(u32, f32)> {
         // metadata.json before defaulting — a defaulted alpha silently
         // mis-scales the merged delta (scale = alpha/rank).
         let (sidecar_rank, sidecar_alpha) = read_sidecar_lora_params(adapter);
-        let rank = header_rank.or(sidecar_rank).unwrap_or(64);
-        let alpha = header_alpha.or(sidecar_alpha).unwrap_or(16.0);
+        let (peft_rank, peft_alpha) = read_peft_config_lora_params(adapter);
+        let rank = header_rank.or(sidecar_rank).or(peft_rank).unwrap_or(64);
+        // #4674: a missing alpha is a refusal, never a default — scale =
+        // alpha/rank, so a guessed alpha merges a wrongly scaled delta.
+        let alpha = header_alpha
+            .or(sidecar_alpha)
+            .or(peft_alpha)
+            .ok_or_else(|| missing_lora_alpha(adapter))?;
         return Ok((rank, alpha));
     }
     // APR format adapter
@@ -98,7 +142,7 @@ fn read_adapter_lora_params(adapter: &Path) -> Result<(u32, f32)> {
     let alpha = reader
         .get_metadata("lora_alpha")
         .and_then(serde_json::Value::as_f64)
-        .unwrap_or(16.0) as f32;
+        .ok_or_else(|| missing_lora_alpha(adapter))? as f32;
     Ok((rank, alpha))
 }
 
@@ -230,9 +274,31 @@ fn adapter_pair_names(base_name: &str) -> Vec<(String, String)> {
                 format!("lora.{layer}.{hf_proj}.lora_a"),
                 format!("lora.{layer}.{hf_proj}.lora_b"),
             ));
+            // PEFT names carry the HF module path; a GGUF-named base has none.
+            let module = if proj.starts_with("attn_") {
+                "self_attn"
+            } else {
+                "mlp"
+            };
+            candidates.push(peft_pair(&format!(
+                "base_model.model.model.layers.{layer}.{module}.{hf_proj}"
+            )));
         }
     }
+    // 3. HF PEFT (#4674): `base_model.model.{stem}.lora_A.weight`, or the
+    //    bare `{stem}.lora_A.weight` when the wrapper prefix was stripped.
+    if let Some(stem) = base_name.strip_suffix(".weight") {
+        candidates.push(peft_pair(&format!("base_model.model.{stem}")));
+        candidates.push(peft_pair(stem));
+    }
     candidates
+}
+
+fn peft_pair(stem: &str) -> (String, String) {
+    (
+        format!("{stem}.lora_A.weight"),
+        format!("{stem}.lora_B.weight"),
+    )
 }
 
 /// Backfill architecture + C-03 dims from tensor shapes/names when the base
@@ -464,6 +530,42 @@ fn verify_merged_runnable(out: &Path) -> Result<()> {
     Ok(())
 }
 
+/// #4674: refuse a merge that is partial or changed nothing.
+///
+/// A partial merge (some adapter A-tensors matched no base tensor) ships a
+/// model that carries only part of the trained delta under a "merged" name.
+/// A merge whose every matched pair left its base weight bit-identical (an
+/// untrained, zero-B adapter) is a copy of the base. Both exit non-zero.
+fn check_merge_complete(
+    adapter_names: &std::collections::HashSet<String>,
+    matched_a: &std::collections::HashSet<String>,
+    merged_count: u64,
+    changed_count: u64,
+) -> Result<()> {
+    let mut unmatched: Vec<&String> = adapter_names
+        .iter()
+        .filter(|n| is_lora_a_name(n) && !matched_a.contains(*n))
+        .collect();
+    if !unmatched.is_empty() {
+        unmatched.sort();
+        return Err(CliError::ValidationFailed(format!(
+            "Partial merge: {} of {} adapter LoRA tensors matched no base tensor \
+             (first unmatched: {}). Refusing to write a merge that drops part of the adapter.",
+            unmatched.len(),
+            unmatched.len() + matched_a.len(),
+            unmatched[0]
+        )));
+    }
+    if merged_count > 0 && changed_count == 0 {
+        return Err(CliError::ValidationFailed(format!(
+            "Merge changed no weight: {merged_count} LoRA pairs matched but every merged \
+             tensor equals its base (an untrained adapter, lora_B all zero?). \
+             Refusing to write a copy of the base."
+        )));
+    }
+    Ok(())
+}
+
 /// Run adapter merge (finetune merge)
 #[allow(clippy::disallowed_methods)]
 fn run_merge(
@@ -508,6 +610,8 @@ fn run_merge(
 
     let engine = MergeEngine::new();
     let mut merged_count = 0u64;
+    let mut changed_count = 0u64;
+    let mut matched_a: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // Read base model as V2 to preserve metadata INCLUDING embedded tokenizer.
     // Previous code used AprWriter (v1) which lost the tokenizer section.
@@ -576,7 +680,12 @@ fn run_merge(
                 .unwrap_or(lora_rank);
 
             merged_count += 1;
-            engine.merge(&base_data, &lora_a, &lora_b, lora_alpha, rank)
+            let merged = engine.merge(&base_data, &lora_a, &lora_b, lora_alpha, rank);
+            if merged != base_data {
+                changed_count += 1;
+            }
+            matched_a.insert(a_name);
+            merged
         } else {
             base_data
         };
@@ -587,20 +696,21 @@ fn run_merge(
     // FALSIFY-APR-MERGE-RUNNABLE-005: a merge that merges NOTHING while the
     // adapter carries LoRA tensors is a silent no-op (wrong naming scheme) —
     // fail loudly instead of shipping a byte-identical copy of the base.
-    let adapter_lora_count = adapter_names.iter().filter(|n| n.ends_with(".lora_a")).count();
+    let adapter_lora_count = adapter_names.iter().filter(|n| is_lora_a_name(n)).count();
     if merged_count == 0 && adapter_lora_count > 0 {
         let example = adapter_names
             .iter()
-            .find(|n| n.ends_with(".lora_a"))
+            .find(|n| is_lora_a_name(n))
             .cloned()
             .unwrap_or_default();
         return Err(CliError::ValidationFailed(format!(
             "Adapter contains {adapter_lora_count} LoRA tensor pairs but NONE matched any base \
              tensor (example adapter tensor: {example}). Supported namings: \
-             '{{base_tensor}}.lora_a' or 'lora.{{layer}}.{{proj}}.lora_a'. \
-             Refusing to write a no-op merge."
+             '{{base_tensor}}.lora_a', 'lora.{{layer}}.{{proj}}.lora_a' or PEFT \
+             '{{module}}.lora_A.weight'. Refusing to write a no-op merge."
         )));
     }
+    check_merge_complete(&adapter_names, &matched_a, merged_count, changed_count)?;
 
     let bytes = writer.write().map_err(|e| {
         CliError::ValidationFailed(format!("Failed to serialize merged model: {e}"))

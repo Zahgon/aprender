@@ -1819,3 +1819,140 @@ fn classify_load_still_accepts_a_directory_of_safetensors() {
         "a directory must still go down the from_pretrained path: {msg}"
     );
 }
+
+// ─── #4674: merge refuses what it cannot merge correctly ─────────────────────
+//
+// Each case below shipped a wrong "merged" model with exit 0 on pre-fix main:
+// a PEFT-named adapter matched nothing, a partial match dropped the rest of
+// the adapter, a missing lora_alpha was defaulted to 16.0, and an untrained
+// (zero-B) adapter wrote a copy of the base.
+
+/// Write an APR v2 adapter with the given `(name, shape, value)` tensors and
+/// `alpha` (None = no lora_alpha key at all).
+fn write_adapter_4674(tensors: &[(&str, Vec<usize>, f32)], alpha: Option<f64>) -> NamedTempFile {
+    use aprender::format::v2::{AprV2Metadata, AprV2Writer};
+    let mut md = AprV2Metadata::new("adapter-4674");
+    md.custom
+        .insert("lora_rank".to_string(), serde_json::json!(4));
+    if let Some(a) = alpha {
+        md.custom
+            .insert("lora_alpha".to_string(), serde_json::json!(a));
+    }
+    let mut w = AprV2Writer::new(md);
+    for (name, shape, v) in tensors {
+        let n = shape.iter().product();
+        w.add_f32_tensor(name, shape.clone(), &vec![*v; n]);
+    }
+    let f = NamedTempFile::with_suffix(".apr").expect("adapter tmp");
+    std::fs::write(f.path(), w.write().expect("write adapter")).expect("write adapter file");
+    f
+}
+
+fn merge_4674(adapter: &Path) -> (Result<()>, tempfile::TempDir) {
+    let hidden = 32usize;
+    let dir = tempfile::tempdir().expect("tmpdir");
+    let base = dir.path().join("base.apr");
+    std::fs::write(&base, build_import_shaped_qwen2_base_v2(hidden, true)).expect("write base");
+    let out = dir.path().join("merged.apr");
+    let res = run_merge(Some(&base), Some(adapter), Some(&out), true);
+    (res, dir)
+}
+
+#[test]
+fn merge_4674_peft_named_adapter_merges() {
+    let adapter = write_adapter_4674(
+        &[
+            (
+                "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight",
+                vec![4, 32],
+                0.3,
+            ),
+            (
+                "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight",
+                vec![32, 4],
+                0.5,
+            ),
+        ],
+        Some(8.0),
+    );
+    let (res, dir) = merge_4674(adapter.path());
+    assert!(res.is_ok(), "a PEFT-named adapter must merge: {res:?}");
+    let base: Vec<f32> = aprender::format::rosetta::RosettaStone::new()
+        .load_tensor_f32(
+            &dir.path().join("base.apr"),
+            "model.layers.0.self_attn.q_proj.weight",
+        )
+        .expect("base q_proj");
+    let q: Vec<f32> = aprender::format::rosetta::RosettaStone::new()
+        .load_tensor_f32(
+            &dir.path().join("merged.apr"),
+            "model.layers.0.self_attn.q_proj.weight",
+        )
+        .expect("merged q_proj");
+    assert_ne!(q, base, "the PEFT delta must land in q_proj");
+}
+
+#[test]
+fn merge_4674_partial_match_refuses() {
+    let adapter = write_adapter_4674(
+        &[
+            ("lora.0.q_proj.lora_a", vec![4, 32], 0.3),
+            ("lora.0.q_proj.lora_b", vec![32, 4], 0.5),
+            // Layer 9 does not exist in the base: this pair matches nothing.
+            ("lora.9.q_proj.lora_a", vec![4, 32], 0.3),
+            ("lora.9.q_proj.lora_b", vec![32, 4], 0.5),
+        ],
+        Some(8.0),
+    );
+    let (res, dir) = merge_4674(adapter.path());
+    let err = res.expect_err("a partial match must refuse");
+    assert!(err.to_string().contains("lora.9.q_proj.lora_a"), "{err}");
+    assert!(!dir.path().join("merged.apr").exists());
+}
+
+#[test]
+fn merge_4674_missing_lora_alpha_refuses() {
+    let adapter = write_adapter_4674(
+        &[
+            ("lora.0.q_proj.lora_a", vec![4, 32], 0.3),
+            ("lora.0.q_proj.lora_b", vec![32, 4], 0.5),
+        ],
+        None,
+    );
+    let (res, dir) = merge_4674(adapter.path());
+    let err = res.expect_err("a missing lora_alpha must refuse, not default to 16");
+    assert!(err.to_string().contains("lora_alpha"), "{err}");
+    assert!(!dir.path().join("merged.apr").exists());
+}
+
+#[test]
+fn merge_4674_unchanged_weights_refuse() {
+    // PEFT initialises lora_B to zero: an untrained adapter's delta is 0.
+    let adapter = write_adapter_4674(
+        &[
+            ("lora.0.q_proj.lora_a", vec![4, 32], 0.3),
+            ("lora.0.q_proj.lora_b", vec![32, 4], 0.0),
+        ],
+        Some(8.0),
+    );
+    let (res, dir) = merge_4674(adapter.path());
+    let err = res.expect_err("a merge that changed no weight must refuse");
+    assert!(err.to_string().contains("changed no weight"), "{err}");
+    assert!(!dir.path().join("merged.apr").exists());
+}
+
+#[test]
+fn merge_4674_peft_names_resolve_against_both_base_layouts() {
+    let hf = adapter_pair_names("model.layers.3.mlp.down_proj.weight");
+    assert!(hf.contains(&(
+        "base_model.model.model.layers.3.mlp.down_proj.lora_A.weight".to_string(),
+        "base_model.model.model.layers.3.mlp.down_proj.lora_B.weight".to_string(),
+    )));
+    let gguf = adapter_pair_names("blk.3.attn_v.weight");
+    assert!(gguf.contains(&(
+        "base_model.model.model.layers.3.self_attn.v_proj.lora_A.weight".to_string(),
+        "base_model.model.model.layers.3.self_attn.v_proj.lora_B.weight".to_string(),
+    )));
+    assert!(is_lora_a_name("x.q_proj.lora_A.weight"));
+    assert!(!is_lora_a_name("x.q_proj.lora_B.weight"));
+}
