@@ -33,3 +33,9 @@ falsification:
   - condition: "Legacy name in page text"
     severity: P0
     action: delete_from_summary
+falsification_tests:
+  - id: FALSIFY-PAGE-CHAPTERS-CH22-VS-LLAMACPP-001
+    rule: "The chapter page exists, its example compiles and exits 0, and the page imports no legacy crate and holds no placeholder text"
+    prediction: "scripts/book-gate.sh chapters-ch22-vs-llamacpp exits 0: book/src/chapters/ch22-vs-llamacpp.md exists (G3), cargo build and cargo run -p aprender-core --example ch22_vs_llamacpp both succeed (G5, G6), the page has no 'use trueno|realizar|entrenar|batuta|presentar|renacer::' line (G7) and no TODO, TBD, WIP, coming soon or under construction (G8). The contract lists no sections and the page has no ## heading, so G9 is a skip. Run without --strict because the page is an include of its example with 0 prose lines, which only the --strict G10 minimum rejects and no condition here names"
+    test: "bash scripts/book-gate.sh chapters-ch22-vs-llamacpp"
+    if_fails: "The chapter page moved, its example stopped compiling or exits non-zero, or the page teaches a removed crate name"
