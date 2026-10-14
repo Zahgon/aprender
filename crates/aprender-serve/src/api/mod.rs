@@ -80,6 +80,8 @@ pub use chat_logprobs::{
     json_logprobs_refusal, logprobs_fields_refusal, ChatLogprobs, ChatTokenLogprob, ChatTopLogprob,
     TopLogprobs, MAX_TOP_LOGPROBS,
 };
+// #5349: agent conformance suite (EPIC 0.72 R-6), in process and over HTTP.
+pub mod conformance;
 mod openai_handlers;
 mod serve_trace;
 // #4918: tool calls on the streaming chat path (both SSE builders).

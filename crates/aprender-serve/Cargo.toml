@@ -342,6 +342,11 @@ required-features = ["cuda"]
 [[example]]
 name = "performance_parity"
 
+# #5349: agent conformance suite against a running `apr serve`.
+[[example]]
+name = "serve_conformance"
+required-features = ["server"]
+
 [[example]]
 name = "chat_template"
 

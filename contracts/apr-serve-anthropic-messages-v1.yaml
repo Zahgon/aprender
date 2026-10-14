@@ -1,0 +1,166 @@
+metadata:
+  kind: pattern
+  version: 1.0.0
+  created: '2026-10-14'
+  author: PAIML Engineering
+  description: >
+    The Anthropic Messages shape of the agent conformance suite (aprender#5349,
+    EPIC 0.72 row R-6), and the suite rules that hold for both shapes. The
+    suite is one fixed list of client-observable cases in
+    realizar::api::conformance; each case is a list of requests plus one check
+    over every response. It runs in process through create_router and over
+    HTTP through the serve_conformance example, and yields one cell per
+    case × model × backend with verdict pass, fail or not_measured. There is
+    no skip state: a route the server lacks is a fail with the observed status
+    (404), a request the runner could not send is not_measured, and an absent
+    cell is a missing measurement. The Anthropic cases are POST /v1/messages:
+    stop_reason (R-1), stream (R-5), usage (R-4), greedy_repeat (R-3) and
+    tool_use (R-2). On the demo router at 909b977d2a all five are fail with
+    404, because apr serve has no /v1/messages route yet; R-1 adds it. This
+    contract therefore tests the checks against crafted responses, never
+    asserts that a live Anthropic cell fails, and leaves the live cells to the
+    receipt. The OpenAI cases (models, finish_reason, length, stream, usage,
+    seed, tool_call) judge the surface described by
+    apr-serve-openai-compat-v1.yaml.
+  references:
+  - 'aprender#5349 — R-6 agent conformance suite runner'
+  - 'aprender#4000 — EPIC 0.72 agent ready'
+  - 'docs/specifications/EPIC-0.72-agent-ready-plan.md — rows E-1, R-1..R-6'
+  - 'crates/aprender-serve/src/api/conformance.rs — Case, Cell, Verdict, cases, run_case, missing_cells, uncovered_rows'
+  - 'crates/aprender-serve/src/api/conformance_checks.rs — one check per case'
+  - 'crates/aprender-serve/src/api/conformance_tests.rs — FALSIFY-ASM-001..007'
+  - 'crates/aprender-serve/examples/serve_conformance.rs — the HTTP runner and receipt'
+equations:
+  conformance_cells:
+    formula: cells(run) = { (c, m, b, v) | c ∈ cases, m ∈ models, b ∈ backends }, v ∈ { pass, fail, not_measured }
+    domain: a suite run over the requested models and backends
+    codomain: one verdict per case × model × backend
+    invariants:
+    - Every requested (case, model, backend) has exactly one cell; an absent one is listed by missing_cells
+    - A request that could not be sent gives not_measured, never pass
+    - A check never passes on an absent field
+    - The run passes only when every cell is pass and none is missing
+    preconditions:
+    - the suite covers every row R-1..R-5 on every shape that speaks it
+    postconditions:
+    - serve_conformance exits 0 iff every cell is pass and missing_cells is empty
+  anthropic_message:
+    formula: ok(r) = status 200 ∧ type = "message" ∧ content[0].type = "text" ∧ stop_reason ∈ { end_turn, max_tokens, stop_sequence }
+    domain: the response to POST /v1/messages without tools
+    codomain: pass or the first failing assertion
+    invariants:
+    - usage.input_tokens > 0 and 0 < usage.output_tokens ≤ max_tokens
+    - temperature 0 twice gives the same text
+    preconditions:
+    - max_tokens 16, one user message
+    postconditions:
+    - a forced get_weather tool gives a tool_use block with an object input and stop_reason tool_use
+  anthropic_stream:
+    formula: ok(s) = events(s)[0] = message_start ∧ events(s)[-1] = message_stop ∧ content_block_delta ∈ events(s) ∧ ∃ message_delta with delta.stop_reason
+    domain: 'the SSE body of POST /v1/messages with "stream": true'
+    codomain: pass or the first failing assertion
+    invariants:
+    - content-type is text/event-stream
+    preconditions:
+    - status 200
+    postconditions:
+    - a stream that stops before message_stop fails
+proof_obligations:
+- id: ASM-INV-001
+  type: invariant
+  property: Every row R-1..R-5 has a case on each shape that speaks it
+  formal: ∀ r ∈ R-1..R-5, s ∈ shapes(r), ∃ c ∈ cases, c.row = r ∧ c.shape = s
+  applies_to: conformance_cells
+- id: ASM-INV-002
+  type: invariant
+  property: An unsent request is not_measured, never pass
+  formal: send(q) = Err ⟹ v = not_measured
+  applies_to: conformance_cells
+- id: ASM-INV-003
+  type: invariant
+  property: Every requested cell is present or named missing
+  formal: ∀ x ∈ requested, x ∈ missing_cells(run) ⟺ x ∉ present
+  applies_to: conformance_cells
+- id: ASM-INV-004
+  type: invariant
+  property: The Anthropic checks fail on an absent route, an absent field and a truncated stream
+  formal: check(404) = fail ∧ check(r without usage) = fail ∧ check(s without message_stop) = fail
+  applies_to: anthropic_message
+enforcement:
+  row_coverage:
+    description: The suite covers R-1..R-5 on both shapes; an empty or partial suite cannot pass
+    check: contract_tests::FALSIFY-ASM-001
+    severity: ERROR
+  not_measured_is_not_pass:
+    description: A request the runner could not send gives not_measured
+    check: contract_tests::FALSIFY-ASM-003
+    severity: ERROR
+  missing_cells_named:
+    description: Every absent case × model × backend cell is named
+    check: contract_tests::FALSIFY-ASM-004
+    severity: ERROR
+  anthropic_checks_bite:
+    description: The Anthropic checks pass the documented shape and fail its breakages
+    check: contract_tests::FALSIFY-ASM-007
+    severity: ERROR
+falsification_tests:
+- id: FALSIFY-ASM-001
+  rule: the suite covers every row on every shape
+  prediction: uncovered_rows(cases) is empty and case ids are unique
+  test: 'cargo test -p aprender-serve --lib api::conformance::tests::suite_covers_every_row_on_every_shape'
+  red_state: a row has no case on one shape — the suite passes without testing it
+  green_state: R-1 on Anthropic and R-2..R-5 on both shapes each have a case (PASS)
+  if_fails: E-1's "at least one case per row per shape" is not enforced
+- id: FALSIFY-ASM-002
+  rule: uncovered_rows names a removed row
+  prediction: removing every R-3 case reports R-3 OpenAi and R-3 Anthropic
+  test: 'cargo test -p aprender-serve --lib api::conformance::tests::uncovered_rows_names_a_missing_row'
+  red_state: uncovered_rows returns empty for any suite
+  green_state: both missing pairs are named (PASS)
+  if_fails: FALSIFY-ASM-001 is vacuous
+- id: FALSIFY-ASM-003
+  rule: an unsent request is not_measured
+  prediction: with a sender that always errors, every cell is not_measured
+  test: 'cargo test -p aprender-serve --lib api::conformance::tests::unsent_case_is_not_measured_never_pass'
+  red_state: a send error is judged on zero responses or counted as pass
+  green_state: every cell is not_measured (PASS)
+  if_fails: a dead server reads as a conformant one
+- id: FALSIFY-ASM-004
+  rule: missing_cells names every absent cell
+  prediction: a full run has none missing; dropping one cell and asking for a second backend names that cell plus every cell of the second backend
+  test: 'cargo test -p aprender-serve --lib api::conformance::tests::missing_cells_names_every_absent_cell'
+  red_state: a shorter table reads as a complete one
+  green_state: exactly the absent cells are named (PASS)
+  if_fails: a backend that never ran passes the matrix
+- id: FALSIFY-ASM-005
+  rule: the demo router answers the OpenAI base cases
+  prediction: in process over create_router(AppState::demo()), every case gets a measured cell and oai.models, oai.chat.finish_reason and oai.chat.stream pass
+  test: 'cargo test -p aprender-serve --lib api::conformance::tests::demo_router_openai_base_cases_pass'
+  red_state: the in-process sender is broken, or the OpenAI surface regressed
+  green_state: three base cases pass and no cell is not_measured (PASS)
+  if_fails: the runner proves nothing about a live server
+- id: FALSIFY-ASM-006
+  rule: a server that drops finish_reason is RED
+  prediction: the same in-process run with every finish_reason key stripped from JSON and SSE bodies fails oai.chat.finish_reason and oai.chat.stream, naming finish_reason
+  test: 'cargo test -p aprender-serve --lib api::conformance::tests::planted_drop_finish_reason_turns_red'
+  red_state: the checks read finish_reason as optional
+  green_state: both cases fail on finish_reason (PASS)
+  if_fails: R-6's done_when mutant passes the suite
+- id: FALSIFY-ASM-007
+  rule: every check passes its documented shape and fails its breakages
+  prediction: a must-pass / must-fail table over crafted responses for the tool, seed, usage, length, stream and all Anthropic checks matches
+  test: 'cargo test -p aprender-serve --lib api::conformance::tests::check_case_table'
+  red_state: a check passes a 404, an absent field, a truncated stream or a greedy seed
+  green_state: every row matches its expected verdict (PASS)
+  if_fails: the cases the demo router cannot reach are judged by untested checks
+qa_gate:
+  id: F-ASM-001
+  name: Agent Conformance Suite Contract
+  description: The R-6 suite covers R-1..R-5 on both shapes, never passes an unsent or absent case, and its checks bite (aprender#5349)
+  checks:
+  - row_coverage
+  - not_measured_is_not_pass
+  - missing_cells_named
+  - anthropic_checks_bite
+  pass_criteria: FALSIFY-ASM-001..007 PASS; the live cells over the certified matrix are the serve_conformance receipt, not a test
+  falsification: Make oai_chat_finish accept an absent finish_reason — FALSIFY-ASM-006 FAILS
