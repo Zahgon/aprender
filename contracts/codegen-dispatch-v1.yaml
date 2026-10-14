@@ -33,3 +33,15 @@ falsification:
     description: "same hardware → same kernel selected"
     test: "Related tests in crates/aprender-compute/src/"
     evidence: "cargo test --lib"
+
+falsification_tests:
+  - id: FALSIFY-CODEGEN_DISPATCH_V1_001-T
+    rule: "The scalar fallback's dot product equals a naive reference"
+    prediction: "test_scalar_dot_unrolled_various_sizes compares ScalarBackend::dot with a plain sum of products at sizes 0-8, 100 and 1000, covering the empty case, remainder-only lengths, one and two 4-wide chunks, and long inputs. It checks dot only, at fixed sizes; the legacy entry's 'all inputs' over every scalar op is not covered by it"
+    test: "cargo test -p aprender-compute --lib backends::scalar::tests::test_scalar_dot_unrolled_various_sizes"
+    if_fails: "The fallback that runs on hosts without SIMD returns a wrong dot product"
+  - id: FALSIFY-CODEGEN_DISPATCH_V1_002-T
+    rule: "Backend selection is stable on one machine"
+    prediction: "test_backend_selection_is_deterministic asserts two calls to select_best_available_backend() return the same backend. It runs on one host per test run, so it shows stability, not that every host of a class picks the same kernel"
+    test: "cargo test -p aprender-compute --lib tests::test_backend_selection_is_deterministic"
+    if_fails: "Two calls on the same hardware pick different kernels, so results depend on call order"

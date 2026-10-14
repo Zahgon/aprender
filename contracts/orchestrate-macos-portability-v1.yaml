@@ -33,3 +33,19 @@ falsification:
     description: "The PR_SET_PDEATHSIG path is Linux-gated (shape gate; behavioral proof is the macOS cross-build). Discharges C-ORCHPORT-001."
     test: "! grep -B2 'libc::prctl(libc::PR_SET_PDEATHSIG' crates/aprender-orchestrate/src/agent/driver/apr_serve.rs | grep -q 'cfg(unix)'  — the prctl fn must NOT be under cfg(unix); it is under cfg(target_os = \"linux\")."
     evidence: "grep -B2 'fn configure_parent_death_signal' apr_serve.rs shows #[cfg(target_os = \"linux\")] and #[cfg(not(target_os = \"linux\"))]; Linux falsify_1712 tests still pass."
+
+falsification_tests:
+  - id: FALSIFY-ORCH-MACOS-PRCTL-GATE-001
+    rule: "The prctl(PR_SET_PDEATHSIG) helper compiles only on Linux, and every other target gets the no-op stub"
+    prediction: "Exits 0 on the current source. It reads the attribute directly above each configure_parent_death_signal definition: the one taking `cmd` must sit under #[cfg(target_os = \"linux\")], the `_cmd` stub under #[cfg(not(target_os = \"linux\"))], and the file must hold exactly one libc::prctl(libc::PR_SET_PDEATHSIG call. Turning the gate into #[cfg(unix)], deleting it, deleting the stub's gate, or adding a second ungated prctl call each exits 1. The legacy -B2 grep above read the pre_exec lines, not the attribute, so it could not fail"
+    test: |
+      f=crates/aprender-orchestrate/src/agent/driver/apr_serve.rs
+      grep -B2 '^fn configure_parent_death_signal(cmd: &mut Command)' "$f" | grep -qx '#\[cfg(target_os = "linux")\]' &&
+      grep -A1 -x '#\[cfg(not(target_os = "linux"))\]' "$f" | grep -q '^fn configure_parent_death_signal(_cmd' &&
+      [ "$(grep -c 'libc::prctl(libc::PR_SET_PDEATHSIG' "$f")" = 1 ]
+    if_fails: "PR_SET_PDEATHSIG reaches a non-Linux build and `cargo install aprender` breaks on macOS again (PMAT-840)"
+  - id: FALSIFY-ORCH-MACOS-PRCTL-GATE-002
+    rule: "On Linux the helper really sets the parent-death signal in the child"
+    prediction: "falsify_1712_pdeathsig_helper_installs_pre_exec spawns /bin/true through the helper without error, and falsify_1712_pdeathsig_actually_set_in_child has the child read PR_GET_PDEATHSIG back as SIGTERM. Both are #[cfg(target_os = \"linux\")]; the second returns early when python3 is absent, so it proves the signal only on a host that has python3"
+    test: "cargo test -p aprender-orchestrate --lib agent::driver::apr_serve::tests::falsify_1712"
+    if_fails: "Orphaned `apr serve` children survive their parent and hold their memory"
