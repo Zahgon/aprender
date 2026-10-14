@@ -95,6 +95,10 @@ pub(crate) use ollama_handlers::{
     ollama_chat_handler, ollama_embeddings_handler, ollama_generate_handler, ollama_show_handler,
     ollama_tags_handler, ollama_version_handler,
 };
+// #4000 R-1: Anthropic Messages API (/v1/messages) — delegates to the OpenAI
+// chat path, like the Ollama routes.
+mod anthropic_messages;
+pub(crate) use anthropic_messages::anthropic_messages_handler;
 // What this server actually measured about the model it loaded. Metadata
 // handlers read it instead of substituting plausible-looking constants.
 mod model_source;

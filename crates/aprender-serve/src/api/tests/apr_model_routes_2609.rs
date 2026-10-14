@@ -57,7 +57,7 @@ const VOCAB_SIZE: usize = 256;
 /// An `AprTransformer`-only server: a tokenizer plus `apr_transformer`, and NO
 /// dense f32 `Model` and NO quantized model — exactly what
 /// `AppState::with_apr_transformer_and_vocab` builds on the CPU serve path.
-fn apr_transformer_state() -> AppState {
+pub(super) fn apr_transformer_state() -> AppState {
     use crate::apr_transformer::{AprTransformer, AprTransformerConfig, AprTransformerLayer};
 
     let num_layers = 2usize;
@@ -167,6 +167,10 @@ const GENERATION_ROUTES: &[(&str, &str)] = &[
     (
         "/api/chat",
         r#"{"model":"m","messages":[{"role":"user","content":"t1"}],"stream":false}"#,
+    ),
+    (
+        "/v1/messages",
+        r#"{"model":"m","max_tokens":1,"messages":[{"role":"user","content":"t1"}]}"#,
     ),
     (
         "/api/generate",

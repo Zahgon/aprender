@@ -175,6 +175,9 @@ fn openai_routes(caps: RouteCapabilities) -> Vec<Route> {
             post(openai_chat_completions_stream_handler),
         ),
         ("POST", "/v1/embeddings", post(openai_embeddings_handler)),
+        // #4000 R-1: Anthropic Messages API. Delegates to the OpenAI chat
+        // generation path, so one generation path serves all three protocols.
+        ("POST", "/v1/messages", post(anthropic_messages_handler)),
         // APR-specific API (spec §15.1)
         ("POST", "/v1/predict", post(apr_predict_handler)),
         ("POST", "/v1/explain", post(apr_explain_handler)),
