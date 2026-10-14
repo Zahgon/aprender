@@ -1,0 +1,115 @@
+# apr-code-eval-receipt-v1 — the RECEIPT node of the apr code eval ontology (APR-CODE-EVAL-001).
+#
+# A score without its provenance cannot be reproduced or compared. SWE-bench publishes the
+# harness version and the image per instance; HumanEval-style reports give n, k and the
+# sampling settings; Aider reports pass rate per try. Here each of those is a required
+# field, and the receipt refuses to exist without it.
+metadata:
+  version: "1.0.0"
+  created: "2026-10-14"
+  author: PAIML Engineering
+  kind: kernel
+  registry: true
+  description: |
+    Run receipt for the `apr code` eval (epic #5281, ticket #5286): one JSON document per
+    run in the shape of spec §7, built from the driver's per-attempt records, the run's
+    provenance and the metric engine (contracts/apr-code-eval-metric-v1.yaml).
+  references:
+    - "docs/specifications/apr-code-eval-v1.md §7 (receipt), §8 (per-attempt pass@1, determinism)"
+    - "SWE-bench (2024) — harness version and per-instance environment image recorded with each run"
+    - "HumanEval (2021) — pass@k reported with n samples and the sampling temperature"
+    - "Aider (2023-2025) — pass rate reported for the first and the second try"
+name: apr-code-eval-receipt
+version: "1.0.0"
+status: PROPOSED
+scope: "run receipt of the apr code eval harness (ticket #5286)"
+description: |
+  build(run, cfg, records, k, cutoff) refuses an empty provenance field or a task with no
+  image digest, refuses a run whose recorded seed, n or budget differ from the driver
+  config, and otherwise returns a Receipt with one row per attempt, every label counted,
+  and the metrics of attempt 1 and of the final attempt. comparable(a, b) holds only on
+  equal schema, suite, task set digest, harness sha and sampling.
+
+equations:
+  ACE-RCP-001:
+    description: "Every provenance field is present"
+    formula: "build(run) = Ok ⇒ ∀ f ∈ provenance(run). trim(f) ≠ ∅ ∧ ∀ t ∈ records. digest(t) ≠ ∅"
+  ACE-RCP-002:
+    description: "The recorded settings are the ones the driver ran with"
+    formula: "build = Ok ⇒ seed = cfg.seed ∧ n = cfg.n = len(samples(t)) ∧ max_tokens = cfg.max_tokens ∧ max_turns = cfg.max_turns"
+  ACE-RCP-003:
+    description: "One row per attempt, every label counted"
+    formula: "len(per_task) = Σ_t Σ_s len(attempts(t, s));  Σ_v counts(v) = len(per_task);  edit_format_ok ⟺ v ≠ format_error"
+  ACE-RCP-004:
+    description: "pass@1 is reported for attempt 1 and for the final attempt"
+    formula: "metrics.attempt_1 = compute(results(r, attempt_1));  metrics.attempt_2 = compute(results(r, attempt_2))"
+  ACE-RCP-005:
+    description: "Two seeded runs are byte-identical once the timing fields are cleared"
+    formula: "same_run(a, b) ⟺ bytes(strip(a)) = bytes(strip(b));  strip clears started_at, wall_s, wall_ms only"
+  ACE-RCP-006:
+    description: "Only like receipts compare"
+    formula: "comparable(a, b) ⟺ schema₁ = schema₂ ∧ suite₁ = suite₂ ∧ digest₁ = digest₂ ∧ harness₁ = harness₂ ∧ sampling₁ = sampling₂"
+
+proof_obligations:
+  - id: ACE-RCP-PO-001
+    type: invariant
+    property: "An empty or blank provenance field, or a task without an image digest, refuses the receipt by name (ACE-RCP-001)"
+    formal: "∃ f ∈ provenance. trim(f) = ∅ ⇒ build = Err(Missing(f))"
+  - id: ACE-RCP-PO-002
+    type: invariant
+    property: "A recorded seed, n, token budget or turn budget that differs from the driver config refuses the receipt (ACE-RCP-002)"
+    formal: "seed ≠ cfg.seed ∨ n ≠ cfg.n ∨ max_tokens ≠ cfg.max_tokens ∨ max_turns ≠ cfg.max_turns ⇒ build = Err(Mismatch)"
+  - id: ACE-RCP-PO-003
+    type: invariant
+    property: "Rows are in task, sample, attempt order with attempts numbered from 1; every label has a count and the counts sum to the rows (ACE-RCP-003)"
+    formal: "∀ v ∈ labels. v ∈ dom(counts) ∧ Σ_v counts(v) = len(per_task)"
+  - id: ACE-RCP-PO-004
+    type: invariant
+    property: "A retry that fixes a task raises attempt-2 pass@1 above attempt-1 pass@1; a metric refusal is a receipt error (ACE-RCP-004)"
+    formal: "∃ t. v₁(t) ≠ resolved ∧ v₂(t) = resolved ⇒ pass₁ < pass₂"
+  - id: ACE-RCP-PO-005
+    type: invariant
+    property: "Timing differences alone keep same_run true; a token count or provenance change makes it false (ACE-RCP-005)"
+    formal: "∀ x ∉ {started_at, wall_s, wall_ms}. Δx ≠ 0 ⇒ same_run = false"
+  - id: ACE-RCP-PO-006
+    type: invariant
+    property: "Receipts of different models compare; a change in any key refuses the comparison in both directions (ACE-RCP-006)"
+    formal: "comparable(a, b) = comparable(b, a) ∧ model₁ ≠ model₂ ⇒ comparable(a, b) = Ok"
+
+falsification_tests:
+  - id: FALSIFY-ACE-RCP-001
+    name: every_provenance_field_is_required
+    prediction: "Blanking each of ten provenance fields, or removing or blanking one task's image digest, returns ReceiptError::Missing naming that field."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_rcp_001"
+    expected_output: "test result: ok"
+    if_fails: "A receipt can be written that cannot be traced to a model, binary or image."
+  - id: FALSIFY-ACE-RCP-002
+    name: recorded_settings_are_the_driver_settings
+    prediction: "A skewed seed, n, max_tokens or max_turns, or records with fewer samples than n, return ReceiptError::Mismatch."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_rcp_002"
+    expected_output: "test result: ok"
+    if_fails: "The receipt states settings the run did not use."
+  - id: FALSIFY-ACE-RCP-003
+    name: one_row_per_attempt_and_counts_sum
+    prediction: "Three tasks give four rows (a 1, a 2, b 1, c 1); only the FORMAT_ERROR row has edit_format_ok false; every label is a key and the counts sum to four."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_rcp_003"
+    expected_output: "test result: ok"
+    if_fails: "Attempts are dropped or double counted, or a label disappears from the counts."
+  - id: FALSIFY-ACE-RCP-004
+    name: pass_at_1_per_attempt
+    prediction: "With one task fixed on retry, attempt-1 pass@1 is 0 and attempt-2 pass@1 is 0.5 with the Wilson interval around it; k > n is a Metric error."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_rcp_004"
+    expected_output: "test result: ok"
+    if_fails: "The retry is folded into pass@1, or a refused metric still yields a receipt."
+  - id: FALSIFY-ACE-RCP-005
+    name: seeded_receipts_match_apart_from_timing
+    prediction: "Two seeded runs with different start time and wall times are same_run; a one-token or model-sha change is not; the §7 keys sit at the top level and the JSON round-trips."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_rcp_005"
+    expected_output: "test result: ok"
+    if_fails: "The nightly determinism check passes on different runs or fails on identical ones."
+  - id: FALSIFY-ACE-RCP-006
+    name: only_like_receipts_compare
+    prediction: "A CPU and a CUDA receipt of the same suite compare; changing schema, suite, task set digest, harness sha or sampling refuses with that key, both ways."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_rcp_006"
+    expected_output: "test result: ok"
+    if_fails: "Scores from different task sets or sampling are compared as if equal."
