@@ -391,7 +391,11 @@ output:
     println!("{yaml}");
 
     // Parse and validate
-    let config: DistillationYamlConfig = serde_yaml::from_str(yaml).expect("Failed to parse YAML");
+    let config: DistillationYamlConfig = serde_saphyr::from_str_with_options(
+        yaml,
+        serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false },
+    )
+    .expect("Failed to parse YAML");
 
     if let Err(e) = config.validate() {
         println!("Validation error: {e}");

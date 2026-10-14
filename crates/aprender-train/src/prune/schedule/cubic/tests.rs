@@ -318,7 +318,8 @@ start_step: 0
 end_step: 100
 final_sparsity: 0.5
 ";
-    let schedule: PruningSchedule = serde_yaml::from_str(yaml).expect("operation should succeed");
+    let schedule: PruningSchedule =
+        crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
     match schedule {
         PruningSchedule::Cubic { start_step, end_step, final_sparsity } => {
             assert_eq!(start_step, 0);

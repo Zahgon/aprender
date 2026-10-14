@@ -1305,7 +1305,7 @@ impl TrainingPlan {
 
     /// Serialize to YAML.
     pub fn to_yaml(&self) -> String {
-        serde_yaml::to_string(self).unwrap_or_default()
+        serde_saphyr::to_string(self).unwrap_or_default()
     }
 
     /// Deserialize from a string (auto-detects JSON or YAML).
@@ -1316,7 +1316,7 @@ impl TrainingPlan {
             return Ok(plan);
         }
         // Fall back to YAML
-        serde_yaml::from_str::<TrainingPlan>(s).map_err(|e| {
+        crate::yaml_mode::yaml_from_str::<TrainingPlan>(s).map_err(|e| {
             crate::Error::ConfigError(format!("Failed to parse plan as JSON or YAML: {e}"))
         })
     }

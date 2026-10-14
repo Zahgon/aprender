@@ -120,7 +120,7 @@ pub fn training_config_json_schema() -> Value {
 /// Validate a YAML config string against the JSON schema using jsonschema crate
 #[allow(dead_code)]
 pub fn validate_yaml_against_schema(yaml_str: &str) -> Result<(), Vec<String>> {
-    let value: serde_json::Value = match serde_yaml::from_str(yaml_str) {
+    let value: serde_json::Value = match crate::yaml_mode::yaml_from_str(yaml_str) {
         Ok(v) => v,
         Err(e) => return Err(vec![format!("YAML parse error: {e}")]),
     };

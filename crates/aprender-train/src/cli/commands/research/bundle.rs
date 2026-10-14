@@ -12,8 +12,8 @@ pub fn run_research_bundle(args: BundleArgs, level: LogLevel) -> Result<(), Stri
     let yaml = std::fs::read_to_string(&args.artifact)
         .map_err(|e| format!("Failed to read artifact: {e}"))?;
 
-    let artifact: ResearchArtifact =
-        serde_yaml::from_str(&yaml).map_err(|e| format!("Failed to parse artifact: {e}"))?;
+    let artifact: ResearchArtifact = crate::yaml_mode::yaml_from_str(&yaml)
+        .map_err(|e| format!("Failed to parse artifact: {e}"))?;
 
     let mut crate_pkg = RoCrate::from_artifact(&artifact, &args.output);
 

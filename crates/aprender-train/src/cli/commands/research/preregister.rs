@@ -48,10 +48,10 @@ pub fn run_research_preregister(args: PreregisterArgs, level: LogLevel) -> Resul
             log(level, LogLevel::Verbose, &format!("  Git timestamp: {commit_hash}"));
         }
 
-        serde_yaml::to_string(&signed).map_err(|e| format!("Serialization error: {e}"))?
+        serde_saphyr::to_string(&signed).map_err(|e| format!("Serialization error: {e}"))?
     } else {
         // Output commitment without signature
-        serde_yaml::to_string(&commitment).map_err(|e| format!("Serialization error: {e}"))?
+        serde_saphyr::to_string(&commitment).map_err(|e| format!("Serialization error: {e}"))?
     };
 
     std::fs::write(&args.output, &output).map_err(|e| format!("Failed to write file: {e}"))?;

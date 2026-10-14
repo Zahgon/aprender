@@ -1235,7 +1235,7 @@ pub fn load_config<P: AsRef<Path>>(config_path: P) -> Result<TrainSpec> {
 
     if is_manifest_format(&yaml_content) {
         // New declarative manifest format
-        let manifest: yaml_mode::TrainingManifest = serde_yaml::from_str(&yaml_content)
+        let manifest: yaml_mode::TrainingManifest = yaml_mode::yaml_from_str(&yaml_content)
             .map_err(|e| Error::ConfigError(format!("Failed to parse manifest YAML: {e}")))?;
 
         yaml_mode::validate_manifest(&manifest)
@@ -1254,7 +1254,7 @@ pub fn load_config<P: AsRef<Path>>(config_path: P) -> Result<TrainSpec> {
         Ok(bridge_result.spec)
     } else {
         // Legacy TrainSpec format
-        let spec: TrainSpec = serde_yaml::from_str(&yaml_content)
+        let spec: TrainSpec = yaml_mode::yaml_from_str(&yaml_content)
             .map_err(|e| Error::ConfigError(format!("Failed to parse YAML config: {e}")))?;
 
         validate_config(&spec).map_err(|e| Error::ConfigError(format!("Invalid config: {e}")))?;

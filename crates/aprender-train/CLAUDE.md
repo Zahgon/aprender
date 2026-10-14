@@ -408,7 +408,7 @@ trueno = "0.x"  # SIMD tensor operations
 realizar = "0.x"  # GGUF I/O
 aprender = "0.x"  # Loss functions
 serde = { version = "1", features = ["derive"] }
-serde_yaml = "0.9"
+serde-saphyr = "1.3"
 serde_json = "1"
 
 [dev-dependencies]

@@ -156,7 +156,7 @@ impl ExperimentLock {
     ///
     /// Returns error if file cannot be written.
     pub fn save(&self, path: &Path) -> Result<(), std::io::Error> {
-        let yaml = serde_yaml::to_string(self).map_err(std::io::Error::other)?;
+        let yaml = serde_saphyr::to_string(self).map_err(std::io::Error::other)?;
         std::fs::write(path, yaml)
     }
 
@@ -167,7 +167,7 @@ impl ExperimentLock {
     /// Returns error if file cannot be read or parsed.
     pub fn load(path: &Path) -> Result<Self, std::io::Error> {
         let content = std::fs::read_to_string(path)?;
-        serde_yaml::from_str(&content)
+        crate::yaml_mode::yaml_from_str(&content)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
 
@@ -370,12 +370,12 @@ mod tests {
         let lock =
             ExperimentLock::new("test").with_reproducibility(ReproducibilityConfig::with_seed(100));
 
-        let yaml = serde_yaml::to_string(&lock).expect("operation should succeed");
+        let yaml = serde_saphyr::to_string(&lock).expect("operation should succeed");
         assert!(yaml.contains("experiment_id: test"));
         assert!(yaml.contains("seed: 100"));
 
         let restored: ExperimentLock =
-            serde_yaml::from_str(&yaml).expect("lock acquisition should succeed");
+            crate::yaml_mode::yaml_from_str(&yaml).expect("lock acquisition should succeed");
         assert_eq!(restored.experiment_id, "test");
         assert_eq!(restored.reproducibility.seed, 100);
     }
@@ -486,7 +486,7 @@ mod tests {
         let lock =
             ExperimentLock::new("yaml-test").with_reproducibility(ReproducibilityConfig::default());
 
-        let yaml = serde_yaml::to_string(&lock).expect("operation should succeed");
+        let yaml = serde_saphyr::to_string(&lock).expect("operation should succeed");
         assert!(yaml.contains("experiment_id"));
         assert!(yaml.contains("timestamp"));
         assert!(yaml.contains("reproducibility"));

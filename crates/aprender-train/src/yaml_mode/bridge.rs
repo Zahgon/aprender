@@ -922,7 +922,7 @@ output:
 "#;
 
         let manifest: TrainingManifest =
-            serde_yaml::from_str(yaml).expect("operation should succeed");
+            crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
         let result = manifest_to_spec(&manifest).expect("operation should succeed");
 
         assert_eq!(result.spec.model.mode, ModelMode::Transformer);
@@ -1332,7 +1332,8 @@ optimizer:
   name: adamw
   lr: 0.0003
 "#;
-        let manifest: TrainingManifest = serde_yaml::from_str(yaml).expect("YAML should parse");
+        let manifest: TrainingManifest =
+            crate::yaml_mode::yaml_from_str(yaml).expect("YAML should parse");
         let result = manifest_to_spec(&manifest).expect("bridge should succeed");
         assert_eq!(result.spec.model.mode, ModelMode::Transformer);
         let arch = result.spec.model.architecture.expect("overrides should be set");

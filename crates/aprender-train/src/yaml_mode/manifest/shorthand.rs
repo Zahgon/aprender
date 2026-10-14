@@ -157,7 +157,7 @@ mod tests {
         }
 
         let yaml = "vocab_size: 32768";
-        let config: Config = serde_yaml::from_str(yaml).expect("should parse");
+        let config: Config = crate::yaml_mode::yaml_from_str(yaml).expect("should parse");
         assert_eq!(config.vocab_size, Some(32768));
     }
 
@@ -174,7 +174,7 @@ mod tests {
         }
 
         let yaml = "vocab_size: \"32K\"";
-        let config: Config = serde_yaml::from_str(yaml).expect("should parse");
+        let config: Config = crate::yaml_mode::yaml_from_str(yaml).expect("should parse");
         assert_eq!(config.vocab_size, Some(32 * 1024));
     }
 
@@ -191,7 +191,7 @@ mod tests {
         }
 
         let yaml = "other: 123";
-        let config: Config = serde_yaml::from_str(yaml).expect("should parse");
+        let config: Config = crate::yaml_mode::yaml_from_str(yaml).expect("should parse");
         assert_eq!(config.vocab_size, None);
     }
 
@@ -208,7 +208,7 @@ mod tests {
         }
 
         let yaml = "count: \"1e6\"";
-        let config: Config = serde_yaml::from_str(yaml).expect("should parse");
+        let config: Config = crate::yaml_mode::yaml_from_str(yaml).expect("should parse");
         assert_eq!(config.count, Some(1_000_000));
     }
 }

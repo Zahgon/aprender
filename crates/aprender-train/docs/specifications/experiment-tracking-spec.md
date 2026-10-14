@@ -2632,7 +2632,7 @@ impl CitationMetadata {
 
     /// Generate Citation File Format (CFF) [83]
     pub fn to_cff(&self, artifact: &ResearchArtifact) -> String {
-        serde_yaml::to_string(&CffFile {
+        serde_saphyr::to_string(&CffFile {
             cff_version: "1.2.0".to_string(),
             message: "If you use this software, please cite it as below.".to_string(),
             title: self.title.clone(),

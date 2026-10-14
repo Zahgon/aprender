@@ -198,7 +198,7 @@ mod tests {
         // TEST_ID: SCHED-084
         let yaml = "type: one_shot\nstep: 500\n";
         let schedule: PruningSchedule =
-            serde_yaml::from_str(yaml).expect("operation should succeed");
+            crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
         match schedule {
             PruningSchedule::OneShot { step } => assert_eq!(step, 500),
             _ => panic!("Should deserialize to OneShot"),

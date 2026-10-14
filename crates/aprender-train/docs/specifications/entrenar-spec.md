@@ -389,7 +389,7 @@ pub fn infer_features(data: &Path) -> Vec<Feature> {
 
 // Single entry point
 pub fn train_from_yaml(path: &Path) -> Result<Model> {
-    let spec: TrainSpec = serde_yaml::from_reader(File::open(path)?)?;
+    let spec: TrainSpec = serde_saphyr::from_reader(File::open(path)?)?;
     
     let model = load_model(&spec.model.path)?;
     if let Some(lora) = spec.lora {
@@ -556,7 +556,7 @@ aprender = { path = "../aprender" }
 
 # Declarative config
 serde = { version = "1", features = ["derive"] }
-serde_yaml = "0.9"
+serde-saphyr = "1.3"
 serde_json = "1"
 
 [dev-dependencies]

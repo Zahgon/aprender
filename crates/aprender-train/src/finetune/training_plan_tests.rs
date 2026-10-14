@@ -241,7 +241,7 @@ fn test_plan_serialization_roundtrip() {
 
     // YAML roundtrip
     let yaml = p.to_yaml();
-    let deserialized_yaml: TrainingPlan = serde_yaml::from_str(&yaml).expect("valid");
+    let deserialized_yaml: TrainingPlan = crate::yaml_mode::yaml_from_str(&yaml).expect("valid");
     assert_eq!(deserialized_yaml.data.train_samples, p.data.train_samples);
 }
 
@@ -2348,7 +2348,7 @@ fn test_training_plan_from_str_yaml() {
         manual_target_modules: None,
     };
     let p = plan(&config).unwrap();
-    let yaml = serde_yaml::to_string(&p).unwrap();
+    let yaml = serde_saphyr::to_string(&p).unwrap();
     let parsed = TrainingPlan::from_str(&yaml).unwrap();
     assert_eq!(parsed.task, "classify");
     assert_eq!(parsed.model.size, "0.5B");

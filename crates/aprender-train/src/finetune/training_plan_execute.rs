@@ -21,9 +21,9 @@ pub fn execute_plan(
     use super::classify_tuner::{
         ClassifyTuner, SchedulerKind, TrialSummary, TuneConfig, TuneStrategy,
     };
+    use crate::optim::ParameterValue;
     use crate::transformer::TransformerConfig;
     use std::collections::HashMap;
-    use crate::optim::ParameterValue;
 
     // ── Verify pre-conditions ──────────────────────────────────────────
     if plan.verdict == PlanVerdict::Blocked {
@@ -68,20 +68,26 @@ pub fn execute_plan(
     // exceed RTX 4090 VRAM (24 GB) after scratch + kernel cache overhead.
     let auto_nf4 = model_config.hidden_size >= 2048;
     if auto_nf4 {
-        eprintln!("[plan] Auto-enabling NF4 quantization (hidden_size={} >= 2048)", model_config.hidden_size);
+        eprintln!(
+            "[plan] Auto-enabling NF4 quantization (hidden_size={} >= 2048)",
+            model_config.hidden_size
+        );
     }
 
     // ── Manual strategy: single trial ──────────────────────────────────
     if plan.hyperparameters.strategy == "manual" {
-        return execute_manual_trial(plan, apply, &model_config, auto_nf4, &mut tracker, total_start);
+        return execute_manual_trial(
+            plan,
+            apply,
+            &model_config,
+            auto_nf4,
+            &mut tracker,
+            total_start,
+        );
     }
 
     // ── HPO strategy: multiple trials ──────────────────────────────────
-    let strategy: TuneStrategy = plan
-        .hyperparameters
-        .strategy
-        .parse()
-        .unwrap_or(TuneStrategy::Tpe);
+    let strategy: TuneStrategy = plan.hyperparameters.strategy.parse().unwrap_or(TuneStrategy::Tpe);
 
     let num_classes = plan.data.class_counts.len();
 
@@ -120,17 +126,10 @@ pub fn execute_plan(
             super::classify_tuner::extract_trial_params(&suggestion.config);
 
         // ── Build ClassifyConfig from trial params ─────────────────────
-        let class_weights = resolve_class_weights(
-            &weights_strategy,
-            &plan.data.class_counts,
-            num_classes,
-        );
+        let class_weights =
+            resolve_class_weights(&weights_strategy, &plan.data.class_counts, num_classes);
 
-        let epochs = if plan.hyperparameters.scout {
-            1
-        } else {
-            plan.hyperparameters.max_epochs
-        };
+        let epochs = if plan.hyperparameters.scout { 1 } else { plan.hyperparameters.max_epochs };
 
         let classify_config = ClassifyConfig {
             num_classes,
@@ -214,10 +213,8 @@ fn record_hpo_trial_outcome(
     match trial_result {
         Ok(result) => {
             let val_loss = result.best_val_loss as f64;
-            let val_accuracy = result
-                .epoch_metrics
-                .get(result.best_epoch)
-                .map_or(0.0, |m| m.val_accuracy as f64);
+            let val_accuracy =
+                result.epoch_metrics.get(result.best_epoch).map_or(0.0, |m| m.val_accuracy as f64);
 
             let was_pruned = scheduler.should_stop(trial_idx, result.best_epoch, val_loss);
 
@@ -234,7 +231,10 @@ fn record_hpo_trial_outcome(
                 val_loss,
                 val_accuracy,
                 train_loss: result.epoch_metrics.last().map_or(0.0, |m| m.train_loss as f64),
-                train_accuracy: result.epoch_metrics.last().map_or(0.0, |m| m.train_accuracy as f64),
+                train_accuracy: result
+                    .epoch_metrics
+                    .last()
+                    .map_or(0.0, |m| m.train_accuracy as f64),
                 epochs_run: result.epoch_metrics.len(),
                 time_ms: trial_time_ms,
                 config: suggestion.config.clone(),
@@ -243,7 +243,10 @@ fn record_hpo_trial_outcome(
 
             eprintln!(
                 "    => val_loss={:.4} val_acc={:.1}% epochs={} [{}]",
-                val_loss, val_accuracy * 100.0, result.epoch_metrics.len(), status,
+                val_loss,
+                val_accuracy * 100.0,
+                result.epoch_metrics.len(),
+                status,
             );
 
             tracker.log_hpo_trial(&suggestion.config, &result, was_pruned);
@@ -348,14 +351,9 @@ fn execute_manual_trial(
     )?;
 
     let mut config_map = HashMap::new();
-    config_map.insert(
-        "learning_rate".to_string(),
-        ParameterValue::Float(manual.learning_rate as f64),
-    );
-    config_map.insert(
-        "lora_rank".to_string(),
-        ParameterValue::Int(manual.lora_rank as i64),
-    );
+    config_map
+        .insert("learning_rate".to_string(), ParameterValue::Float(manual.learning_rate as f64));
+    config_map.insert("lora_rank".to_string(), ParameterValue::Int(manual.lora_rank as i64));
     config_map.insert(
         "batch_size".to_string(),
         ParameterValue::Categorical(manual.batch_size.to_string()),
@@ -368,14 +366,8 @@ fn execute_manual_trial(
             .epoch_metrics
             .get(result.best_epoch)
             .map_or(0.0, |m| m.val_accuracy as f64),
-        train_loss: result
-            .epoch_metrics
-            .last()
-            .map_or(0.0, |m| m.train_loss as f64),
-        train_accuracy: result
-            .epoch_metrics
-            .last()
-            .map_or(0.0, |m| m.train_accuracy as f64),
+        train_loss: result.epoch_metrics.last().map_or(0.0, |m| m.train_loss as f64),
+        train_accuracy: result.epoch_metrics.last().map_or(0.0, |m| m.train_accuracy as f64),
         epochs_run: result.epoch_metrics.len(),
         time_ms: trial_start.elapsed().as_millis() as u64,
         config: config_map,
@@ -419,8 +411,8 @@ fn run_single_trial(
         model_config,
         classify_config,
         epochs,
-        0.1,   // default warmup fraction
-        0.01,  // default lr_min_ratio
+        0.1,  // default warmup fraction
+        0.01, // default lr_min_ratio
         model_name,
     )
 }
@@ -449,8 +441,7 @@ fn run_single_trial_with_warmup(
     })?;
 
     // Load pipeline with pretrained weights
-    let pipeline =
-        ClassifyPipeline::from_pretrained(model_path, model_config, classify_config)?;
+    let pipeline = ClassifyPipeline::from_pretrained(model_path, model_config, classify_config)?;
 
     // Load corpus
     let samples = pipeline.load_corpus(data_path)?;
@@ -481,12 +472,9 @@ fn run_single_trial_with_warmup(
             .map(|d| d.as_secs())
             .unwrap_or(0)
     );
-    let writer = crate::monitor::tui::TrainingStateWriter::new(
-        checkpoint_dir,
-        &experiment_id,
-        model_name,
-    )
-    .with_console_progress(true);
+    let writer =
+        crate::monitor::tui::TrainingStateWriter::new(checkpoint_dir, &experiment_id, model_name)
+            .with_console_progress(true);
     trainer.set_monitor_writer(writer);
 
     // Run training
@@ -509,11 +497,7 @@ fn resolve_class_weights(
                 class_counts: class_counts.to_vec(),
                 avg_input_len: 0,
             };
-            Some(compute_class_weights(
-                &stats,
-                ClassWeightStrategy::InverseFreq,
-                num_classes,
-            ))
+            Some(compute_class_weights(&stats, ClassWeightStrategy::InverseFreq, num_classes))
         }
         "sqrt_inverse" => {
             let stats = SafetyCorpusStats {
@@ -521,11 +505,7 @@ fn resolve_class_weights(
                 class_counts: class_counts.to_vec(),
                 avg_input_len: 0,
             };
-            Some(compute_class_weights(
-                &stats,
-                ClassWeightStrategy::SqrtInverse,
-                num_classes,
-            ))
+            Some(compute_class_weights(&stats, ClassWeightStrategy::SqrtInverse, num_classes))
         }
         _ => None,
     }
@@ -543,7 +523,7 @@ impl TrainingPlan {
 
     /// Serialize to YAML.
     pub fn to_yaml(&self) -> String {
-        serde_yaml::to_string(self).unwrap_or_default()
+        serde_saphyr::to_string(self).unwrap_or_default()
     }
 
     /// Deserialize from a string (auto-detects JSON or YAML).
@@ -553,7 +533,7 @@ impl TrainingPlan {
             return Ok(plan);
         }
         // Fall back to YAML
-        serde_yaml::from_str::<TrainingPlan>(s).map_err(|e| {
+        crate::yaml_mode::yaml_from_str::<TrainingPlan>(s).map_err(|e| {
             crate::Error::ConfigError(format!("Failed to parse plan as JSON or YAML: {e}"))
         })
     }
@@ -610,7 +590,8 @@ impl ExperimentTracker {
             Err(_) => return,
         };
         let _ = store.start_run(&run_id);
-        let _ = store.log_param(&run_id, "learning_rate", SPV::Float(f64::from(manual.learning_rate)));
+        let _ =
+            store.log_param(&run_id, "learning_rate", SPV::Float(f64::from(manual.learning_rate)));
         let _ = store.log_param(&run_id, "lora_rank", SPV::Int(manual.lora_rank as i64));
         let _ = store.log_param(&run_id, "batch_size", SPV::Int(manual.batch_size as i64));
         Self::log_epoch_metrics(store, &run_id, &result.epoch_metrics);
@@ -623,8 +604,8 @@ impl ExperimentTracker {
         result: &super::classify_trainer::TrainResult,
         was_pruned: bool,
     ) {
-        use crate::storage::{ExperimentStorage, ParameterValue as SPV};
         use crate::optim::ParameterValue as OPV;
+        use crate::storage::{ExperimentStorage, ParameterValue as SPV};
         let (store, eid) = match (self.store.as_mut(), self.exp_id.as_ref()) {
             (Some(s), Some(e)) => (s, e),
             _ => return,
@@ -672,7 +653,8 @@ impl ExperimentTracker {
         for (i, epoch) in epochs.iter().enumerate() {
             let _ = store.log_metric(run_id, "train_loss", i as u64, f64::from(epoch.train_loss));
             let _ = store.log_metric(run_id, "val_loss", i as u64, f64::from(epoch.val_loss));
-            let _ = store.log_metric(run_id, "val_accuracy", i as u64, f64::from(epoch.val_accuracy));
+            let _ =
+                store.log_metric(run_id, "val_accuracy", i as u64, f64::from(epoch.val_accuracy));
         }
     }
 }
@@ -732,10 +714,7 @@ mod tests {
         let data_path = dir.path().join("train.jsonl");
         let mut lines = Vec::new();
         for i in 0..50 {
-            lines.push(format!(
-                r#"{{"input": "echo test {i}", "label": {}}}"#,
-                i % 5
-            ));
+            lines.push(format!(r#"{{"input": "echo test {i}", "label": {}}}"#, i % 5));
         }
         std::fs::write(&data_path, lines.join("\n")).expect("valid");
 
@@ -768,10 +747,7 @@ mod tests {
         let data_path = dir.path().join("train.jsonl");
         let mut lines = Vec::new();
         for i in 0..100 {
-            lines.push(format!(
-                r#"{{"input": "echo test {i}", "label": {}}}"#,
-                i % 5
-            ));
+            lines.push(format!(r#"{{"input": "echo test {i}", "label": {}}}"#, i % 5));
         }
         std::fs::write(&data_path, lines.join("\n")).expect("valid");
 
@@ -807,15 +783,11 @@ mod tests {
         let mut lines = Vec::new();
         // 80 class 0, 10 each for classes 1-4 = 8:1 imbalance
         for i in 0..80 {
-            lines.push(format!(
-                r#"{{"input": "safe command {i}", "label": 0}}"#
-            ));
+            lines.push(format!(r#"{{"input": "safe command {i}", "label": 0}}"#));
         }
         for c in 1..5 {
             for i in 0..10 {
-                lines.push(format!(
-                    r#"{{"input": "class {c} cmd {i}", "label": {c}}}"#
-                ));
+                lines.push(format!(r#"{{"input": "class {c} cmd {i}", "label": {c}}}"#));
             }
         }
         std::fs::write(&data_path, lines.join("\n")).expect("valid");
@@ -849,10 +821,7 @@ mod tests {
         let data_path = dir.path().join("train.jsonl");
         let mut lines = Vec::new();
         for i in 0..50 {
-            lines.push(format!(
-                r#"{{"input": "echo test {i}", "label": {}}}"#,
-                i % 5
-            ));
+            lines.push(format!(r#"{{"input": "echo test {i}", "label": {}}}"#, i % 5));
         }
         // Add 5 exact duplicates
         for _ in 0..5 {
@@ -888,10 +857,7 @@ mod tests {
         let data_path = dir.path().join("train.jsonl");
         let mut lines = Vec::new();
         for i in 0..20 {
-            lines.push(format!(
-                r#"{{"input": "echo {i}", "label": {}}}"#,
-                i % 5
-            ));
+            lines.push(format!(r#"{{"input": "echo {i}", "label": {}}}"#, i % 5));
         }
         std::fs::write(&data_path, lines.join("\n")).expect("valid");
 
@@ -923,7 +889,8 @@ mod tests {
 
         // YAML roundtrip
         let yaml = p.to_yaml();
-        let deserialized_yaml: TrainingPlan = serde_yaml::from_str(&yaml).expect("valid");
+        let deserialized_yaml: TrainingPlan =
+            crate::yaml_mode::yaml_from_str(&yaml).expect("valid");
         assert_eq!(deserialized_yaml.data.train_samples, p.data.train_samples);
     }
 
@@ -933,10 +900,7 @@ mod tests {
         let data_path = dir.path().join("train.jsonl");
         let mut lines = Vec::new();
         for i in 0..100 {
-            lines.push(format!(
-                r#"{{"input": "echo test {i}", "label": {}}}"#,
-                i % 5
-            ));
+            lines.push(format!(r#"{{"input": "echo test {i}", "label": {}}}"#, i % 5));
         }
         std::fs::write(&data_path, lines.join("\n")).expect("valid");
 
@@ -969,10 +933,7 @@ mod tests {
         let data_path = dir.path().join("train.jsonl");
         let mut lines = Vec::new();
         for i in 0..100 {
-            lines.push(format!(
-                r#"{{"input": "echo test {i}", "label": {}}}"#,
-                i % 5
-            ));
+            lines.push(format!(r#"{{"input": "echo test {i}", "label": {}}}"#, i % 5));
         }
         std::fs::write(&data_path, lines.join("\n")).expect("valid");
 
@@ -1004,10 +965,7 @@ mod tests {
         let data_path = dir.path().join("train.jsonl");
         let mut lines = Vec::new();
         for i in 0..20 {
-            lines.push(format!(
-                r#"{{"input": "echo {i}", "label": {}}}"#,
-                i % 5
-            ));
+            lines.push(format!(r#"{{"input": "echo {i}", "label": {}}}"#, i % 5));
         }
         std::fs::write(&data_path, lines.join("\n")).expect("valid");
 
@@ -1117,7 +1075,10 @@ mod tests {
         let w = weights.expect("valid");
         assert_eq!(w.len(), 3);
         // Largest class should have smallest weight
-        assert!(w[0] > w[2], "class 0 (100 samples) should have higher weight than class 2 (300 samples)");
+        assert!(
+            w[0] > w[2],
+            "class 0 (100 samples) should have higher weight than class 2 (300 samples)"
+        );
     }
 
     #[test]
@@ -1168,11 +1129,7 @@ mod tests {
                 max_epochs: 1,
                 search_space_params: 0,
                 sample_configs: Vec::new(),
-                manual: Some(ManualConfig {
-                    learning_rate: 1e-4,
-                    lora_rank: 16,
-                    batch_size: 32,
-                }),
+                manual: Some(ManualConfig { learning_rate: 1e-4, lora_rank: 16, batch_size: 32 }),
                 recommendation: None,
             },
             resources: ResourceEstimate {

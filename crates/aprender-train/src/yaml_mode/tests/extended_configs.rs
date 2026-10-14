@@ -18,7 +18,8 @@ citl:
   top_k: 5
   workspace: true
 "#;
-    let manifest: TrainingManifest = serde_yaml::from_str(yaml).expect("operation should succeed");
+    let manifest: TrainingManifest =
+        crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
     let citl = manifest.citl.expect("operation should succeed");
     assert_eq!(citl.mode, "error_suggest");
     assert_eq!(citl.error_code, Some("E0308".to_string()));
@@ -38,7 +39,8 @@ rag:
   similarity_threshold: 0.85
   max_results: 10
 "#;
-    let manifest: TrainingManifest = serde_yaml::from_str(yaml).expect("operation should succeed");
+    let manifest: TrainingManifest =
+        crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
     let rag = manifest.rag.expect("operation should succeed");
     assert_eq!(rag.store, "vectordb://localhost:6333");
     assert_eq!(rag.similarity_threshold, Some(0.85));
@@ -56,7 +58,8 @@ graph:
   output: "./graphs/model.dot"
   format: "dot"
 "#;
-    let manifest: TrainingManifest = serde_yaml::from_str(yaml).expect("operation should succeed");
+    let manifest: TrainingManifest =
+        crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
     let graph = manifest.graph.expect("operation should succeed");
     assert_eq!(graph.output, "./graphs/model.dot");
     assert_eq!(graph.format, Some("dot".to_string()));
@@ -78,7 +81,8 @@ distillation:
   alpha: 0.5
   loss: "kl_div"
 "#;
-    let manifest: TrainingManifest = serde_yaml::from_str(yaml).expect("operation should succeed");
+    let manifest: TrainingManifest =
+        crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
     let distill = manifest.distillation.expect("operation should succeed");
     assert_eq!(distill.teacher.source, "hf://teacher-model");
     assert_eq!(distill.student.source, "hf://student-model");
@@ -101,7 +105,8 @@ inspect:
     - column_1
     - column_2
 "#;
-    let manifest: TrainingManifest = serde_yaml::from_str(yaml).expect("operation should succeed");
+    let manifest: TrainingManifest =
+        crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
     let inspect = manifest.inspect.expect("operation should succeed");
     assert_eq!(inspect.mode, "detect");
     assert_eq!(inspect.z_threshold, Some(3.0));
@@ -122,7 +127,8 @@ privacy:
   max_grad_norm: 1.0
   noise_multiplier: 1.1
 "#;
-    let manifest: TrainingManifest = serde_yaml::from_str(yaml).expect("operation should succeed");
+    let manifest: TrainingManifest =
+        crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
     let privacy = manifest.privacy.expect("operation should succeed");
     assert!(privacy.differential);
     assert_eq!(privacy.epsilon, 1.0);
@@ -146,7 +152,8 @@ audit:
     - demographic_parity
     - equalized_odds
 "#;
-    let manifest: TrainingManifest = serde_yaml::from_str(yaml).expect("operation should succeed");
+    let manifest: TrainingManifest =
+        crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
     let audit = manifest.audit.expect("operation should succeed");
     assert_eq!(audit.audit_type, "fairness");
     assert_eq!(audit.protected_attr, Some("gender".to_string()));
@@ -169,7 +176,8 @@ session:
   auto_save: true
   state_dir: "./checkpoints/session-001"
 "#;
-    let manifest: TrainingManifest = serde_yaml::from_str(yaml).expect("operation should succeed");
+    let manifest: TrainingManifest =
+        crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
     let session = manifest.session.expect("operation should succeed");
     assert_eq!(session.id, "session-001");
     assert_eq!(session.auto_save, Some(true));
@@ -188,7 +196,8 @@ stress:
   duration: "4h"
   memory_limit: 0.9
 "#;
-    let manifest: TrainingManifest = serde_yaml::from_str(yaml).expect("operation should succeed");
+    let manifest: TrainingManifest =
+        crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
     let stress = manifest.stress.expect("operation should succeed");
     assert_eq!(stress.parallel_jobs, 8);
     assert_eq!(stress.duration, Some("4h".to_string()));
@@ -207,7 +216,8 @@ benchmark:
   warmup: 10
   iterations: 100
 "#;
-    let manifest: TrainingManifest = serde_yaml::from_str(yaml).expect("operation should succeed");
+    let manifest: TrainingManifest =
+        crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
     let benchmark = manifest.benchmark.expect("operation should succeed");
     assert_eq!(benchmark.mode, "latency");
     assert_eq!(benchmark.warmup, Some(10));
@@ -225,7 +235,8 @@ debug:
   memory_profile: true
   log_interval: 100
 "#;
-    let manifest: TrainingManifest = serde_yaml::from_str(yaml).expect("operation should succeed");
+    let manifest: TrainingManifest =
+        crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
     let debug = manifest.debug.expect("operation should succeed");
     assert_eq!(debug.memory_profile, Some(true));
     assert_eq!(debug.log_interval, Some(100));
@@ -243,7 +254,8 @@ signing:
   algorithm: "ed25519"
   key: "${SIGNING_KEY}"
 "#;
-    let manifest: TrainingManifest = serde_yaml::from_str(yaml).expect("operation should succeed");
+    let manifest: TrainingManifest =
+        crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
     let signing = manifest.signing.expect("operation should succeed");
     assert!(signing.enabled);
     assert_eq!(signing.algorithm, Some("ed25519".to_string()));
@@ -263,7 +275,8 @@ verification:
   eng_lead_sign_off: "required"
   safety_officer_sign_off: "required"
 "#;
-    let manifest: TrainingManifest = serde_yaml::from_str(yaml).expect("operation should succeed");
+    let manifest: TrainingManifest =
+        crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
     let verification = manifest.verification.expect("operation should succeed");
     assert_eq!(verification.all_25_checks, Some(true));
     assert_eq!(verification.qa_lead_sign_off, Some("required".to_string()));
@@ -280,7 +293,8 @@ strict_validation: true
 require_peer_review: true
 lockfile: "./train.lock"
 "#;
-    let manifest: TrainingManifest = serde_yaml::from_str(yaml).expect("operation should succeed");
+    let manifest: TrainingManifest =
+        crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
     assert_eq!(manifest.strict_validation, Some(true));
     assert_eq!(manifest.require_peer_review, Some(true));
     assert_eq!(manifest.lockfile, Some("./train.lock".to_string()));

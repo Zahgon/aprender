@@ -80,7 +80,7 @@ pub fn run_research_verify(args: VerifyArgs, level: LogLevel) -> Result<(), Stri
     let content =
         std::fs::read_to_string(&args.file).map_err(|e| format!("Failed to read file: {e}"))?;
 
-    if let Ok(signed) = serde_yaml::from_str::<SignedPreRegistration>(&content) {
+    if let Ok(signed) = crate::yaml_mode::yaml_from_str::<SignedPreRegistration>(&content) {
         return verify_signed_content(&signed, args.verify_git, level);
     }
 
@@ -90,7 +90,7 @@ pub fn run_research_verify(args: VerifyArgs, level: LogLevel) -> Result<(), Stri
         let original_content = std::fs::read_to_string(original_path)
             .map_err(|e| format!("Failed to read original: {e}"))?;
 
-        let prereg: PreRegistration = serde_yaml::from_str(&original_content)
+        let prereg: PreRegistration = crate::yaml_mode::yaml_from_str(&original_content)
             .map_err(|e| format!("Failed to parse original: {e}"))?;
 
         compute_commitment(&prereg, level);

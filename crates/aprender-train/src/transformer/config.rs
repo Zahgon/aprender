@@ -838,9 +838,9 @@ mod tests {
     #[test]
     fn test_config_yaml_serialization() {
         let config = TransformerConfig::tiny();
-        let yaml = serde_yaml::to_string(&config).expect("config should be valid");
+        let yaml = serde_saphyr::to_string(&config).expect("config should be valid");
         let restored: TransformerConfig =
-            serde_yaml::from_str(&yaml).expect("config should be valid");
+            crate::yaml_mode::yaml_from_str(&yaml).expect("config should be valid");
         assert_eq!(restored.hidden_size, config.hidden_size);
         assert_eq!(restored.num_hidden_layers, config.num_hidden_layers);
     }

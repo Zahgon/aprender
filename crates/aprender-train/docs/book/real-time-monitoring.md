@@ -232,7 +232,7 @@ Load configuration:
 ```rust
 use entrenar::train::MonitorConfig;
 
-let config: MonitorConfig = serde_yaml::from_str(yaml)?;
+let config: MonitorConfig = serde_saphyr::from_str(yaml)?;
 let callback = config.to_callback();
 ```
 
@@ -333,7 +333,7 @@ use entrenar::train::{
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load config from YAML
-    let config: MonitorConfig = serde_yaml::from_str(r#"
+    let config: MonitorConfig = serde_saphyr::from_str(r#"
         enabled: true
         layout: Full
         mode: Unicode
