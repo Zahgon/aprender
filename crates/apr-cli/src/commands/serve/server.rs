@@ -409,6 +409,77 @@ mod qwen35_serve_route_tests {
     }
 }
 
+/// #3720: `state` answering with the served model's identity: the sha256 of the file
+/// `apr serve` was given (what `sha256sum` prints) and this apr build. realizar's router
+/// then sends `x-apr-model-digest` on every response and the identity in completion
+/// bodies. Every `apr serve` path onto that router passes through here.
+#[cfg(feature = "inference")]
+fn identified(state: realizar::api::AppState, config: &ServerConfig) -> realizar::api::AppState {
+    state.with_model_identity(served_model_identity(config.model_path.as_deref()))
+}
+
+/// #3720: the identity of the served file, hashed once at startup. `None` (no header,
+/// no body fields) for a path that is not one readable file, e.g. a sharded index.
+#[cfg(feature = "inference")]
+fn served_model_identity(model_path: Option<&Path>) -> Option<realizar::api::ModelIdentity> {
+    let path = model_path.filter(|p| p.is_file())?;
+    let start = Instant::now();
+    let (_, digest) = crate::commands::manifest::sha256_of_file(path).ok()?;
+    println!(
+        "{} {digest} ({:.1}s)",
+        "Model sha256:".green(),
+        start.elapsed().as_secs_f64()
+    );
+    Some(realizar::api::ModelIdentity {
+        digest,
+        apr_version: env!("CARGO_PKG_VERSION").to_string(),
+        apr_git_sha: env!("APR_GIT_SHA").to_string(),
+    })
+}
+
+/// #3720: `apr serve` answers with the sha256 `sha256sum` prints for the file it was
+/// given, and this build; a path that is not one file claims nothing.
+#[cfg(all(test, feature = "inference"))]
+mod served_identity_3720_tests {
+    use super::*;
+
+    #[test]
+    fn the_served_identity_is_sha256sum_of_the_file_and_this_build() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("m.gguf");
+        std::fs::write(&file, b"abc").expect("write");
+        let identity = served_model_identity(Some(&file)).expect("a file has an identity");
+        assert_eq!(
+            identity.digest,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(identity.apr_version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(identity.apr_git_sha, env!("APR_GIT_SHA"));
+
+        assert_eq!(served_model_identity(Some(dir.path())), None, "a directory");
+        assert_eq!(served_model_identity(Some(&dir.path().join("absent"))), None);
+        assert_eq!(served_model_identity(None), None);
+    }
+
+    #[test]
+    fn identified_hands_the_router_the_served_identity() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("m.gguf");
+        std::fs::write(&file, b"abc").expect("write");
+        let config = ServerConfig {
+            model_path: Some(file.clone()),
+            ..ServerConfig::default()
+        };
+        let state = identified(realizar::api::AppState::with_cache(1), &config);
+        assert_eq!(
+            state.model_identity(),
+            served_model_identity(Some(&file)).as_ref()
+        );
+        let bare = identified(realizar::api::AppState::with_cache(1), &ServerConfig::default());
+        assert!(bare.model_identity().is_none());
+    }
+}
+
 /// Serve realizar's full router over `state` until Ctrl+C.
 ///
 /// The half of [`run_cpu_server`] that does not depend on which model the
@@ -427,7 +498,7 @@ fn serve_router(state: realizar::api::AppState, config: &ServerConfig) -> Result
 
     // Create realizar's full inference router (Ollama-parity endpoints).
     // --no-cors / --no-metrics must reach the router, not stop at the banner.
-    let app = create_router_with_config(state, config.router_config());
+    let app = create_router_with_config(identified(state, config), config.router_config());
 
     // Create tokio runtime and run server
     let runtime = tokio::runtime::Runtime::new()
@@ -520,6 +591,7 @@ fn start_gguf_server_gpu_batched(
         .map_err(|e| CliError::InferenceFailed(format!("Failed to create app state: {e}")))?
         .with_mapped_gguf_model(mapped_model)
         .with_verbose(config.verbose); // GH-152: Pass verbose flag
+    let state = identified(state, config);
 
     // Get Arc'd model for batch processor
     let cached_model_arc = state
