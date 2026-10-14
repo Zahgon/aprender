@@ -78,7 +78,7 @@ pub fn is_contract_yaml(path: &Path) -> bool {
 /// Returns [`ContractError::Yaml`] if the YAML is malformed or does not match
 /// the contract schema.
 pub fn parse_contract_str(yaml: &str) -> Result<Contract, ContractError> {
-    let mut contract: Contract = serde_yaml::from_str(yaml)?;
+    let mut contract: Contract = crate::yaml::from_str_lenient(yaml)?;
     contract.unknown_top_level_keys = unknown_top_level_keys(yaml);
     contract.kind_declared = kind_is_declared(yaml);
     contract.strict_yaml_error = strict_yaml_error(yaml);
@@ -104,17 +104,17 @@ fn kaizen_record(yaml: &str, kind: ContractKind) -> Result<Option<KaizenRecord>,
     if kind != ContractKind::Kaizen {
         return Ok(None);
     }
-    Ok(Some(serde_yaml::from_str::<KaizenRecord>(yaml)?))
+    Ok(Some(crate::yaml::from_str::<KaizenRecord>(yaml)?))
 }
 
 /// Top-level mapping keys of `yaml` that are not fields of [`Contract`].
 ///
 /// Deliberately deserializes into `BTreeMap<String, IgnoredAny>` rather than
-/// `serde_yaml::Value`: `IgnoredAny` drains each value without building it, so
+/// `serde_json::Value`: `IgnoredAny` drains each value without building it, so
 /// this pass reads ONLY the top-level key names and cannot be derailed by
 /// anything nested. That matters — `contracts/apr-cli-commands-v1.yaml` defines
 /// `subcommands:` twice inside `commands:`, which makes a strict
-/// `serde_yaml::Value` parse fail; capturing keys through `Value` silently
+/// `serde_json::Value` parse fail; capturing keys through `Value` silently
 /// returned "no unknown keys" for that file and its top-level
 /// `kind: CLICommandContract` went unreported. A `BTreeMap` also just
 /// overwrites a duplicate top-level key instead of erroring.
@@ -125,7 +125,7 @@ fn unknown_top_level_keys(yaml: &str) -> Vec<String> {
     use serde::de::IgnoredAny;
     use std::collections::BTreeMap;
 
-    let Ok(map) = serde_yaml::from_str::<BTreeMap<String, IgnoredAny>>(yaml) else {
+    let Ok(map) = crate::yaml::from_str_lenient::<BTreeMap<String, IgnoredAny>>(yaml) else {
         return Vec::new();
     };
     map.into_keys()
@@ -142,7 +142,7 @@ fn unknown_top_level_keys(yaml: &str) -> Vec<String> {
 /// Only `metadata`'s KEYS are built; every other top-level value is drained
 /// into `IgnoredAny` by the derived deserializer. This is not a style choice —
 /// the reasons `unknown_top_level_keys` gives above apply here with teeth.
-/// Deserializing the whole document into a `BTreeMap<String, serde_yaml::Value>`
+/// Deserializing the whole document into a `BTreeMap<String, serde_json::Value>`
 /// would FAIL on `contracts/apr-cli-commands-v1.yaml`, which defines
 /// `subcommands:` twice inside `commands:`, and the `false` returned for that
 /// reason would be this function silently reporting "no kind declared" about a
@@ -162,7 +162,8 @@ fn kind_is_declared(yaml: &str) -> bool {
         metadata: BTreeMap<String, IgnoredAny>,
     }
 
-    serde_yaml::from_str::<KindProbe>(yaml).is_ok_and(|probe| probe.metadata.contains_key("kind"))
+    crate::yaml::from_str_lenient::<KindProbe>(yaml)
+        .is_ok_and(|probe| probe.metadata.contains_key("kind"))
 }
 
 /// The error a STRICT reader gets on YAML the contract schema accepted.
@@ -171,12 +172,12 @@ fn kind_is_declared(yaml: &str) -> bool {
 /// the rest, so a document can be well-formed to it and malformed to anyone
 /// else. The one shape this catches today is a duplicate mapping key: YAML
 /// requires keys to be unique, and every consumer that builds a real map (a
-/// `serde_yaml::Value`, `yq`, a Python `dict`) keeps exactly one of them and
+/// `serde_json::Value`, `yq`, a Python `dict`) keeps exactly one of them and
 /// throws the other away without a word.
 ///
 /// `None` means the document round-trips through a strict reader.
 fn strict_yaml_error(yaml: &str) -> Option<String> {
-    serde_yaml::from_str::<serde_yaml::Value>(yaml)
+    crate::yaml::from_str::<serde_json::Value>(yaml)
         .err()
         .map(|e| e.to_string())
 }
@@ -204,7 +205,7 @@ falsification_tests: []
     /// document carrying a DUPLICATE key nested under an unknown top-level
     /// block. `contracts/apr-cli-commands-v1.yaml` is that shape in the real
     /// corpus (`subcommands:` appears 20 times under `commands:`), and a probe
-    /// that deserialized the whole document into `serde_yaml::Value` would fail
+    /// that deserialized the whole document into `serde_json::Value` would fail
     /// on it and report "no kind declared" about a file that declares one.
     /// `KindProbe` drains unknown top-level values instead of building them, so
     /// the duplicate is never constructed.
@@ -226,7 +227,7 @@ falsification_tests: []
         let with_duplicate =
             format!("{declared}commands:\n  root:\n    subcommands: [a]\n    subcommands: [b]\n");
         assert!(
-            serde_yaml::from_str::<std::collections::BTreeMap<String, serde_yaml::Value>>(
+            crate::yaml::from_str::<std::collections::BTreeMap<String, serde_json::Value>>(
                 &with_duplicate
             )
             .is_err(),

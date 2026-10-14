@@ -81,19 +81,19 @@ pub struct Contract {
     /// status` reported "Falsification tests: 0" while the file read as
     /// governance.
     ///
-    /// It is deliberately `serde_yaml::Value`: the block is NOT
+    /// It is deliberately `serde_json::Value`: the block is NOT
     /// `falsification_tests` and must never be counted as one — it is captured
     /// so that tooling can SEE it and report the contract as inert. Migrating
     /// these entries into real `falsification_tests` is contract-by-contract
     /// work, not a schema change.
     #[serde(default)]
-    pub falsification: Option<serde_yaml::Value>,
+    pub falsification: Option<serde_json::Value>,
     /// Legacy free-form top-level `falsification_conditions:` block — the same
     /// silent-drop class as [`Contract::falsification`], used by 12 contracts.
     /// Kept as a distinct field (not a serde `alias`) so a contract carrying
     /// both keys still parses instead of failing on a duplicate field.
     #[serde(default)]
-    pub falsification_conditions: Option<serde_yaml::Value>,
+    pub falsification_conditions: Option<serde_json::Value>,
     /// Top-level YAML keys that are not fields of `Contract`, captured verbatim
     /// by [`crate::schema::parse_contract_str`].
     ///
@@ -146,7 +146,7 @@ pub struct Contract {
     ///
     /// The derived deserializer skips unknown subtrees without reading them, so
     /// a contract can parse cleanly here and be rejected by `yq`, PyYAML, or a
-    /// `serde_yaml::Value` round-trip. SCHEMA-020 turns that divergence into an
+    /// `serde_json::Value` round-trip. SCHEMA-020 turns that divergence into an
     /// error instead of leaving it to be discovered downstream.
     ///
     /// Not serialized: it is a parse artifact, not contract content.
@@ -336,11 +336,11 @@ impl Contract {
     /// "Falsification tests: 0" without being told where the entries went.
     #[must_use]
     pub fn legacy_falsification_entries(&self) -> usize {
-        fn count(v: Option<&serde_yaml::Value>) -> usize {
+        fn count(v: Option<&serde_json::Value>) -> usize {
             match v {
-                Some(serde_yaml::Value::Sequence(s)) => s.len(),
-                Some(serde_yaml::Value::Mapping(m)) => m.len(),
-                Some(serde_yaml::Value::Null) | None => 0,
+                Some(serde_json::Value::Array(s)) => s.len(),
+                Some(serde_json::Value::Object(m)) => m.len(),
+                Some(serde_json::Value::Null) | None => 0,
                 Some(_) => 1,
             }
         }
@@ -1061,23 +1061,23 @@ where
     D: serde::Deserializer<'de>,
 {
     use serde::de::Error;
-    use serde_yaml::Value;
+    use serde_json::Value;
 
     let value = Value::deserialize(d)?;
     match value {
         Value::Null => Ok(BTreeMap::new()),
-        Value::Mapping(_) => serde_yaml::from_value(value).map_err(D::Error::custom),
-        Value::Sequence(items) => {
+        Value::Object(_) => serde_json::from_value(value).map_err(D::Error::custom),
+        Value::Array(items) => {
             let mut out = BTreeMap::new();
             for (i, mut item) in items.into_iter().enumerate() {
                 let key = match &mut item {
-                    Value::Mapping(m) => m
-                        .remove(Value::String("id".into()))
+                    Value::Object(m) => m
+                        .remove("id")
                         .and_then(|v| v.as_str().map(ToString::to_string))
                         .unwrap_or_else(|| format!("equation_{i}")),
                     _ => format!("equation_{i}"),
                 };
-                let eq: Equation = serde_yaml::from_value(item).map_err(D::Error::custom)?;
+                let eq: Equation = serde_json::from_value(item).map_err(D::Error::custom)?;
                 out.insert(key, eq);
             }
             Ok(out)

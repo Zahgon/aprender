@@ -84,7 +84,7 @@ pub fn verify_bindings(binding_yaml_path: &str, policy: BindingPolicy) -> Verify
         );
     });
 
-    let registry: BindingRegistry = serde_yaml::from_str(&yaml_content).unwrap_or_else(|e| {
+    let registry: BindingRegistry = crate::yaml::from_str(&yaml_content).unwrap_or_else(|e| {
         panic!(
             "CONTRACT BUILD ERROR: Cannot parse binding YAML at '{}': {e}",
             path.display()
@@ -210,7 +210,7 @@ pub fn verify_source_functions(
         println!("cargo:warning=verify_source_functions: cannot read {binding_yaml_path}");
         return vec![];
     };
-    let Ok(registry) = serde_yaml::from_str::<BindingRegistry>(&yaml_content) else {
+    let Ok(registry) = crate::yaml::from_str::<BindingRegistry>(&yaml_content) else {
         println!("cargo:warning=verify_source_functions: cannot parse {binding_yaml_path}");
         return vec![];
     };
@@ -292,33 +292,35 @@ fn scan_source_fns(dir: &Path, found: &mut std::collections::HashSet<String>) {
             }
         } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
             if let Ok(content) = std::fs::read_to_string(&path) {
-                for line in content.lines() {
-                    let trimmed = line.trim();
-                    if trimmed.starts_with("pub fn ")
-                        || trimmed.starts_with("pub async fn ")
-                        || trimmed.starts_with("pub(crate) fn ")
-                    {
-                        let fn_part = trimmed
-                            .trim_start_matches("pub async fn ")
-                            .trim_start_matches("pub(crate) fn ")
-                            .trim_start_matches("pub fn ");
-                        let fn_name = fn_part
-                            .split('(')
-                            .next()
-                            .unwrap_or("")
-                            .split('<')
-                            .next()
-                            .unwrap_or("")
-                            .trim()
-                            .to_lowercase();
-                        if !fn_name.is_empty() {
-                            found.insert(fn_name);
-                        }
-                    }
-                }
+                found.extend(content.lines().filter_map(pub_fn_name));
             }
         }
     }
+}
+
+/// The lowercased name a `pub fn` / `pub async fn` / `pub(crate) fn` line declares.
+fn pub_fn_name(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if !(trimmed.starts_with("pub fn ")
+        || trimmed.starts_with("pub async fn ")
+        || trimmed.starts_with("pub(crate) fn "))
+    {
+        return None;
+    }
+    let fn_part = trimmed
+        .trim_start_matches("pub async fn ")
+        .trim_start_matches("pub(crate) fn ")
+        .trim_start_matches("pub fn ");
+    let fn_name = fn_part
+        .split('(')
+        .next()
+        .unwrap_or("")
+        .split('<')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
+    (!fn_name.is_empty()).then_some(fn_name)
 }
 
 // One definition, shared with this crate's own build.rs (#4369).

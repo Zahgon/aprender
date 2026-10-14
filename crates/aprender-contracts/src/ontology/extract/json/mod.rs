@@ -98,22 +98,22 @@ struct Vocabulary {
     nested: Vec<(String, String)>,
 }
 
-fn scalar(v: Option<&serde_yaml::Value>) -> Option<String> {
+fn scalar(v: Option<&serde_json::Value>) -> Option<String> {
     match v? {
-        serde_yaml::Value::String(s) => Some(s.clone()),
-        serde_yaml::Value::Number(n) => Some(n.to_string()),
-        serde_yaml::Value::Bool(b) => Some(b.to_string()),
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
         _ => None,
     }
 }
 
 /// Is this contract one this extractor reads? `entity.type == json`.
 #[must_use]
-pub fn applies(doc: &serde_yaml::Value) -> bool {
+pub fn applies(doc: &serde_json::Value) -> bool {
     scalar(doc.get("entity").and_then(|e| e.get("type"))).as_deref() == Some("json")
 }
 
-fn vocabulary(stem: &str, doc: &serde_yaml::Value) -> Result<Vocabulary, ExtractError> {
+fn vocabulary(stem: &str, doc: &serde_json::Value) -> Result<Vocabulary, ExtractError> {
     let v = doc.get("vocabulary");
     let need = |what: &str| ExtractError::VocabularyIncomplete {
         contract: stem.to_string(),
@@ -126,9 +126,9 @@ fn vocabulary(stem: &str, doc: &serde_yaml::Value) -> Result<Vocabulary, Extract
         .filter(|s| !s.is_empty())
         .ok_or_else(|| need("no `root_class`"))?;
     let mut nested = Vec::new();
-    if let Some(serde_yaml::Value::Mapping(m)) = v.and_then(|v| v.get("nested")) {
+    if let Some(serde_json::Value::Object(m)) = v.and_then(|v| v.get("nested")) {
         for (k, class) in m {
-            let (Some(k), Some(class)) = (scalar(Some(k)), scalar(Some(class))) else {
+            let (Some(k), Some(class)) = (Some(k.clone()), scalar(Some(class))) else {
                 return Err(need("`nested` must map key → class"));
             };
             nested.push((k, class));
@@ -146,7 +146,7 @@ fn vocabulary(stem: &str, doc: &serde_yaml::Value) -> Result<Vocabulary, Extract
 pub fn extract_into(
     g: &mut Graph,
     stem: &str,
-    doc: &serde_yaml::Value,
+    doc: &serde_json::Value,
     root: &Path,
 ) -> Result<Vec<Warning>, ExtractError> {
     let path = scalar(doc.get("entity").and_then(|e| e.get("ref"))).ok_or_else(|| {
@@ -372,8 +372,8 @@ mod tests {
     use super::*;
     use crate::ontology::rdf::{XSD_BOOLEAN, XSD_INTEGER, XSD_STRING};
 
-    fn contract(vocab: &str) -> serde_yaml::Value {
-        serde_yaml::from_str(&format!(
+    fn contract(vocab: &str) -> serde_json::Value {
+        crate::yaml::from_str(&format!(
             "name: t\nentity: {{type: json, ref: doc.json}}\nvocabulary:\n{vocab}\n"
         ))
         .unwrap()
@@ -524,7 +524,7 @@ mod tests {
         bytes.extend_from_slice(br#"{"kind":"push","tick":3}"#);
         bytes.push(b'\n');
         std::fs::write(d.join("doc.jsonl"), &bytes).unwrap();
-        let c: serde_yaml::Value = serde_yaml::from_str(
+        let c: serde_json::Value = crate::yaml::from_str(
             "name: l\nentity: {type: json, ref: doc.jsonl}\nvocabulary:\n  prefix: led\n  root_class: led:Row\n",
         )
         .unwrap();
@@ -545,7 +545,7 @@ mod tests {
     fn a_jsonl_with_no_parsable_line_is_not_json() {
         let d = tmp("jsonl-none");
         std::fs::write(d.join("doc.jsonl"), "nope\nstill no\n").unwrap();
-        let c: serde_yaml::Value = serde_yaml::from_str(
+        let c: serde_json::Value = crate::yaml::from_str(
             "name: l\nentity: {type: json, ref: doc.jsonl}\nvocabulary:\n  prefix: led\n  root_class: led:Row\n",
         )
         .unwrap();
@@ -559,9 +559,10 @@ mod tests {
     #[test]
     fn applies_only_to_json_entities() {
         assert!(applies(&contract(VOCAB)));
-        let other: serde_yaml::Value = serde_yaml::from_str("entity: {type: pv-contract}").unwrap();
+        let other: serde_json::Value =
+            crate::yaml::from_str("entity: {type: pv-contract}").unwrap();
         assert!(!applies(&other));
-        let none: serde_yaml::Value = serde_yaml::from_str("name: x").unwrap();
+        let none: serde_json::Value = crate::yaml::from_str("name: x").unwrap();
         assert!(!applies(&none));
     }
 

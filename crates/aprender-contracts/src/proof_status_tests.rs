@@ -1078,7 +1078,7 @@ fn ont2a_a_contract_that_claims_nothing_is_not_flagged() {
 fn contract_with_na_obligations(n_ob: usize, n_na: usize, n_ft: usize, n_kani: usize) -> Contract {
     let mut c = minimal_contract(n_ob, n_ft, n_kani);
     for i in 0..n_na {
-        let ob: crate::schema::ProofObligation = serde_yaml::from_str(&format!(
+        let ob: crate::schema::ProofObligation = crate::yaml::from_str(&format!(
             "property: \"na {i}\"\napplies_to: not_applicable\nna_reason: r\nna_owner: o\n"
         ))
         .expect("N/A obligation fixture must parse");

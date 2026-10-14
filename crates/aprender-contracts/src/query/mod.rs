@@ -45,7 +45,7 @@ pub fn execute(index: &ContractIndex, params: &QueryParams) -> QueryOutput {
 
     let binding = params.binding_path.as_ref().and_then(|p| {
         let content = std::fs::read_to_string(p).ok()?;
-        serde_yaml::from_str::<BindingRegistry>(&content).ok()
+        crate::yaml::from_str::<BindingRegistry>(&content).ok()
     });
 
     let filtered = apply_filters(index, scored_indices, params, binding.as_ref());

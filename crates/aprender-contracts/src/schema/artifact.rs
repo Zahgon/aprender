@@ -32,7 +32,10 @@
 
 use std::path::{Path, PathBuf};
 
-use serde_yaml::{Mapping, Value};
+use serde_json::{Map, Value};
+
+/// A YAML mapping, read into JSON form (string keys, document order).
+type Mapping = Map<String, Value>;
 
 use super::external_corpora::{is_external_corpora_schema, validate_external_corpora};
 use super::parser::parse_contract_str;
@@ -79,7 +82,7 @@ impl std::fmt::Display for ArtifactKind {
 /// gets the final word.
 #[must_use]
 pub fn classify_artifact(yaml: &str) -> ArtifactKind {
-    let Ok(Value::Mapping(map)) = serde_yaml::from_str::<Value>(yaml) else {
+    let Ok(Value::Object(map)) = crate::yaml::from_str::<Value>(yaml) else {
         return ArtifactKind::Contract;
     };
     if map.contains_key("metadata") {
@@ -122,7 +125,7 @@ pub fn validate_artifact(path: &Path) -> Result<(ArtifactKind, Vec<Violation>), 
             Ok((ArtifactKind::Binding, validate_binding_registry(&registry)))
         }
         ArtifactKind::PublishManifest => {
-            let manifest: Value = serde_yaml::from_str(&content)?;
+            let manifest: Value = crate::yaml::from_str(&content)?;
             Ok((
                 ArtifactKind::PublishManifest,
                 validate_publish_manifest(&manifest, path),
@@ -170,12 +173,12 @@ fn find_publish_manifest_schema(path: &Path) -> Option<PathBuf> {
 /// contract declares.
 fn schema_required_fields(schema_path: &Path) -> Option<(Vec<String>, Vec<String>)> {
     let text = std::fs::read_to_string(schema_path).ok()?;
-    let doc: Value = serde_yaml::from_str(&text).ok()?;
+    let doc: Value = crate::yaml::from_str(&text).ok()?;
     let schema = doc.get("schema")?;
     let read = |key: &str| -> Vec<String> {
         schema
             .get(key)
-            .and_then(Value::as_sequence)
+            .and_then(Value::as_array)
             .map(|items| {
                 items
                     .iter()
@@ -199,7 +202,7 @@ fn schema_required_fields(schema_path: &Path) -> Option<(Vec<String>, Vec<String
 #[must_use]
 pub fn validate_publish_manifest(manifest: &Value, path: &Path) -> Vec<Violation> {
     let mut violations = Vec::new();
-    let Some(top) = manifest.as_mapping() else {
+    let Some(top) = manifest.as_object() else {
         violations.push(violation(
             "PM-SHAPE-001",
             "publish manifest is not a YAML mapping".to_string(),
@@ -235,7 +238,7 @@ pub fn validate_publish_manifest(manifest: &Value, path: &Path) -> Vec<Violation
     };
 
     check_required(top, &required_top, "PM-SHAPE-001", "", &mut violations);
-    let provenance = top.get("provenance").and_then(Value::as_mapping);
+    let provenance = top.get("provenance").and_then(Value::as_object);
     if let Some(provenance) = provenance {
         check_required(
             provenance,

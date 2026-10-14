@@ -11,7 +11,7 @@ fn sigma() -> Sigma {
 }
 
 fn rules_for(yaml: &str) -> Vec<String> {
-    let v: serde_yaml::Value = serde_yaml::from_str(yaml).expect("case is YAML");
+    let v: serde_json::Value = crate::yaml::from_str(yaml).expect("case is YAML");
     let mut out = Vec::new();
     check_valid_under(&sigma(), &v, "case", Path::new("case.yaml"), &mut out);
     out.into_iter().map(|f| f.rule_id).collect()
@@ -92,7 +92,7 @@ fn an_omitted_world_reads_committed_so_appendix_b_is_admitted() {
 fn an_omitted_world_with_no_committed_in_sigma_is_pv_ont_014() {
     let mut s = sigma();
     s.worlds.remove(DEFAULT_WORLD);
-    let v: serde_yaml::Value = serde_yaml::from_str("backend: [cpu]\n").expect("yaml");
+    let v: serde_json::Value = crate::yaml::from_str("backend: [cpu]\n").expect("yaml");
     let mut out = Vec::new();
     check_valid_under(&s, &v, "case", Path::new("case.yaml"), &mut out);
     assert_eq!(
