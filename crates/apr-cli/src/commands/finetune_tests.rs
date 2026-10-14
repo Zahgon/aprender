@@ -1841,7 +1841,7 @@ fn write_adapter_4674(tensors: &[(&str, Vec<usize>, f32)], alpha: Option<f64>) -
     let mut w = AprV2Writer::new(md);
     for (name, shape, v) in tensors {
         let n = shape.iter().product();
-        w.add_f32_tensor(name, shape.clone(), &vec![*v; n]);
+        w.add_f32_tensor(*name, shape.clone(), &vec![*v; n]);
     }
     let f = NamedTempFile::with_suffix(".apr").expect("adapter tmp");
     std::fs::write(f.path(), w.write().expect("write adapter")).expect("write adapter file");
