@@ -138,7 +138,7 @@ Only `RESOLVED` counts as a pass. Every label stays in the denominator.
 | pass@1 | resolved samples over **all** `|T|·n`, with errors and timeouts included | ACE-MET-001 |
 | pass@k | unbiased estimator, `k ≤ n`; `n = 1` ⇒ pass@k = pass@1 | ACE-MET-002 |
 | 95% CI | Wilson score interval on pass@1 | ACE-MET-003 |
-| format conformance | `1 − FORMAT_ERROR/|T|` | ACE-MET-005 |
+| format conformance | `1 − FORMAT_ERROR samples/(|T|·n)` | ACE-MET-005 |
 | post-cutoff pass@1 | pass@1 over tasks dated after the model cutoff, with the count; `null` when there are none | ACE-MET-006 |
 | counts by label | one count per verdict label; they sum to `|T|·n` | ACE-MET-008 |
 | cost | prompt + completion tokens, turns, wall time per task (reported, not scored) | — |

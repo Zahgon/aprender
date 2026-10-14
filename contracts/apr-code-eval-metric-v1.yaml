@@ -40,8 +40,9 @@ equations:
     formula: "pass@k = (1/|T|) · Σ_t [ 1 − C(n − c_t, k) / C(n, k) ],  k ≤ n;  k > n ⇒ Err"
     note: "Computed as 1 − Π_{i=n−c+1}^{n} (1 − k/i) for numerical stability, and as 1 when n − c < k. n = 1 ⇒ pass@k = pass@1 (eval-passk-single-sample-v1)."
   ACE-MET-003:
-    description: "Wilson 95% score interval on pass@1 (n = 1)"
-    formula: "N = |T| (n = 1), x = |{ t : v_t = RESOLVED }|, p̂ = x/N, z = 1.959964;  (p̂ + z²/2N ± z·√(p̂(1−p̂)/N + z²/4N²)) / (1 + z²/N)"
+    description: "Wilson 95% score interval on pass@1, over every sample of every task"
+    formula: "N = |T| · n, x = Σ_t c_t (so p̂ = x/N = pass@1 of ACE-MET-001), z = 1.959964;  (p̂ + z²/2N ± z·√(p̂(1−p̂)/N + z²/4N²)) / (1 + z²/N)"
+    note: "With n > 1 the samples of one task are correlated, so the interval is narrower than the task-level truth; the receipt prints n beside it. The headline is n = 1."
   ACE-MET-004:
     description: "Refusal: no number without evidence"
     formula: "|T| = 0 ∨ Σ_t tests_executed(t) = 0 ∨ |{ t : v_t ≠ EMPTY }| = 0  ⇒  metrics = Err(Refused)"
