@@ -1,0 +1,18 @@
+- id: PMAT-4673
+  github_issue: 4673
+  item_type: task
+  title: R1 one code identity H, re-cut on main
+  status: planned
+  priority: critical
+  assigned_to: null
+  created: 2026-10-14T11:30:39Z
+  updated: 2026-10-14T11:30:39Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 3998
