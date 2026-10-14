@@ -1519,11 +1519,7 @@ impl Run<'_> {
                     "missing or empty".into(),
                 );
             }
-            let key = p
-                .strip_prefix(self.repo)
-                .unwrap_or(&p)
-                .display()
-                .to_string();
+            let key = self.rel(&p);
             self.meta.inputs.insert(key, sha);
         }
         let pv_pairs = std::fs::read_to_string(pv_json)
@@ -1620,9 +1616,16 @@ impl Run<'_> {
         self.malformed_cell(j);
     }
 
-    /// X relative to the repo, as a case name.
+    /// X relative to the repo, as a case name; a file outside it (pv's shapes.json in a scratch dir) is keyed by its file name, so a receipt
+    /// carries no host path.
     fn rel(&self, x: &Path) -> String {
-        x.strip_prefix(self.repo).unwrap_or(x).display().to_string()
+        match x.strip_prefix(self.repo) {
+            Ok(r) => r.display().to_string(),
+            Err(_) => x.file_name().map_or_else(
+                || x.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            ),
+        }
     }
 
     /// The base both engines resolve X against: fixed, so a receipt does not depend on where the repo sits.
@@ -1821,7 +1824,11 @@ impl Run<'_> {
     fn pv_report(&self, shapes: &Path, data: &Path) -> Result<Result<Report, String>, String> {
         Ok(match pv::validate(self.pv, shapes, data)? {
             pv::Validated::Report(t) => report_of(&t).map_err(|e| format!("pv's report: {e}")),
-            pv::Validated::Refused(why) => Err(format!("pv refused: {why}")),
+            // pv names the file it refused by the absolute path it was given; the receipt keeps it repo-relative.
+            pv::Validated::Refused(why) => Err(format!(
+                "pv refused: {}",
+                why.replace(&format!("{}/", self.repo.display()), "")
+            )),
             pv::Validated::Broken(why) => Err(why),
         })
     }
