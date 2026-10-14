@@ -71,8 +71,9 @@ unicode-normalization = { workspace = true }
 [dev-dependencies]
 # verify::tests run dirs and the fail-closed vectors' transient verify input.
 tempfile = { workspace = true }
-# Test-side reader of contract YAML constants and tolerances.
-serde_yaml = { workspace = true }
+# Test-side reader of contract YAML constants and tolerances (#5205: serde-saphyr, the
+# standard stage options; untyped values read as serde_json::Value).
+serde-saphyr = { workspace = true }
 # The oracle's ladder blocks are f32le_base64 (plan 08-02 fixture encoding).
 base64 = { workspace = true }
 # tests/ui.rs: compile-fail proof that Decider has no second minting path

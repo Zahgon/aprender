@@ -12,26 +12,35 @@ pub fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// `contracts/<name>` parsed.
-pub fn contract(name: &str) -> serde_yaml::Value {
-    let path = workspace_root().join("contracts").join(name);
-    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {name}: {e}"));
-    serde_yaml::from_str(&text).unwrap_or_else(|e| panic!("parse {name}: {e}"))
+/// YAML text parsed with the standard stage options (#5205).
+pub fn yaml_from_str<T: serde::de::DeserializeOwned>(s: &str) -> Result<T, serde_saphyr::Error> {
+    serde_saphyr::from_str_with_options(
+        s,
+        serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false },
+    )
 }
 
-fn at<'a>(v: &'a serde_yaml::Value, keys: &[&str]) -> &'a serde_yaml::Value {
+/// `contracts/<name>` parsed. Its mappings are `serde_json::Map`s (sorted keys); no caller
+/// here depends on a contract mapping's file order.
+pub fn contract(name: &str) -> serde_json::Value {
+    let path = workspace_root().join("contracts").join(name);
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {name}: {e}"));
+    yaml_from_str(&text).unwrap_or_else(|e| panic!("parse {name}: {e}"))
+}
+
+fn at<'a>(v: &'a serde_json::Value, keys: &[&str]) -> &'a serde_json::Value {
     keys.iter().fold(v, |v, k| &v[*k])
 }
 
 /// A number at `keys`.
-pub fn f64_at(v: &serde_yaml::Value, keys: &[&str]) -> f64 {
+pub fn f64_at(v: &serde_json::Value, keys: &[&str]) -> f64 {
     at(v, keys)
         .as_f64()
         .unwrap_or_else(|| panic!("contract value {}", keys.join(".")))
 }
 
 /// A string at `keys`.
-pub fn str_at(v: &serde_yaml::Value, keys: &[&str]) -> String {
+pub fn str_at(v: &serde_json::Value, keys: &[&str]) -> String {
     at(v, keys)
         .as_str()
         .unwrap_or_else(|| panic!("contract value {}", keys.join(".")))
@@ -39,9 +48,9 @@ pub fn str_at(v: &serde_yaml::Value, keys: &[&str]) -> String {
 }
 
 /// A list of integers at `keys`.
-pub fn seeds_at(v: &serde_yaml::Value, keys: &[&str]) -> Vec<i64> {
+pub fn seeds_at(v: &serde_json::Value, keys: &[&str]) -> Vec<i64> {
     at(v, keys)
-        .as_sequence()
+        .as_array()
         .unwrap_or_else(|| panic!("contract value {}", keys.join(".")))
         .iter()
         .map(|s| {
@@ -56,7 +65,7 @@ pub fn seeds_at(v: &serde_yaml::Value, keys: &[&str]) -> Vec<i64> {
 pub fn contract_view<T: serde::de::DeserializeOwned>(name: &str) -> T {
     let path = workspace_root().join("contracts").join(name);
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {name}: {e}"));
-    serde_yaml::from_str(&text).unwrap_or_else(|e| panic!("parse {name} into its view: {e}"))
+    yaml_from_str(&text).unwrap_or_else(|e| panic!("parse {name} into its view: {e}"))
 }
 
 /// The contract policy, through the library's ONE mapping (`VerifyPolicy::from_contract_views`)

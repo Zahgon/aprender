@@ -218,7 +218,7 @@ fn contract_mirror() {
 
     // Probe inputs verbatim, and the synthetic probe task field by field.
     let inputs: Vec<&str> = c["probe_policy"]["inputs"]
-        .as_sequence()
+        .as_array()
         .expect("probe inputs")
         .iter()
         .map(|v| v.as_str().expect("probe input string"))
@@ -228,12 +228,30 @@ fn contract_mirror() {
     let task = Task::from_slice(PROBE_TASK.as_bytes()).expect("PROBE_TASK parses");
     assert_eq!(pt["type"].as_str(), Some("choice"));
     assert_eq!(pt["instructions"].as_str(), Some(task.instructions()));
-    let criteria = pt["criteria"].as_mapping().expect("probe criteria");
+    // Criteria order is the label index (D-05): read the mapping in FILE order, never
+    // through `contract_yaml`'s sorted `serde_json::Map`.
+    #[derive(serde::Deserialize)]
+    struct Doc {
+        probe_policy: Policy,
+    }
+    #[derive(serde::Deserialize)]
+    struct Policy {
+        probe_task: ProbeTask,
+    }
+    #[derive(serde::Deserialize)]
+    struct ProbeTask {
+        criteria: crate::test_support::InFileOrder,
+    }
+    let doc: Doc = crate::test_support::yaml_from_str(&crate::test_support::contract_text(
+        "decide-apr-v1.yaml",
+    ))
+    .expect("decide-apr-v1 probe_policy.probe_task.criteria");
+    let criteria = doc.probe_policy.probe_task.criteria.0;
     let names: Vec<&str> = criteria
         .iter()
         .map(|(key, v)| {
             assert!(v.is_null(), "probe criteria carry no description");
-            key.as_str().expect("criterion name")
+            key.as_str()
         })
         .collect();
     assert_eq!(names, task.labels(), "criteria in document order");
@@ -242,7 +260,7 @@ fn contract_mirror() {
 
     // Blob set, model type, the single key, schema and method.
     let blobs: Vec<&str> = c["blob_tensors"]
-        .as_sequence()
+        .as_array()
         .expect("blob_tensors")
         .iter()
         .map(|v| v.as_str().expect("blob name"))
@@ -266,10 +284,10 @@ fn contract_mirror() {
 
     // The manifest's field SET equals the contract's.
     let mut want: Vec<&str> = fields
-        .as_mapping()
+        .as_object()
         .expect("manifest.fields")
         .keys()
-        .map(|key| key.as_str().expect("field name"))
+        .map(String::as_str)
         .collect();
     want.sort_unstable();
     let packed = super::inspect_manifest(&pack_tiny()).expect("manifest");
