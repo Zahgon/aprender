@@ -8,11 +8,13 @@
 //! - [`edit`]: a model output in one edit format → edits applied all or nothing (ACE-EDIT).
 //! - [`driver`]: validated tasks, a model and a sandbox → per-attempt records (ACE-DRV).
 //! - [`receipt`]: per-attempt records and run provenance → the §7 run receipt (ACE-RCP).
+//! - [`runner`]: a tree and its task's pinned environment → one sandbox run (ACE-RUN).
 
 pub mod driver;
 pub mod edit;
 pub mod metric;
 pub mod receipt;
+pub mod runner;
 pub mod sandbox;
 pub mod task;
 pub mod verdict;

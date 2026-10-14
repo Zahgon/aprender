@@ -52,9 +52,24 @@ pub enum SandboxError {
     Engine(String),
 }
 
-/// ACE-SBX-002: an image reference pinned by content digest.
+/// ACE-SBX-002: an image reference pinned by content digest. Deserializing goes through
+/// [`ImageRef::parse`], so a loaded manifest cannot carry an unpinned image.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct ImageRef(String);
+
+impl TryFrom<String> for ImageRef {
+    type Error = SandboxError;
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        Self::parse(&s)
+    }
+}
+
+impl From<ImageRef> for String {
+    fn from(i: ImageRef) -> Self {
+        i.0
+    }
+}
 
 impl ImageRef {
     /// Accept only `name@sha256:<64 lowercase hex>`.

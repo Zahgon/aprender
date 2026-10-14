@@ -1,0 +1,101 @@
+# apr-code-eval-runner-v1 — the RUNNER node of the apr code eval ontology (APR-CODE-EVAL-001).
+#
+# The runner joins the driver to the sandbox: it turns one edited tree into one container
+# run. SWE-bench and Terminal-Bench both start every evaluation from a fresh container and
+# copy the candidate's files in; nothing persists between instances. Here that, and the
+# path checks on what is copied, are equations with planted-failure tests.
+metadata:
+  version: "1.0.0"
+  created: "2026-10-14"
+  author: PAIML Engineering
+  kind: kernel
+  registry: true
+  description: |
+    Sandbox-backed TestRunner for the `apr code` eval (epic #5281, ticket #5286): writes
+    the driver's tree into a fresh directory, runs it in the task's pinned image through
+    contracts/apr-code-eval-sandbox-v1.yaml, and removes the directory.
+  references:
+    - "docs/specifications/apr-code-eval-v1.md §3 (task image_ref and limits), §5 (sandbox), §7 (image_digests)"
+    - "SWE-bench (2024) — one fresh container per instance from a pinned per-instance image"
+    - "Terminal-Bench (2025) — task environments copied into a new container per run"
+    - "reproducible-builds.org SOURCE_DATE_EPOCH — the build date as seconds since the epoch"
+name: apr-code-eval-runner
+version: "1.0.0"
+status: PROPOSED
+scope: "sandbox-backed test runner of the apr code eval harness (ticket #5286)"
+description: |
+  Sandboxed::run(task, tree) looks up the task's TaskEnv { image, command, report_path,
+  report_format, limits }, writes tree into root/name for a fresh name, calls
+  sandbox::run, removes the directory and returns the report. Every failure is an Err,
+  which the driver labels SANDBOX_ERROR (contracts/apr-code-eval-driver-v1.yaml ACE-DRV-005).
+
+equations:
+  ACE-RUN-001:
+    description: "Every run has its own directory and container name, holding exactly the tree, removed afterwards"
+    formula: "∀ i ≠ j. name(i) ≠ name(j) ∧ files(dir(i)) = tree(i) ∧ after(i). dir(i) ∉ fs"
+  ACE-RUN-002:
+    description: "Tree paths stay inside the run directory; an unsafe one is refused before any write"
+    formula: "∃ p ∈ dom(tree). ¬safe(p) ⇒ run = Err ∧ writes = ∅ ∧ engine_calls = 0;  safe(p) ⟺ ∀ c ∈ components(p). c = normal ∧ p ≠ ∅"
+  ACE-RUN-003:
+    description: "A missing environment, a missing date, a bad image or a failed engine is an error, never a result"
+    formula: "env(t) = ∅ ∨ date(t) = ∅ ∨ image_check = Err ∨ engine = Err ⇒ run = Err ∧ dir ∉ fs"
+  ACE-RUN-004:
+    description: "SOURCE_DATE_EPOCH is the release date at 00:00 UTC"
+    formula: "epoch(date(y, mo, d)) = 86400 · days_from_civil(y, mo, d);  epoch(x) = ∅ when x is not a calendar date"
+  ACE-RUN-005:
+    description: "Every task's image digest is reported, and only pinned images load"
+    formula: "image_digests = { t ↦ digest(env(t).image) };  load(env) = Ok ⇒ env.image = name@sha256:hex64"
+
+proof_obligations:
+  - id: ACE-RUN-PO-001
+    type: invariant
+    property: "Two runs never share a directory or a container name, the container sees exactly the tree, and the directory is gone afterwards (ACE-RUN-001)"
+    formal: "∀ i ≠ j. name(i) ≠ name(j) ∧ files(dir(i)) = tree(i)"
+  - id: ACE-RUN-PO-002
+    type: invariant
+    property: "A parent, absolute, empty-segment or leading-dot path refuses the run with nothing written and no engine call (ACE-RUN-002)"
+    formal: "¬safe(p) ⇒ writes = ∅ ∧ engine_calls = 0"
+  - id: ACE-RUN-PO-003
+    type: invariant
+    property: "Every failure path returns Err and leaves the root empty (ACE-RUN-003)"
+    formal: "run = Err ⇒ dir ∉ fs"
+  - id: ACE-RUN-PO-004
+    type: invariant
+    property: "Leap days, month lengths and the epoch are exact; malformed dates are refused (ACE-RUN-004)"
+    formal: "epoch(1970-01-01) = 0 ∧ epoch(2025-03-01) = 1740787200 ∧ epoch(2023-02-29) = ∅"
+  - id: ACE-RUN-PO-005
+    type: invariant
+    property: "Deserializing an environment with a tag-only or short-digest image fails (ACE-RUN-005)"
+    formal: "image ≠ name@sha256:hex64 ⇒ load(env) = Err"
+
+falsification_tests:
+  - id: FALSIFY-ACE-RUN-001
+    name: fresh_dir_and_name_per_run
+    prediction: "Two runs get different container names, each container sees exactly its tree with nothing from the other, the run's own dir is mounted, and the root is empty afterwards."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_run_001"
+    expected_output: "test result: ok"
+    if_fails: "State leaks between runs, so one candidate's files can pass another's tests."
+  - id: FALSIFY-ACE-RUN-002
+    name: unsafe_paths_are_refused_before_writing
+    prediction: "../escape, /etc/escape, a//b, ./x, the empty path and a/../../escape each refuse the run, with no engine call and no file written in or outside the root."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_run_002"
+    expected_output: "test result: ok"
+    if_fails: "A model's edit can write outside the run directory on the host."
+  - id: FALSIFY-ACE-RUN-003
+    name: failures_are_errors_never_results
+    prediction: "No environment, no release date, a digest mismatch and a dead engine each return Err; only the dead engine was asked to run; the root is empty after each."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_run_003"
+    expected_output: "test result: ok"
+    if_fails: "Infrastructure failures are scored as model failures, or run dirs pile up."
+  - id: FALSIFY-ACE-RUN-004
+    name: source_date_epoch_is_the_release_date
+    prediction: "Fourteen dates map to their known epochs or to None, and the container gets SOURCE_DATE_EPOCH=1740787200 and SEED=7 for a 2025-03-01 task."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_run_004"
+    expected_output: "test result: ok"
+    if_fails: "Tests that read the date see the wrong one, and runs are not reproducible."
+  - id: FALSIFY-ACE-RUN-005
+    name: image_digests_and_pinned_envs_only
+    prediction: "image_digests names every task with its digest; an environment round-trips through JSON; a tag-only or short-digest image does not load."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_run_005"
+    expected_output: "test result: ok"
+    if_fails: "A manifest can run an unpinned image, and the receipt cannot name what ran."
