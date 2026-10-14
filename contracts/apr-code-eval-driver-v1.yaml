@@ -1,0 +1,129 @@
+# apr-code-eval-driver-v1 — the DRIVER node of the apr code eval ontology (APR-CODE-EVAL-001).
+#
+# The driver is the loop every agentic benchmark has and few specify: what the model is
+# shown, when the tests run, what a retry is told, and when a run stops. SWE-bench and
+# Aider both keep the answer key away from the model and run the hidden tests only on the
+# model's own change; Aider gives an edit task one retry with the visible test output.
+# Here each of those rules is an equation with a planted-failure test.
+metadata:
+  version: "1.0.0"
+  created: "2026-10-14"
+  author: PAIML Engineering
+  kind: kernel
+  registry: true
+  description: |
+    Agent driver for the `apr code` eval (epic #5281, ticket #5286): runs validated tasks
+    against a model and a sandbox, one or two attempts per sample, and records each
+    attempt for the receipt and the metric engine.
+  references:
+    - "docs/specifications/apr-code-eval-v1.md §8 (driver), §7 (receipt)"
+    - "SWE-bench (2024) — the model sees the issue and the repo; FAIL_TO_PASS and PASS_TO_PASS run after the patch"
+    - "Aider (2023-2025) — edit benchmark: a second try after failing tests, pass rate reported per try"
+    - "HumanEval (2021) — pass@k over n seeded samples per task"
+name: apr-code-eval-driver
+version: "1.0.0"
+status: PROPOSED
+scope: "agent driver of the apr code eval harness (ticket #5286)"
+description: |
+  run_task(t, cfg, agent, runner) sends Request { view(t), tree, format, attempt, feedback,
+  seed, budget } to the agent, adapts the reply with contracts/apr-code-eval-edit-v1.yaml,
+  runs the tests on overlay(tree', hidden(t)) when the edit applied, and labels the attempt
+  with contracts/apr-code-eval-verdict-v1.yaml. It returns n samples of one or two
+  AttemptRecords each.
+
+equations:
+  ACE-DRV-001:
+    description: "The agent sees the task view and the working tree, never the answer key"
+    formula: "∀ req sent. req ∩ (hidden_tests(t) ∪ names(hidden(t)) ∪ gold(t)) = ∅"
+  ACE-DRV-002:
+    description: "Only an applied edit is tested, on the edited tree with hidden files last"
+    formula: "runs(attempt) = 1 ⟺ outcome = applied ∧ in_budget;  tested_tree = overlay(tree', hidden(t))"
+  ACE-DRV-003:
+    description: "Edit tasks get one retry; the retry is told why from the label alone"
+    formula: "attempts = 2 ⟺ kind = edit ∧ v₁ ≠ resolved;  feedback = g(v₁, adapter_error), g independent of the sandbox report;  tree₂ = tree₁′ when applied"
+  ACE-DRV-004:
+    description: "A reply over budget is TIMEOUT and is not tested"
+    formula: "turns > max_turns ∨ tokens_out > max_tokens ⇒ v = timeout ∧ runs = 0"
+  ACE-DRV-005:
+    description: "A backend failure ends the run; a sandbox failure is a label"
+    formula: "agent = Err ⇒ run_task = Err(Agent);  runner = Err ⇒ v = sandbox_error"
+  ACE-DRV-006:
+    description: "Seeded runs are identical apart from wall time"
+    formula: "seed(sample i) = seed + i;  strip_timing(run(cfg)) = strip_timing(run(cfg))"
+  ACE-DRV-007:
+    description: "pass@1 is reported per attempt"
+    formula: "results(r, attempt_1)[i] = first(sample_i);  results(r, attempt_2)[i] = last(sample_i);  both feed compute"
+
+proof_obligations:
+  - id: ACE-DRV-PO-001
+    type: invariant
+    property: "No request carries a hidden test id, a hidden file name or body, or the gold edit (ACE-DRV-001)"
+    formal: "∀ req. (hidden_tests(t) ∪ hidden(t) ∪ {gold(t)}) ∩ req = ∅"
+  - id: ACE-DRV-PO-002
+    type: invariant
+    property: "The sandbox runs exactly when the edit applied, and every tested tree holds the original hidden files (ACE-DRV-002)"
+    formal: "runs = 1 ⟺ outcome = applied ∧ ∀ p ∈ dom(hidden). tested(p) = hidden(p)"
+  - id: ACE-DRV-PO-003
+    type: invariant
+    property: "A second attempt happens only for an unresolved edit task, starts from the first attempt's tree, and its feedback names no hidden test (ACE-DRV-003)"
+    formal: "len(sample) = 2 ⟺ kind = edit ∧ v₁ ≠ resolved ∧ ∀ v. hidden_tests(t) ∩ g(v, e) = ∅"
+  - id: ACE-DRV-PO-004
+    type: invariant
+    property: "Over-budget replies are TIMEOUT and untested; replies at the budget are tested (ACE-DRV-004)"
+    formal: "turns > max_turns ∨ tokens_out > max_tokens ⟺ v = timeout ∧ runs = 0"
+  - id: ACE-DRV-PO-005
+    type: invariant
+    property: "An agent error is a driver error, never a label; a runner error is SANDBOX_ERROR (ACE-DRV-005)"
+    formal: "agent = Err ⇒ run_task = Err ∧ runner = Err ⇒ v = sandbox_error"
+  - id: ACE-DRV-PO-006
+    type: invariant
+    property: "Two runs with the same config serialize to the same bytes once wall time is zeroed, and the comparison sees every other field (ACE-DRV-006)"
+    formal: "bytes(strip(run₁)) = bytes(strip(run₂)) ∧ ∀ x ≠ wall_ms. Δx ≠ 0 ⇒ bytes differ"
+  - id: ACE-DRV-PO-007
+    type: invariant
+    property: "Attempt-1 and attempt-2 results differ when the retry fixed the task (ACE-DRV-007)"
+    formal: "∀ i. results₁[i] = first(sample_i) ∧ results₂[i] = last(sample_i)"
+
+falsification_tests:
+  - id: FALSIFY-ACE-DRV-001
+    name: agent_sees_no_answer_key
+    prediction: "Across both attempts of an edit task, no serialized request contains the hidden test ids, the hidden file name or body, or the gold edit."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_drv_001"
+    expected_output: "test result: ok"
+    if_fails: "The model is shown the answer key and the score measures leakage."
+  - id: FALSIFY-ACE-DRV-002
+    name: only_applied_edits_are_tested_with_hidden_files_last
+    prediction: "Empty, prose and unmatched replies never reach the sandbox; an applied fix is RESOLVED; a reply that writes tests/hidden.rs is tested against the original file."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_drv_002"
+    expected_output: "test result: ok"
+    if_fails: "Malformed output is tested, or a model passes by rewriting the tests."
+  - id: FALSIFY-ACE-DRV-003
+    name: second_attempt_only_for_edit_with_leak_free_feedback
+    prediction: "Edit tasks retry once after FAILED or FORMAT_ERROR and not after RESOLVED; function and repo tasks never retry; attempt 2 sees attempt 1's tree; no feedback names a hidden test."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_drv_003"
+    expected_output: "test result: ok"
+    if_fails: "Non-edit tasks get a free retry, or the retry leaks hidden test output."
+  - id: FALSIFY-ACE-DRV-004
+    name: over_budget_is_timeout_and_untested
+    prediction: "A reply at the turn and token budget is tested; one turn or one token over is TIMEOUT with no sandbox run."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_drv_004"
+    expected_output: "test result: ok"
+    if_fails: "Budgets are not enforced, or are off by one."
+  - id: FALSIFY-ACE-DRV-005
+    name: backend_failure_stops_the_run_sandbox_failure_is_a_label
+    prediction: "A failing agent returns DriverError::Agent with its task, sample and attempt; a failing runner gives SANDBOX_ERROR; n = 0 is refused."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_drv_005"
+    expected_output: "test result: ok"
+    if_fails: "A dead backend is scored as a model failure."
+  - id: FALSIFY-ACE-DRV-006
+    name: seeded_runs_match_apart_from_wall_time
+    prediction: "Two seeded runs of a two-task suite give identical bytes after without_timing; samples use seeds 7, 8, 9; a one-token change is detected."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_drv_006"
+    expected_output: "test result: ok"
+    if_fails: "Receipts cannot be compared run to run, or the comparison ignores real changes."
+  - id: FALSIFY-ACE-DRV-007
+    name: results_per_attempt_feed_the_metric
+    prediction: "With a retry that fixes the task, attempt-1 pass@1 is below attempt-2 pass@1."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_drv_007"
+    expected_output: "test result: ok"
+    if_fails: "The retry is folded into pass@1 and the first-try score is lost."

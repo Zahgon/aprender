@@ -6,7 +6,9 @@
 //! - [`task`]: a JSON Lines manifest → a checked task set → a validated suite (ACE-TASK).
 //! - [`sandbox`]: one hermetic, limited, offline container run → one sandbox report (ACE-SBX).
 //! - [`edit`]: a model output in one edit format → edits applied all or nothing (ACE-EDIT).
+//! - [`driver`]: validated tasks, a model and a sandbox → per-attempt records (ACE-DRV).
 
+pub mod driver;
 pub mod edit;
 pub mod metric;
 pub mod sandbox;
