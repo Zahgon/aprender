@@ -378,6 +378,7 @@ pub(crate) fn realizar_config(
     if let Some(ref trace_path) = options.trace_output {
         config = config.with_trace_output(trace_path);
     }
+    config = config.with_trace_level(options.trace_level.as_str());
     Ok(config)
 }
 

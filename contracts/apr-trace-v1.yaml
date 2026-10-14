@@ -1,18 +1,19 @@
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   created: "2026-09-26"
   author: PAIML Engineering
   registry: true
   references:
     - "aprender#4496"
+    - "aprender#5314"
   description: |
     apr-trace-v1: what an `apr serve` reply may claim about its own timing when a
     client sends `X-Trace-Level`. A trace is `provenance: measured` only when the
     inference tracer ran over that request, and its parts never sum past the
     request's own wall clock.
 name: apr-trace
-version: "1.0.0"
-scope: "crates/aprender-serve/src/api/serve_trace.rs"
+version: "1.1.0"
+scope: "crates/aprender-serve/src/api/serve_trace.rs, crates/aprender-serve/src/apr_trace.rs, crates/aprender-profile-core/src/apr_trace.rs"
 description: |
   APR-OBS-001 OBS-09 (#4496). Before this contract every serve backend answered a
   trace header from `build_trace_data`: one wall-clock row, `wall_clock_total`, and a
@@ -27,6 +28,13 @@ description: |
   `provenance: measured`. Where nothing was measured (a CPU turn asked for layers,
   a level this path does not trace) the reply keeps the wall-clock row and says
   `wall_clock_total`.
+
+  1.1.0 (TRACE-001 TR-09, #5314): the record and its renderer moved out of the
+  server-only `api` module. The types and [`check`] live in `renacer_core::apr_trace`,
+  which has no stack dependencies, so training can emit the same schema (TR-09b);
+  `build_trace_data` lives in `realizar::apr_trace`, and `apr run
+  --trace-level brick|step|layer --trace-output FILE` writes the record serve sends
+  for the same facts. The wire form is unchanged.
 equations:
   C-TRACE-001:
     description: "A trace claims a measurement only when the tracer produced one for this request."
@@ -34,6 +42,12 @@ equations:
   C-TRACE-002:
     description: "The measured parts of a trace never exceed the request's wall clock."
     formula: "provenance(trace) = measured ⟹ Σ breakdown.time_us ≤ wall_us(request)"
+  C-TRACE-003:
+    description: "One renderer: apr run and apr serve emit the same apr-trace-v1 record for the same measured facts."
+    formula: "∀ level ∈ {brick, step, layer}: run_record(level, facts) = build_trace_data(level, facts)"
+  C-TRACE-004:
+    description: "check rejects a record that claims more than it measured: an unknown level, parts past the total, measured with nothing measured, or a wall_clock_total split into rows."
+    formula: "check(t) = Ok ⟹ level(t) ∈ LEVELS ∧ Σ breakdown.time_us ≤ total(t) ∧ (measured ⟹ ops > 0 ∧ |breakdown| > 0) ∧ (wall_clock_total ⟹ breakdown = [total])"
 proof_obligations:
   - id: PO-TRACE-001
     kind: correctness
@@ -43,6 +57,14 @@ proof_obligations:
     kind: correctness
     statement: "traces_for refuses measured when the per-layer (or per-step) sum exceeds the request's wall clock."
     discharged_by: FALSIFY-OBS-TRACE-002
+  - id: PO-TRACE-003
+    kind: correctness
+    statement: "The --trace-output record of apr run at every apr-trace-v1 level is byte-identical to serve's build_trace_data for the same facts, and passes check."
+    discharged_by: FALSIFY-OBS-TRACE-003
+  - id: PO-TRACE-004
+    kind: correctness
+    statement: "check returns a Violation for each mutation of an honest record."
+    discharged_by: FALSIFY-OBS-TRACE-004
 falsification:
   - id: FALSIFY-OBS-TRACE-001
     description: "A trace returned with provenance measured when the tracer did not run. Discharges C-TRACE-001 and PO-TRACE-001."
@@ -50,3 +72,9 @@ falsification:
   - id: FALSIFY-OBS-TRACE-002
     description: "A per-layer (or per-step) sum greater than the request's wall clock reported as measured. Discharges C-TRACE-002 and PO-TRACE-002."
     test: "cargo test -p aprender-serve --lib serve_trace::tests::falsify_obs_trace_002"
+  - id: FALSIFY-OBS-TRACE-003
+    description: "apr run writes an apr-trace-v1 record that differs from serve's for the same facts, or that fails check. Discharges C-TRACE-003 and PO-TRACE-003."
+    test: "cargo test -p aprender-serve --lib falsify_obs_trace_003"
+  - id: FALSIFY-OBS-TRACE-004
+    description: "A mutated record (parts past the total, measured with nothing measured, a split wall_clock_total, an unknown level) passes check. Discharges C-TRACE-004 and PO-TRACE-004."
+    test: "cargo test -p aprender-profile-core --lib apr_trace::tests::falsify_obs_trace_004"

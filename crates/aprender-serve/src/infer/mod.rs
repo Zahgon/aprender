@@ -217,6 +217,9 @@ pub struct InferenceConfig {
     pub trace_verbose: bool,
     /// Trace output file path
     pub trace_output: Option<PathBuf>,
+    /// `--trace-level` (TRACE-001 TR-09). At `brick`/`step`/`layer` the
+    /// `--trace-output` file also carries the `apr-trace-v1` record serve sends.
+    pub trace_level: Option<String>,
     /// Specific trace steps to capture
     pub trace_steps: Option<Vec<String>>,
     /// Show verbose loading/progress output
@@ -286,6 +289,7 @@ impl InferenceConfig {
             trace: false,
             trace_verbose: false,
             trace_output: None,
+            trace_level: None,
             trace_steps: None,
             verbose: false,
             stop_tokens: Vec::new(),
@@ -412,6 +416,13 @@ impl InferenceConfig {
     #[must_use]
     pub fn with_trace_output(mut self, path: impl Into<PathBuf>) -> Self {
         self.trace_output = Some(path.into());
+        self
+    }
+
+    /// Set the trace level (TRACE-001 TR-09)
+    #[must_use]
+    pub fn with_trace_level(mut self, level: impl Into<String>) -> Self {
+        self.trace_level = Some(level.into());
         self
     }
 

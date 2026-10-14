@@ -7,6 +7,7 @@
 //! - [`LazySpan`] — Deferred span construction (zero overhead when unused)
 //! - [`SpanPool`] — Memory pool for span allocations
 //! - [`TraceContext`] / [`LamportClock`] — W3C trace context + causal ordering
+//! - [`apr_trace`] — `apr-trace-v1`, the one trace record serve, run and train write (TRACE-001 TR-09)
 //!
 //! # Design
 //!
@@ -26,6 +27,7 @@
 //! span.finish(); // records duration
 //! ```
 
+pub mod apr_trace;
 pub mod lazy_span;
 pub mod phase_timer;
 pub mod span_pool;

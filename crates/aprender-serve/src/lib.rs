@@ -171,6 +171,8 @@ pub mod api;
 /// The .apr format is the native format for the sovereign AI stack.
 /// GGUF and safetensors are supported as fallback formats.
 pub mod apr;
+/// `apr-trace-v1` (TRACE-001 TR-09): the one trace record `apr run` and `apr serve` write
+pub mod apr_trace;
 /// APR Transformer format for WASM-compatible LLM inference
 ///
 /// Provides F32 transformer weights for fair APR vs GGUF comparison.

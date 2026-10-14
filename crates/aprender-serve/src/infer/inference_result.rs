@@ -586,6 +586,8 @@ struct GgufTraceFacts<'a> {
     inference_ms: f64,
     tps: f64,
     used_gpu: bool,
+    /// `--trace-level`; at an `apr-trace-v1` level the document carries the record.
+    trace_level: Option<&'a str>,
 }
 
 /// Build the `--trace-output` JSON document for a GGUF run.
@@ -627,6 +629,7 @@ fn build_gguf_trace_json(facts: &GgufTraceFacts<'_>) -> serde_json::Value {
         inference_ms,
         tps,
         used_gpu,
+        trace_level,
     } = *facts;
     let load_us = (load_ms * 1000.0).round() as u64;
     let infer_us = (inference_ms * 1000.0).round() as u64;
@@ -678,7 +681,33 @@ fn build_gguf_trace_json(facts: &GgufTraceFacts<'_>) -> serde_json::Value {
             "used_gpu": used_gpu,
         },
         "events": events,
+        "apr_trace": apr_trace_record(trace_level, infer_us, input_token_count, generated_token_count, num_layers),
     })
+}
+
+/// TRACE-001 TR-09: the `apr-trace-v1` record for this run, rendered by the one
+/// renderer serve uses ([`crate::apr_trace::build_trace_data`])
+/// over the same measured facts, so `apr run` and `apr serve` cannot drift.
+/// `null` when the level is not an `apr-trace-v1` level.
+fn apr_trace_record(
+    trace_level: Option<&str>,
+    infer_us: u64,
+    input_tokens: usize,
+    generated_tokens: usize,
+    num_layers: usize,
+) -> serde_json::Value {
+    let (brick, step, layer) = crate::apr_trace::build_trace_data(
+        trace_level,
+        infer_us,
+        input_tokens,
+        generated_tokens,
+        num_layers,
+    );
+    brick
+        .or(step)
+        .or(layer)
+        .and_then(|t| serde_json::to_value(t).ok())
+        .unwrap_or(serde_json::Value::Null)
 }
 
 /// Write GGUF trace output if requested (PMAT-SHOWCASE-METHODOLOGY-001)
@@ -709,6 +738,7 @@ fn write_gguf_trace(
         inference_ms,
         tps,
         used_gpu,
+        trace_level: config.trace_level.as_deref(),
     }))
     .unwrap_or_default();
     if let Err(e) = std::fs::write(trace_path, trace_json) {
@@ -2083,6 +2113,7 @@ mod trace_output_events_tests {
             inference_ms: 640.25,
             tps: 4.7,
             used_gpu: false,
+            trace_level: None,
         }
     }
 
@@ -2134,6 +2165,42 @@ mod trace_output_events_tests {
         let round: serde_json::Value = serde_json::from_str(&text)
             .unwrap_or_else(|e| panic!("trace output must be parseable JSON: {e}\n{text}"));
         assert_eq!(round["model"]["path"], r#"/models/we"ird\path.gguf"#);
+    }
+
+    /// FALSIFY-OBS-TRACE-003: `apr run --trace-level <level> --trace-output`
+    /// carries the record `apr serve` sends for the same facts, byte for byte
+    /// (the document's `timestamp` is not part of it), and the record passes
+    /// `apr-trace-v1`'s [`check`](crate::apr_trace::check).
+    #[test]
+    fn falsify_obs_trace_003_run_record_is_serves_record() {
+        use crate::apr_trace::{build_trace_data, check};
+        let infer_us = (640.25_f64 * 1000.0).round() as u64;
+        for level in ["brick", "step", "layer"] {
+            let mut f = facts("/models/qwen.gguf");
+            f.trace_level = Some(level);
+            let v = build_gguf_trace_json(&f);
+            let (b, s, l) = build_trace_data(Some(level), infer_us, 9, 3, 28);
+            let serve = b.or(s).or(l).expect("serve renders every apr-trace-v1 level");
+            assert_eq!(
+                serde_json::to_string(&v["apr_trace"]).expect("run record"),
+                serde_json::to_string(&serve).expect("serve record"),
+                "level {level}: run and serve records differ"
+            );
+            let run: crate::apr_trace::TraceData =
+                serde_json::from_value(v["apr_trace"].clone()).expect("run record parses");
+            assert_eq!(check(&run), Ok(()), "level {level}: {run:?}");
+        }
+    }
+
+    /// A level that is not an `apr-trace-v1` level (`basic`, `chrome`, none)
+    /// carries no record rather than an invented one.
+    #[test]
+    fn non_apr_trace_levels_carry_no_record() {
+        for level in [None, Some("basic"), Some("chrome")] {
+            let mut f = facts("/models/qwen.gguf");
+            f.trace_level = level;
+            assert!(build_gguf_trace_json(&f)["apr_trace"].is_null(), "{level:?}");
+        }
     }
 }
 
