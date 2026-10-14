@@ -144,18 +144,27 @@ fn validate_artifact_refuses_unlisted_zero_test_contract_in_census_tree_only() {
 }
 
 /// The scope is not vacuous on this repo: the real `contracts/` carries the
-/// census marker, so an unlisted zero-test contract there is refused.
+/// census marker, so an unlisted zero-test contract there is refused, at the
+/// top level and nested.
 #[test]
 fn the_repo_contracts_dir_is_a_census_tree() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../contracts");
-    let new = root.join("brand-new-never-written-v1.yaml");
-    assert!(
-        in_census_tree(&new),
-        "{} has no {CENSUS_MARKER}",
-        root.display()
-    );
     let zero = parse_contract_str(ZERO_TESTS).expect("parses");
-    assert!(check(&new, &zero).is_some_and(|v| v.rule == "SCHEMA-026"));
+    for rel in [
+        "brand-new-never-written-v1.yaml",
+        "never-written-dir/brand-new-v1.yaml",
+    ] {
+        let new = root.join(rel);
+        assert!(
+            in_census_tree(&new),
+            "{} has no {CENSUS_MARKER}",
+            root.display()
+        );
+        assert!(
+            check(&new, &zero).is_some_and(|v| v.rule == "SCHEMA-026"),
+            "{rel}"
+        );
+    }
     let listed = root.join(a_listed_path());
     assert!(check(&listed, &zero).is_none(), "{}", listed.display());
 }
