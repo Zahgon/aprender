@@ -5,6 +5,8 @@
 
 pub mod coverage_report_scope;
 pub mod dag_status;
+pub mod dogfood_baseline;
+pub mod dogfood_pairing;
 pub mod git_patch_id;
 pub mod llama_fit_verdict;
 pub mod package_include_diff;

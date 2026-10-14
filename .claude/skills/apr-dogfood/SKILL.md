@@ -6,7 +6,7 @@
 # invoked and nothing warns. Edits look effective and change nothing that runs.
 # That is what happened when #2357 hardened Gates 1 and 13.
 name: apr-dogfood
-allowed-tools: Bash(cargo:*), Bash(apr:*), Bash(pmat:*), Bash(gh:*), Bash(git:*), Bash(find:*), Bash(head:*), Bash(tail:*), Bash(wc:*), Bash(grep:*), Bash(diff:*), Bash(timeout:*), Bash(jq:*), Bash(python3 scripts/dogfood_baseline.py:*), Bash(python3 scripts/lib/dogfood_coverage_gate.py:*), Bash(gawk:*), Bash(echo:*), Bash(cat:*), Bash(rm:*), Bash(ssh:*), Read, Glob, Grep, Agent
+allowed-tools: Bash(cargo:*), Bash(apr:*), Bash(pmat:*), Bash(gh:*), Bash(git:*), Bash(find:*), Bash(head:*), Bash(tail:*), Bash(wc:*), Bash(grep:*), Bash(diff:*), Bash(timeout:*), Bash(jq:*), Bash(cargo run -q -p aprender-ci-tools -- dogfood-baseline:*), Bash(python3 scripts/lib/dogfood_coverage_gate.py:*), Bash(gawk:*), Bash(echo:*), Bash(cat:*), Bash(rm:*), Bash(ssh:*), Read, Glob, Grep, Agent
 description: Dogfood the aprender release surface — derive every interface from the built binaries, measure gate coverage against the surface ledger, exercise the covered set, and emit a go/no-go receipt
 ---
 
@@ -1573,7 +1573,7 @@ body. Contains:
 
 A standing reminder of where the marginal gate is worth least. Measured
 2026-08-22 from `docs/audits/surface_audit.csv`; re-derive with
-`python3 scripts/dogfood_baseline.py  # section: per_cluster` — **the CSV wins over
+`cargo run -q -p aprender-ci-tools -- dogfood-baseline  # section: per_cluster` — **the CSV wins over
 this table**, which is a dated sample.
 
 | cluster | n | gates | share of all gate effort | cluster coverage |
@@ -1594,11 +1594,11 @@ The nine clusters at zero, largest first: `http-orchestrate-banco` (95),
 `test-harness` (49), `rag-eval` (44), `qa-cgp` (37), `simulation` (18),
 `orchestrate-pacha-secrets` (17).
 
-**Report both numbers or neither (T2).** "5 of 14 clusters gated (35.7%)" without "144 of 904 features gated (15.9%)" beside it is a proxy masquerading as coverage, and the gate refuses to emit it — *on this line too*.
+**Report both numbers or neither (T2).** "5 of 14 clusters gated (35.7%)" without "144 of 905 features gated (15.9%)" beside it is a proxy masquerading as coverage, and the gate refuses to emit it — *on this line too*.
 
 The rule is about the NUMBER, not about a phrasing, and it is enforced on every
 surface that can emit one: the gate's own report, the receipt, the output of
-`scripts/dogfood_baseline.py`, and this file. A ratio whose denominator is the
+`aprender-ci-tools dogfood-baseline`, and this file. A ratio whose denominator is the
 cluster count is a cluster-level claim whatever words surround it, and it must
 carry a ratio whose denominator is the feature count. Both denominators are
 derived from the ledger at run time; neither is a literal in a gate file.

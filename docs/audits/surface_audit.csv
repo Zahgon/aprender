@@ -903,3 +903,4 @@ aprender-ci-tools,aprender-ci-tools dag-status,6,x86_64-linux,NONE,no,12,test-ha
 aprender-ci-tools,aprender-ci-tools git-patch-id,6,x86_64-linux,NONE,no,12,test-harness,crates/aprender-ci-tools/src/main.rs:83,high
 aprender-ci-tools,aprender-ci-tools llama-fit-verdict,6,x86_64-linux,NONE,no,12,test-harness,crates/aprender-ci-tools/src/main.rs:92,high
 aprender-ci-tools,aprender-ci-tools --version,6,x86_64-linux,NONE,no,12,test-harness,crates/aprender-ci-tools/src/main.rs:15,high
+aprender-ci-tools,aprender-ci-tools dogfood-baseline,6,x86_64-linux,NONE,no,12,test-harness,crates/aprender-ci-tools/src/main.rs:103,high

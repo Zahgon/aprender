@@ -1,0 +1,18 @@
+- id: PMAT-4377
+  github_issue: 4377
+  item_type: task
+  title: Port dogfood_baseline.py --check to aprender-ci-tools (no Python on guard path)
+  status: planned
+  priority: high
+  assigned_to: null
+  created: 2026-10-14T14:43:10Z
+  updated: 2026-10-14T14:43:10Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 3998

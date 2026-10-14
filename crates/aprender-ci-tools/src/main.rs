@@ -1,8 +1,9 @@
 //! `aprender-ci-tools`: one binary, one subcommand per ported Python helper.
 
 use aprender_ci_tools::{
-    coverage_report_scope, dag_status, git_patch_id, llama_fit_verdict, package_include_diff,
-    publishable_crates, tarball_build_errors, tarball_shrink_report, tarball_workspace,
+    coverage_report_scope, dag_status, dogfood_baseline, git_patch_id, llama_fit_verdict,
+    package_include_diff, publishable_crates, tarball_build_errors, tarball_shrink_report,
+    tarball_workspace,
 };
 use clap::{ArgGroup, Parser, Subcommand};
 use std::io::{Read, Write};
@@ -94,6 +95,15 @@ enum Cmd {
         /// empty path reads as empty. Any other count exits 1, as the original's unpacking did.
         #[arg(num_args = 0.., allow_hyphen_values = true, trailing_var_arg = true)]
         args: Vec<String>,
+    },
+    /// The G2.3 coverage baselines re-derived from docs/audits/surface_audit.csv, held to
+    /// the T2 pairing rule (was scripts/dogfood_baseline.py). Paths are read from the
+    /// current directory, the repository root. Exit 1 on an unpaired line or, with
+    /// --check, on drift from contracts/apr-dogfood-coverage-v1.yaml.
+    DogfoodBaseline {
+        /// Also require every printed baseline line verbatim in the contract.
+        #[arg(long)]
+        check: bool,
     },
 }
 
@@ -201,6 +211,13 @@ fn run(cmd: Cmd) -> Result<String, Refusal> {
             dag_status::run(&root, &rows).map_err(nothing_printed)
         }
         Cmd::LlamaFitVerdict { args } => llama_fit_verdict::run(&args).map_err(nothing_printed),
+        Cmd::DogfoodBaseline { check } => {
+            match dogfood_baseline::run(std::path::Path::new("."), check) {
+                Ok((out, 0)) => Ok(out),
+                Ok((out, code)) => Err((out, code, String::new())),
+                Err((printed, reason)) => Err((printed, 1, reason)),
+            }
+        }
     }
 }
 
@@ -234,7 +251,10 @@ fn main() -> ExitCode {
     match refusal {
         None => ExitCode::SUCCESS,
         Some((code, reason)) => {
-            eprintln!("{reason}");
+            // A failing run that already printed its verdict has nothing to add.
+            if !reason.is_empty() {
+                eprintln!("{reason}");
+            }
             ExitCode::from(code)
         }
     }

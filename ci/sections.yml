@@ -1433,10 +1433,6 @@ jobs:
           python3 scripts/nightly_manifest.py --self-test   # #4189 nightly gate/manifest/publish plan
           bash scripts/nightly_prune_release.sh --self-test   # nightly publish overflowed page one (422)
           bash scripts/nightly_gate_retry.sh --self-test   # #5053 ci-pending retries, then RED never green
-      # The baseline printer holds its OWN output to the same pairing rule and
-      # re-derives every number the contract quotes.
-      - name: Dogfood baselines must re-derive from the ledger
-        run: python3 scripts/dogfood_baseline.py --check
       # The bump half of the same defect. `cargo set-version --workspace` cannot
       # reach an `exclude`d workspace and does not warn, so three files in
       # crates/facades/ have to ride in every bump commit. scripts/bump-version.sh
@@ -2195,6 +2191,11 @@ jobs:
           cargo test -p aprender-contracts --test validate_contracts
           cargo test -p aprender-contracts --test kani_harness_generation
           cargo test -p aprender-contracts --test probar_test_generation
+      # The baseline printer holds its OWN output to the same pairing rule and
+      # re-derives every number the contract quotes. Rust since #4377 (no Python
+      # on a gate path), so it runs here and not in the cargo-free guard-tree.
+      - name: Dogfood baselines must re-derive from the ledger
+        run: cargo run -q -p aprender-ci-tools -- dogfood-baseline --check
       # MOVED to .github/workflows/guards-nightly.yml (PMAT-1098, row 67-E3):
       # "aprender-core builds for wasm32" -- 94 s of guard-cargo's measured 43.8 min on run
       # 34449608126, and its universe is the tree, not the diff.

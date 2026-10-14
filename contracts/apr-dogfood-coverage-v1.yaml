@@ -3,7 +3,7 @@ metadata:
   created: '2026-08-22'
   author: PAIML Engineering
   references:
-  - 'docs/audits/surface_audit.csv — 142 of 830 features gated, across 28 binaries and 14 clusters, measured 2026-08-22 @ 4bbfeb07f; 142 of 832 features gated after the PERF-046 partial re-audit (PR #2742); 143 of 833 features gated after the PP-LLAMA-001 re-audit (GET /v1/effective-config added and swept by the dogfood route enumeration, router.rs rows re-pointed); 144 of 837 features gated after PP-066 L0-1b added the three `apr parity` flag rows (--per-op, --out, --threshold), which the dogfood sweep does not reach -- the denominator grew and the numerator did not; 144 of 838 features gated after #3726 added `apr tokenize encode` (the tokenizer-parity gate''s id source), which the dogfood sweep does not reach either; 144 of 839 features gated after ONT-10 S19 ledgered the bare `aprender-cbtop` root surface (interactive TUI / --headless), which the dogfood sweep does not reach; 144 of 851 features gated after ONT-4g (#4476) added the twelve pv/apr command rows the binary snapshot found unledgered, none of them gated; 144 of 853 features gated after the ONT-4g bin gate (surface_audit_bins_gate.sh) found `pv-sat` shipping with no row and its two surfaces were ledgered, neither gated; 144 of 857 features gated after ONT-10 S4 ledgered the 4 hf_* tools `aprender-orchestrate mcp` lists, none of them gated; 144 of 868 features gated after ONT-10 S9/S7 mirrored the eleven ONT-4g pv rows as `apr pv` rows (the apr node joins binary=apr), none of them gated; 144 of 894 features gated once main (with #4219''s 26 `<bin> --version` rows, each run and observed printing its SHA, which the dogfood sweep does not reach) merged into ONT-10''s 868; 144 of 904 features gated after the bin gate found `aprender-ci-tools` (the C301 port of the CI helpers) shipping with no row and its ten surfaces (nine subcommands and --version) were ledgered, none of them gated (#5170)'
+  - 'docs/audits/surface_audit.csv — 142 of 830 features gated, across 28 binaries and 14 clusters, measured 2026-08-22 @ 4bbfeb07f; 142 of 832 features gated after the PERF-046 partial re-audit (PR #2742); 143 of 833 features gated after the PP-LLAMA-001 re-audit (GET /v1/effective-config added and swept by the dogfood route enumeration, router.rs rows re-pointed); 144 of 837 features gated after PP-066 L0-1b added the three `apr parity` flag rows (--per-op, --out, --threshold), which the dogfood sweep does not reach -- the denominator grew and the numerator did not; 144 of 838 features gated after #3726 added `apr tokenize encode` (the tokenizer-parity gate''s id source), which the dogfood sweep does not reach either; 144 of 839 features gated after ONT-10 S19 ledgered the bare `aprender-cbtop` root surface (interactive TUI / --headless), which the dogfood sweep does not reach; 144 of 851 features gated after ONT-4g (#4476) added the twelve pv/apr command rows the binary snapshot found unledgered, none of them gated; 144 of 853 features gated after the ONT-4g bin gate (surface_audit_bins_gate.sh) found `pv-sat` shipping with no row and its two surfaces were ledgered, neither gated; 144 of 857 features gated after ONT-10 S4 ledgered the 4 hf_* tools `aprender-orchestrate mcp` lists, none of them gated; 144 of 868 features gated after ONT-10 S9/S7 mirrored the eleven ONT-4g pv rows as `apr pv` rows (the apr node joins binary=apr), none of them gated; 144 of 894 features gated once main (with #4219''s 26 `<bin> --version` rows, each run and observed printing its SHA, which the dogfood sweep does not reach) merged into ONT-10''s 868; 144 of 904 features gated after the bin gate found `aprender-ci-tools` (the C301 port of the CI helpers) shipping with no row and its ten surfaces (nine subcommands and --version) were ledgered, none of them gated (#5170); 144 of 905 features gated after the Rust port of the baseline printer added `aprender-ci-tools dogfood-baseline`, not gated (#4377)'
   - 'docs/audits/surface_audit_elbow.png — k-selection evidence: inertia knee and silhouette over k in [2,45]'
   - 'scripts/dogfood_cluster.py — the k-sweep that produced the elbow plot (k-selection ONLY; it does not write the columns)'
   - 'scripts/check_no_cluster_id_keys.sh — T1 enforcement: nothing may key on `cluster_id`'
@@ -35,7 +35,7 @@ metadata:
   # 17.1%, it is not allowed to become 17.0%.
   #
   # Reproduce the whole block with:
-  #     python3 scripts/dogfood_baseline.py
+  #     cargo run -q -p aprender-ci-tools -- dogfood-baseline
   # which reads docs/audits/surface_audit.csv and prints exactly this YAML.
   # ---------------------------------------------------------------------------
   baselines:
@@ -76,10 +76,10 @@ metadata:
     ledger: docs/audits/surface_audit.csv
 
     overall:
-      command: "python3 scripts/dogfood_baseline.py  # section: totals"
-      rows: 904
+      command: "cargo run -q -p aprender-ci-tools -- dogfood-baseline  # section: totals"
+      rows: 905
       covered: 144
-      ratio: 0.1593            # 144/904 -- 15.9%, NOT "about 16%"
+      ratio: 0.1591            # 144/905 -- 15.9%, NOT "about 16%"
       binaries: 30
       binaries_at_zero_coverage: 29
       clusters: 14
@@ -90,7 +90,7 @@ metadata:
         and pv (49).
 
     per_binary:
-      command: "python3 scripts/dogfood_baseline.py  # section: per_binary"
+      command: "cargo run -q -p aprender-ci-tools -- dogfood-baseline  # section: per_binary"
       note: >
         covered may never DECREASE for any binary; total may never decrease
         without a reconciliation finding recording which direction moved.
@@ -123,10 +123,10 @@ metadata:
       aprender-qa-readme-sync: {total: 2, covered: 0}
       aprender-zram-generator: {total: 2, covered: 0}
       pv-sat: {total: 2, covered: 0}
-      aprender-ci-tools: {total: 10, covered: 0}
+      aprender-ci-tools: {total: 11, covered: 0}
 
     per_cluster:
-      command: "python3 scripts/dogfood_baseline.py  # section: per_cluster"
+      command: "cargo run -q -p aprender-ci-tools -- dogfood-baseline  # section: per_cluster"
       clusters: 14
       clusters_at_zero_coverage: 9
       key: cluster_label
@@ -151,7 +151,7 @@ metadata:
         scripts/lib/dogfood_coverage_gate.py::enforce_pairing -- keyed on the
         NUMBER (a denominator equal to the cluster count) rather than on a
         phrase, and applied to every surface that can emit one: the gate report,
-        the receipt, scripts/dogfood_baseline.py and the skill.
+        the receipt, `aprender-ci-tools dogfood-baseline` and the skill.
 
         KEYED ON `cluster_label`, NEVER `cluster_id` (T1). k-means labels permute when
         the input moves; an obligation keyed on an id silently re-points at a
@@ -167,7 +167,7 @@ metadata:
       data-pipeline: {total: 77, covered: 0}                #  ZERO
       apr-lint-diag: {total: 71, covered: 55}               # 77.5% of cluster, 38.2% of gate effort
       orchestrate-agent-stack: {total: 56, covered: 0}      #  ZERO
-      test-harness: {total: 61, covered: 0}                 #  ZERO
+      test-harness: {total: 62, covered: 0}                 #  ZERO
       http-apr-serve: {total: 45, covered: 40}              # 88.9% of cluster, 27.8% of gate effort
       profiling: {total: 46, covered: 1}                    # 2.2% of cluster,  0.7% of gate effort
       rag-eval: {total: 46, covered: 0}                     #  ZERO
@@ -176,7 +176,7 @@ metadata:
       orchestrate-pacha-secrets: {total: 17, covered: 0}    #  ZERO
 
     per_band:
-      command: "python3 scripts/dogfood_baseline.py  # section: per_band"
+      command: "cargo run -q -p aprender-ci-tools -- dogfood-baseline  # section: per_band"
       note: >
         THE ARGUMENT FOR MAKING COVERAGE THE ORGANIZING GATE. Where gates look,
         they find defects: the 1-2 band is 72.5% covered. Where they do not look,
@@ -185,12 +185,12 @@ metadata:
         the 4.3% coverage of that band is why.
       q1_2: {total: 80, covered: 58}     # 72.5%
       q3_4: {total: 49, covered: 27}     # 55.1%
-      q5_6: {total: 716, covered: 29}    # 4.1%
+      q5_6: {total: 717, covered: 29}    # 4.0%
       q7_8: {total: 38, covered: 10}      # 26.3%
       q9_10: {total: 21, covered: 20}    # 95.2%
 
     hardware_provenance:
-      command: "python3 scripts/dogfood_baseline.py  # section: totals"
+      command: "cargo run -q -p aprender-ci-tools -- dogfood-baseline  # section: totals"
       unknown: 427
       direction: "may only DECREASE -- 427 is a ceiling"
       note: >
@@ -198,7 +198,7 @@ metadata:
         job that runs it is UNKNOWN.
 
     confidence:
-      command: "python3 scripts/dogfood_baseline.py  # section: totals"
+      command: "cargo run -q -p aprender-ci-tools -- dogfood-baseline  # section: totals"
       low_and_uncovered: 204
       direction: "may only DECREASE -- 204 is a ceiling"
       note: >
@@ -206,7 +206,7 @@ metadata:
         checks it, and the ledger itself is unsure what it claims.
 
     broken_and_ungated:
-      command: "python3 scripts/dogfood_baseline.py  # section: totals"
+      command: "cargo run -q -p aprender-ci-tools -- dogfood-baseline  # section: totals"
       count: 44
       direction: "may only DECREASE -- target 0"
       note: >
@@ -296,7 +296,7 @@ equations:
     codomain: bool
     invariants:
     - "T2. Cluster coverage is a PROXY: one gate in a 95-member cluster is 1%, not covered"
-    - "5/14 clusters (35.7%) and 144/904 features (15.9%) are reported together, always"
+    - "5/14 clusters (35.7%) and 144/905 features (15.9%) are reported together, always"
     - "Enforced mechanically by enforce_pairing(); deleting the feature fraction from the emitter turns the gate RED"
     - "This is the single most important trap: reporting the proxy alone is how a coverage gate becomes theatre while looking stricter"
 
@@ -463,7 +463,7 @@ falsification_tests:
     matches the ledger. Measured 2026-08-22: apr 142/367, the other 27 binaries
     0, bands 58/80, 27/49, 29/673, 8/8, 20/20.
   test: |
-    python3 scripts/dogfood_baseline.py --check
+    cargo run -q -p aprender-ci-tools -- dogfood-baseline --check
   if_fails: >
     A per-binary or per-band count drifted from the committed baseline. The
     aggregate ratio can hide this: dropping a gate on `apr` while adding one
@@ -684,8 +684,8 @@ falsification_tests:
   prediction: >
     Every emitted line stating a CLUSTER-level ratio also states the underlying
     FEATURE-level ratio, on EVERY channel one can be emitted through: this gate's
-    report, the receipt, scripts/dogfood_baseline.py and
-    .claude/skills/apr-dogfood/SKILL.md. 5 of 14 clusters (35.7%) is a proxy and 144 of 904 features (15.9%) is the thing.
+    report, the receipt, `aprender-ci-tools dogfood-baseline` and
+    .claude/skills/apr-dogfood/SKILL.md. 5 of 14 clusters (35.7%) is a proxy and 144 of 905 features (15.9%) is the thing.
     One gate in a 95-member cluster is
     1%. The rule keys on the NUMBER -- a denominator equal to the cluster count
     -- not on a phrase, because a phrase can be reworded and a denominator cannot;
@@ -699,7 +699,7 @@ falsification_tests:
       --head docs/audits/surface_audit.csv \
       --pair-scan .claude/skills/apr-dogfood/SKILL.md \
       --pair-scan contracts/apr-dogfood-coverage-v1.yaml
-    python3 scripts/dogfood_baseline.py --check > /dev/null
+    cargo run -q -p aprender-ci-tools -- dogfood-baseline --check > /dev/null
   if_fails: >
     The receipt reports a PROXY as though it were coverage. This rebuilds the
     vacuity failure one level up: a clean sweep over cluster membership, looking
@@ -895,7 +895,7 @@ verification_summary:
     `git show origin/main:docs/audits/surface_audit.csv`, the same ref the other
     floors use. No cluster count, no gate count and no zero-cluster count is
     written as a literal in any gate file. The `baselines:` block below is
-    DOCUMENTATION re-derivable by `python3 scripts/dogfood_baseline.py --check`;
+    DOCUMENTATION re-derivable by `cargo run -q -p aprender-ci-tools -- dogfood-baseline --check`;
     editing it changes nothing the gate enforces.
 
     SCHEMA-UPGRADE WINDOW, declared rather than hidden: while origin/main still

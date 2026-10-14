@@ -18,6 +18,8 @@
 #   llama-fit-verdict       vs scripts/lib/llama_fit_verdict.py (kept: model_ladder.sh's
 #                           certification path still calls it), exact exit code too, run
 #                           under CPython 3.12/3.13 (LFV_PYTHON=) whose Unicode it follows.
+#   dogfood-baseline        vs scripts/dogfood_baseline.py, read from git with the pairing
+#                           module it imports (both blobs pinned; the .py is deleted).
 #
 # coverage_report_scope.py runs `cargo metadata` itself, so its fixture cases put a
 # fake `cargo` first on PATH that prints the fixture; both sides then read the same
@@ -36,7 +38,7 @@ set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT" || exit 1
 PY="${PYTHON:-python3}"
-EXPECTED_CASES=201
+EXPECTED_CASES=219
 
 BIN="${CI_TOOLS_BIN:-}"
 if [[ -z "$BIN" ]]; then
@@ -676,6 +678,85 @@ lfv "--help alone (raises)" --help
 lfv "-h among seven" 1 "$PIN" 0 1 "$g/ver" "$g/fits" -h
 lfv "--version alone (raises)" --version
 
+
+# --- 7. dogfood-baseline (its .py is deleted: the validator and the pairing module it
+# imports are read from git). Its paths are relative to the current directory, so each
+# case runs both sides inside a fixture root. ---
+DB_PY_BLOB=2826a1db2bae7ca2d1ce44e000a2e57c9bc37bdc
+DB_GATE_BLOB=e6828233db0decb71d00ce9b8a23797410603852
+mkdir -p "$tmp/db/lib"
+if ! git cat-file blob "$DB_PY_BLOB" >"$tmp/db/dogfood_baseline.py" 2>/dev/null ||
+    ! git cat-file blob "$DB_GATE_BLOB" >"$tmp/db/lib/dogfood_coverage_gate.py" 2>/dev/null; then
+    echo "FAIL: dogfood_baseline.py blobs not in this clone; fetch full history" >&2
+    exit 1
+fi
+DB_CSV=docs/audits/surface_audit.csv
+DB_CONTRACT=contracts/apr-dogfood-coverage-v1.yaml
+DB_HEAD="$(head -1 "$DB_CSV")"
+# db_fixture NAME: a root holding the live contract; prints where its ledger goes.
+db_fixture() {
+    mkdir -p "$tmp/dbf/$1/docs/audits" "$tmp/dbf/$1/contracts"
+    cp "$DB_CONTRACT" "$tmp/dbf/$1/$DB_CONTRACT"
+    echo "$tmp/dbf/$1/$DB_CSV"
+}
+# db NAME DIR [--check]
+db() {
+    local name="$1" dir="$2"
+    shift 2
+    EXACT_RC=1 check "dogfood-baseline: $name" "$tmp/empty" \
+        env -C "$dir" "$PY" "$tmp/db/dogfood_baseline.py" "$@" -- \
+        env -C "$dir" "$BIN" dogfood-baseline "$@"
+}
+db "live ledger" "$ROOT"
+db "live ledger --check" "$ROOT" --check
+cp "$DB_CSV" "$(db_fixture drift)"
+sed -i 's/^\(      rows: \)[0-9]*$/\1999999/' "$tmp/dbf/drift/$DB_CONTRACT"
+db "drifted contract --check" "$tmp/dbf/drift" --check
+cp "$DB_CSV" "$(db_fixture nocontract)"
+rm -f "${tmp:?}/dbf/nocontract/${DB_CONTRACT:?}"
+db "contract missing" "$tmp/dbf/nocontract"
+db "contract missing --check (report printed, then raises)" "$tmp/dbf/nocontract" --check
+cat >"$(db_fixture small)" <<CSV
+$DB_HEAD
+a,a x,6,UNKNOWN,t,yes,1,lab-b,p,high
+
+a,a y,3,gx,t,no,1,lab-b,p,low
+b,"b, z",9,UNKNOWN,t,YES ,2, lab-a ,p,Low
+c,c q,10,UNKNOWN,t,,3,lab-c,p,high
+CSV
+db "small ledger" "$tmp/dbf/small"
+db "small ledger --check" "$tmp/dbf/small" --check
+sed 's/$/\r/' "$DB_CSV" >"$(db_fixture crlf)"
+db "CRLF ledger --check" "$tmp/dbf/crlf" --check
+printf '%s\n' "$DB_HEAD" >"$(db_fixture header)"
+db "header only" "$tmp/dbf/header"
+: >"$(db_fixture empty)"
+db "empty file" "$tmp/dbf/empty"
+printf '\n' >"$(db_fixture newline)"
+db "one newline" "$tmp/dbf/newline"
+printf '\n\na,b,1\n' >"$(db_fixture headerless)"
+db "rows with no header (raises)" "$tmp/dbf/headerless"
+{
+    printf '\xef\xbb\xbf'
+    cat "$DB_CSV"
+} >"$(db_fixture bom)"
+db "UTF-8 BOM renames the first column (raises)" "$tmp/dbf/bom"
+sed '3s/,6,/,six,/' "$DB_CSV" >"$(db_fixture badq)"
+db "non-integer quality (raises)" "$tmp/dbf/badq"
+cut -d, -f1-5,7- "$DB_CSV" >"$(db_fixture nocol)"
+db "in_dogfood_skill column missing (raises)" "$tmp/dbf/nocol"
+{
+    cat "$DB_CSV"
+    echo 'x,x y,4'
+} >"$(db_fixture short)"
+db "short row (raises)" "$tmp/dbf/short"
+{
+    cat "$DB_CSV"
+    echo 'x,x y,4,a,b,yes,1,l,p,high,extra'
+} >"$(db_fixture long)"
+db "long row --check" "$tmp/dbf/long" --check
+mkdir -p "$tmp/dbf/noledger"
+db "ledger missing (raises)" "$tmp/dbf/noledger"
 ran=$((pass + fail))
 echo "ci_tools_py_parity: $pass/$ran identical (declared $EXPECTED_CASES)"
 if [[ "$ran" -ne "$EXPECTED_CASES" ]]; then

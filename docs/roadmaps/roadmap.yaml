@@ -23756,6 +23756,24 @@ Not done, pending the ruling: moving the 31 fixture files to an obviously synthe
   labels:
   - kind:code
   notes: null
+- id: PMAT-4377
+  github_issue: 4377
+  item_type: task
+  title: Port dogfood_baseline.py --check to aprender-ci-tools (no Python on guard path)
+  status: planned
+  priority: high
+  assigned_to: null
+  created: 2026-10-14T14:43:10Z
+  updated: 2026-10-14T14:43:10Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 3998
 - id: PMAT-4415
   github_issue: 4415
   item_type: task
