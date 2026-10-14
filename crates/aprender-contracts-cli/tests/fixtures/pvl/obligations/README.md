@@ -78,9 +78,11 @@ script has no verdict to record:
 - an input the script dies on with a traceback is a named problem. The module doc lists each
   one, and `a_non_string_proved_type_is_named_where_a_bound_fn_reaches_it` tests one;
 - YAML 1.2 (`serde-saphyr`, strict booleans) against PyYAML's YAML 1.1: a plain `no` is a string here;
-- a document `serde_yaml` refuses and PyYAML reads (a duplicate key, an integer beyond 64 bits)
-  fails `pv validate` on both sides. pv reports only that, as the script does, but cannot run
-  checks 2 and 3 on it, so a problem PyYAML would also find there goes unnamed (the verdict
-  agrees). `a_document_serde_yaml_refuses_fails_validate_so_the_verdict_agrees` holds both
-  shapes to the script's measured output;
+- a document `serde-saphyr` refuses and PyYAML reads (a duplicate key) fails `pv validate` on
+  both sides. pv reports only that, as the script does, but cannot run checks 2 and 3 on it, so
+  a problem PyYAML would also find there goes unnamed (the verdict agrees).
+  `a_document_the_parser_refuses_fails_validate_so_the_verdict_agrees` holds it to the script's
+  measured output. An integer beyond 64 bits, which `serde_yaml` refused, is now read on both
+  sides (#5209); `an_integer_beyond_64_bits_is_read_and_checked_as_the_script_does` holds it to
+  the script's measured `0 problem(s) over 1 contracts`, exit 0;
 - `src/` is walked on disk, so untracked files count.
