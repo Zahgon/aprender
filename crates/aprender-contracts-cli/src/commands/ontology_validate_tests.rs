@@ -45,7 +45,7 @@ fn min_count_001_reports_the_w3c_result() {
 /// refused as unreadable (2), and the suite is not all refusals.
 #[test]
 fn every_vendored_case_reports_or_is_refused_by_name() {
-    let mut reported = 0;
+    let (mut reported, mut refused) = (0, Vec::new());
     for dir in ["node", "property", "targets"] {
         let mut files: Vec<_> = std::fs::read_dir(w3c(dir))
             .expect("the W3C directory lists")
@@ -63,11 +63,16 @@ fn every_vendored_case_reports_or_is_refused_by_name() {
                         "{}",
                         e.message
                     );
+                    refused.push(e.message);
                 }
             }
         }
     }
-    assert!(reported >= 20, "only {reported} W3C cases ran");
+    assert!(
+        reported >= 20,
+        "only {reported} W3C cases ran; refused:\n{}",
+        refused.join("\n")
+    );
 }
 
 #[test]

@@ -64,6 +64,22 @@ impl Node {
         }
     }
 
+    /// A message as written: each `<SKOLEM…>` it names becomes the blank node [`Node::iri`] writes for it.
+    fn message(m: &str) -> String {
+        let mut out = String::new();
+        let mut rest = m;
+        let open = format!("<{SKOLEM}");
+        while let Some(at) = rest.find(&open) {
+            let label = &rest[at + open.len()..];
+            let Some(end) = label.find('>') else { break };
+            out.push_str(&rest[..at]);
+            out.push_str(&format!("_:d{}", &label[..end]));
+            rest = &label[end + 1..];
+        }
+        out.push_str(rest);
+        out
+    }
+
     fn term(t: &Term) -> Self {
         match t {
             Term::Iri(i) => Self::iri(i),
@@ -157,7 +173,7 @@ fn triples(report: &Report) -> Vec<(Node, String, Node)> {
         out.push((
             res,
             sh("resultMessage"),
-            Node::Literal(r.message.clone(), xsd_string.into()),
+            Node::Literal(Node::message(&r.message), xsd_string.into()),
         ));
     }
     for (at, (node, path)) in blank_shapes.iter().enumerate() {
@@ -209,7 +225,7 @@ fn json_result(r: &ValidationResult) -> serde_json::Value {
         "sourceShape": r.source.key(),
         "sourceConstraintComponent": component_iri(r.component),
         "resultSeverity": severity_iri(r.severity),
-        "resultMessage": r.message,
+        "resultMessage": Node::message(&r.message),
     })
 }
 

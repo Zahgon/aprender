@@ -75,6 +75,14 @@ fn a_data_blank_node_value_is_written_back_as_a_blank_node() {
         !nt.contains(SKOLEM),
         "no skolem IRI leaks into the report\n{nt}"
     );
+    assert!(
+        nt.contains("\"_:dv is not"),
+        "the message names the value as the report does\n{nt}"
+    );
+    assert!(
+        !to_json(&report(TWO_RESULTS)).to_string().contains(SKOLEM),
+        "nor into the JSON"
+    );
 }
 
 #[test]
