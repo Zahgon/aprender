@@ -106,3 +106,20 @@ equations:
     invariants:
       - "a listed model never inherits the default"
       - "a budget without a basis is not a budget"
+
+falsification_tests:
+  - id: FALSIFY-THINKING-BUDGETS-001
+    rule: "A model listed in models with no budget fails closed; it never inherits the default"
+    prediction: "The test resolves a model listed without a budget and asserts an error saying it has no measured thinking budget, refuses rather than inherits, and carries the measured figure"
+    test: "cargo test -p apr-cli --lib commands::qa::thinking_budget_resolution::a_listed_model_without_a_budget_is_refused_not_defaulted"
+    if_fails: "A listed model silently takes the default budget, so the golden thinking-ON leg judges it against an unmeasured cap"
+  - id: FALSIFY-THINKING-BUDGETS-002
+    rule: "A model not in models takes default.budget, with a basis that says it is the default"
+    prediction: "The test resolves an unlisted model and asserts budget 2048 with a basis starting default: and naming the one model it was measured on"
+    test: "cargo test -p apr-cli --lib commands::qa::thinking_budget_resolution::an_unlisted_model_takes_the_default_and_says_so"
+    if_fails: "The default is applied without its basis, or a different number is used"
+  - id: FALSIFY-THINKING-BUDGETS-003
+    rule: "A budget without a basis is not a budget: the env probe override is labelled as a probe, never as a measurement"
+    prediction: "The test sets APR_THINKING_ON_BUDGET=8192 and asserts the budget is 8192 with a basis saying PROBE OVERRIDE and not a measurement"
+    test: "cargo test -p apr-cli --lib commands::qa::thinking_budget_resolution::the_probe_override_is_labelled_as_a_probe"
+    if_fails: "A probe value is reported as if it were a measured budget"
