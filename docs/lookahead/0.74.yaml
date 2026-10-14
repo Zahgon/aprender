@@ -35,7 +35,7 @@ staged:
   - {branch: la-74/wip, head: see git log, rows: [R1, R1-codegen, R4, F4, C358-1a, C358-1b, C358-1d, C358-1e, C358-1f, C358-1g, C358-1c-moe], pr: none, slot: "after pb_streak, jetson, #5054 (cop f7 13:1xZ)"}
 questions:
   - {id: Q1, text: "R2: keep or drop the qwen3_5_moe aliases on the qwen3_moe arch-constraints row while qwen35moe is refused?", asked: 2026-10-10, answer: "KEEP (quorum 2/2 a, 2026-10-10 ~21:10Z, handoff/quorum-la074-r2-aliases.md)"}
-  - {id: Q2, text: "A5 parity pass line: exact greedy-token match for N tokens, or logits cosine >= X?", asked: 2026-10-10, answer: open}
+  - {id: Q2, text: "A5 parity pass line: exact greedy-token match for N tokens, or logits cosine >= X?", asked: 2026-10-10, answer: "(a) by quorum 2/2 2026-10-14 (handoff/quorum-la074-q2-parity.md): >=8 varied prompts, apr run greedy == llama.cpp (pinned sha) for 32 tokens, or a divergence only where llama.cpp top-2 margin < 0.05 (a near-tie, listed by prompt+position); a token-flipping positive control (L0 e1<->e2, not L24 e4<->e8) must fail the same line; cosine reported only"}
 risks:
   - {risk: "#3418 touches ~30 hot dispatch files that 0.71 also edits", mechanism: "contract and docs first; code only on branches, rebased after 0.71.0", tripwire: "a 0.71 conflict on any staged branch: hold it"}
   - {risk: "parity on one prompt is an anecdote (CLAUDE.md rule 6)", mechanism: ">=4 varied prompts + positive control", tripwire: "any single-prompt claim in a report"}
