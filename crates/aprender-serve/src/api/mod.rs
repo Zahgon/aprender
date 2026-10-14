@@ -267,9 +267,39 @@ pub struct AppState {
     /// /v1/effective-config` reports. One field rather than four so that adding
     /// a reported fact does not mean editing sixteen struct literals.
     effective: EffectiveConfigState,
+    /// #3720: what serves this model: the loaded file's sha256 and the apr build (set by
+    /// `with_model_identity`). Sent as `x-apr-model-digest` on every response and as
+    /// `model_digest` / `apr_version` / `apr_git_sha` in completion bodies.
+    model_identity: Option<Arc<ModelIdentity>>,
+}
+
+/// #3720: the identity of the model a server answers with: the sha256 (lower-case hex,
+/// what `sha256sum` prints) of the file it loaded, and the apr build that loaded it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelIdentity {
+    /// sha256 of the served model file
+    pub digest: String,
+    /// apr's version, e.g. "0.71.0"
+    pub apr_version: String,
+    /// the git sha apr was built from
+    pub apr_git_sha: String,
 }
 
 impl AppState {
+    /// #3720: the served model's identity (file sha256 + apr build). `None` sends no
+    /// header and no body fields: a server that was not told claims nothing.
+    #[must_use]
+    pub fn with_model_identity(mut self, identity: Option<ModelIdentity>) -> Self {
+        self.model_identity = identity.map(Arc::new);
+        self
+    }
+
+    /// #3720: the served model's identity, when the server was given one.
+    #[must_use]
+    pub fn model_identity(&self) -> Option<&ModelIdentity> {
+        self.model_identity.as_deref()
+    }
+
     /// Attach measured model provenance/metadata.
     ///
     /// Call this from whatever loaded the model; it is what makes

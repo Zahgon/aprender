@@ -83,7 +83,7 @@ fn start_apr_server_gpu(
     .with_verbose(false) // with_batch_config deferred until realizar API stabilizes
     .with_verbose(config.verbose);
 
-    let app = create_router_with_config(state, config.router_config());
+    let app = create_router_with_config(identified(state, config), config.router_config());
     run_server_async(app, &config.bind_addr(), "APR GPU (fused Q4K kernels)")
 }
 
@@ -194,7 +194,7 @@ fn start_apr_q4k_server_gpu(
 
     println!("{}", "Q4K GPU inference ready (ALB-095)".green());
 
-    let app = create_router_with_config(state, config.router_config());
+    let app = create_router_with_config(identified(state, config), config.router_config());
     run_server_async(app, &config.bind_addr(), "APR GPU (Q4K CUDA — ALB-095)")
 }
 
@@ -280,7 +280,7 @@ fn start_safetensors_server_gpu(
     .with_verbose(false) // with_batch_config deferred until realizar API stabilizes
     .with_verbose(config.verbose);
 
-    let app = create_router_with_config(state, config.router_config());
+    let app = create_router_with_config(identified(state, config), config.router_config());
     run_server_async(app, &config.bind_addr(), "SafeTensors GPU (fused Q4K kernels)")
 }
 

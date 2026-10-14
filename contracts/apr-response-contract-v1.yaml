@@ -76,6 +76,24 @@ equations:
     postconditions:
     - a consumer can lock a generated asset to the exact model file and apr build
     lean_theorem: Theorems.Model_Identity
+  serve_model_identity:
+    formula: |
+      forall response h of apr serve given one local model file m:
+        header(h, "x-apr-model-digest") = sha256sum(m)
+        body(h).object in {"chat.completion", "text_completion"}
+          ==>  body(h).model_digest = sha256sum(m), body(h).apr_version, body(h).apr_git_sha
+    domain: every HTTP response of apr serve on realizar's router (streams carry the header, sent before the first event)
+    codomain: what answered the request
+    invariants:
+    - A server given no identity (no single model file) sends no header and no body fields
+    - Every other body passes through unchanged
+    - The file is hashed once at startup
+    preconditions:
+    - apr serve was given one readable model file
+    postconditions:
+    - a client can lock a served answer to the exact model file and apr build
+    lean_theorem: Theorems.Serve_Model_Identity
+    notes: The apr-cli-owned routers (wgpu, the APR CPU and SafeTensors fallback servers) do not carry it yet.
 proof_obligations:
 - id: RESP-INV-001
   type: invariant
@@ -97,6 +115,11 @@ proof_obligations:
   property: the document names the model file by its sha256 and the apr build
   formal: "(is_file(m) ⇒ model_digest(D) = sha256(m)) ∧ (¬is_file(m) ⇒ model_digest(D) = null)"
   applies_to: model_identity
+- id: RESP-INV-005
+  type: invariant
+  property: every apr serve response names the served file's sha256; completion bodies name the build too
+  formal: "∀ h ∈ responses(m): digest_header(h) = sha256(m) ∧ (completion(h) ⇒ model_digest(h) = sha256(m))"
+  applies_to: serve_model_identity
 enforcement:
   cli_error_envelope:
     description: Every CliError variant maps to a kind, a status and its exit code
@@ -113,6 +136,10 @@ enforcement:
   model_identity_named:
     description: apr run --json names the model digest and the apr build
     check: run_tests_response_contract::FALSIFY-RESP-004
+    severity: ERROR
+  serve_model_identity_named:
+    description: apr serve sends x-apr-model-digest on every response and the identity in completion bodies
+    check: model_identity_3720::FALSIFY-RESP-005
     severity: ERROR
 falsification_tests:
 - id: FALSIFY-RESP-001
@@ -151,3 +178,16 @@ falsification_tests:
     response_contract_the_model_digest_is_sha256sum_of_the_file_and_none_for_a_directory
   file: crates/apr-cli/src/commands/run_tests_response_contract.rs
   if_fails: a consumer cannot lock a generated asset to the model and build that produced it
+- id: FALSIFY-RESP-005
+  rule: apr serve names the model that answered
+  prediction: /health, /v1/models, an unmatched route and a chat completion all carry x-apr-model-digest;
+    the chat.completion body carries model_digest, apr_version, apr_git_sha; non-completion objects are
+    untouched; no identity, no header; apr serve's identity is the sha256sum of the file it was given
+  test: |
+    every_response_carries_the_model_digest_header
+    a_completion_body_names_what_produced_it
+    only_a_completion_object_is_stamped
+    the_served_identity_is_sha256sum_of_the_file_and_this_build
+    identified_hands_the_router_the_served_identity
+  file: crates/aprender-serve/src/api/tests/model_identity_3720.rs
+  if_fails: a served answer cannot be traced to the model file or apr build that produced it

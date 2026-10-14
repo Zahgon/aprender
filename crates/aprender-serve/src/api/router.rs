@@ -370,7 +370,82 @@ pub fn create_router_with_config(state: AppState, config: RouterConfig) -> Route
         panic_to_json_500,
     ));
 
+    // #3720: every response names the model that answered it: the `x-apr-model-digest`
+    // header (streams too: it is sent before the first event), and in a completion body
+    // `model_digest` / `apr_version` / `apr_git_sha`. Outermost, so even a caught panic
+    // carries it. A server given no identity sends none.
+    if let Some(identity) = state.model_identity().cloned() {
+        if let Ok(header) = axum::http::HeaderValue::from_str(&identity.digest) {
+            let identity = std::sync::Arc::new((identity, header));
+            router = router.layer(axum::middleware::from_fn(move |request, next| {
+                let identity = std::sync::Arc::clone(&identity);
+                async move { stamp_model_identity(&identity.0, identity.1.clone(), request, next).await }
+            }));
+        }
+    }
+
     router.with_state(state)
+}
+
+/// #3720: the completion objects whose body carries the model identity. A stream's
+/// chunks do not (each event is one token); its header does.
+const IDENTIFIED_OBJECTS: [&str; 2] = ["chat.completion", "text_completion"];
+
+/// #3720: add `x-apr-model-digest` to `request`'s response and, when it is a JSON
+/// completion (an `object` in [`IDENTIFIED_OBJECTS`]), the identity fields to its body.
+/// Every other body passes through unread.
+async fn stamp_model_identity(
+    identity: &ModelIdentity,
+    header: axum::http::HeaderValue,
+    request: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(request).await;
+    response.headers_mut().insert("x-apr-model-digest", header);
+    let is_json = response
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.starts_with("application/json"));
+    if !(is_json && response.status().is_success()) {
+        return response;
+    }
+    let (mut parts, body) = response.into_parts();
+    let Ok(raw) = axum::body::to_bytes(body, usize::MAX).await else {
+        // The handler's body could not be read back: it is gone either way, so say so
+        // in the envelope every other error uses instead of sending an empty 200.
+        let failed = panic_to_json_500(Box::new("completion body could not be re-read"));
+        let (failed_parts, failed_body) = failed.into_parts();
+        parts.status = failed_parts.status;
+        parts.headers.remove(axum::http::header::CONTENT_LENGTH);
+        return axum::response::Response::from_parts(parts, failed_body);
+    };
+    let stamped = serde_json::from_slice::<serde_json::Value>(&raw)
+        .ok()
+        .and_then(|value| with_model_identity(value, identity))
+        .and_then(|value| serde_json::to_vec(&value).ok());
+    let Some(stamped) = stamped else {
+        return axum::response::Response::from_parts(parts, axum::body::Body::from(raw));
+    };
+    parts.headers.remove(axum::http::header::CONTENT_LENGTH);
+    axum::response::Response::from_parts(parts, axum::body::Body::from(stamped))
+}
+
+/// #3720: `value` with the identity fields added, when it is a completion object;
+/// `None` (leave the body byte-identical) for anything else.
+fn with_model_identity(
+    mut value: serde_json::Value,
+    identity: &ModelIdentity,
+) -> Option<serde_json::Value> {
+    let object = value.get("object").and_then(serde_json::Value::as_str)?;
+    if !IDENTIFIED_OBJECTS.contains(&object) {
+        return None;
+    }
+    let body = value.as_object_mut()?;
+    body.insert("model_digest".into(), identity.digest.clone().into());
+    body.insert("apr_version".into(), identity.apr_version.clone().into());
+    body.insert("apr_git_sha".into(), identity.apr_git_sha.clone().into());
+    Some(value)
 }
 
 /// Turn a caught panic into the same JSON envelope every other error uses.

@@ -86,6 +86,7 @@ impl AppState {
             verbose: false,
             trace: false,
             model_source: None,
+            model_identity: None,
             effective: EffectiveConfigState::new(),
         })
     }
