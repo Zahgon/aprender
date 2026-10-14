@@ -53,6 +53,49 @@ pub fn shot_body(model: &str, prompt: &str, tg: u64) -> Value {
     })
 }
 
+/// Probes a fitted prompt may spend before it gives up.
+pub const FIT_TRIES: usize = 8;
+
+/// `n` filler words. Each is one token on the Qwen and Llama vocabularies,
+/// but the fit below never relies on that: it reads the engine's own count.
+#[must_use]
+pub fn filler(n: u64) -> String {
+    " the".repeat(usize::try_from(n).unwrap_or(0))
+}
+
+/// A user prompt that the engine reports as exactly `pp` prompt tokens.
+///
+/// The chat template adds a per-engine overhead, so one fixed text is not
+/// `pp` tokens on both engines. `probe` sends a prompt and returns the
+/// server-reported `prompt_tokens`; the filler length is moved by the miss
+/// until the count is exact.
+///
+/// # Errors
+/// A probe error, or no exact fit within [`FIT_TRIES`] probes.
+pub fn fit_prompt(
+    pp: u64,
+    mut probe: impl FnMut(&str) -> Result<u64, String>,
+) -> Result<String, String> {
+    let mut n = pp;
+    let mut seen = Vec::with_capacity(FIT_TRIES);
+    for _ in 0..FIT_TRIES {
+        let text = filler(n);
+        let got = probe(&text)?;
+        if got == pp {
+            return Ok(text);
+        }
+        seen.push((n, got));
+        let next = i128::from(n) + i128::from(pp) - i128::from(got);
+        n = u64::try_from(next.max(1)).unwrap_or(1);
+        if seen.iter().any(|&(m, _)| m == n) {
+            break;
+        }
+    }
+    Err(format!(
+        "no filler length gives {pp} prompt tokens: {seen:?}"
+    ))
+}
+
 /// One shot's (ttft ms, prefill ms/token, decode ms/token), or why none.
 fn sample(i: usize, s: &Parsed, pp: u64, tg: u64) -> Result<[f64; 3], ShotRefusal> {
     let (prompt, completion) = s

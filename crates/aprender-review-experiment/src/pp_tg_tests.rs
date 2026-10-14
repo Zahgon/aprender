@@ -98,6 +98,34 @@ fn too_few_or_no_shots_give_no_phases() {
     );
 }
 
+/// A fake engine: `overhead` template tokens plus `per_word` tokens per word.
+fn engine(overhead: u64, per_word: u64) -> impl FnMut(&str) -> Result<u64, String> {
+    move |p: &str| Ok(overhead + per_word * p.split_whitespace().count() as u64)
+}
+
+#[test]
+fn a_fitted_prompt_is_exactly_pp_tokens_on_each_engine() {
+    for overhead in [0, 9, 23, 300] {
+        let text = fit_prompt(PP, engine(overhead, 1)).expect("one token per word fits");
+        assert_eq!(
+            overhead + text.split_whitespace().count() as u64,
+            PP,
+            "overhead {overhead}"
+        );
+    }
+}
+
+#[test]
+fn falsify_crux_perf_009_a_prompt_that_cannot_be_pp_tokens_is_refused() {
+    // Two tokens per word plus an odd overhead never lands on 512: the fit
+    // refuses rather than handing back the nearest miss.
+    assert!(fit_prompt(PP, engine(23, 2)).is_err());
+    // A template longer than pp leaves no room for any prompt.
+    assert!(fit_prompt(PP, engine(600, 1)).is_err());
+    // A probe failure is the fit's failure.
+    assert!(fit_prompt(PP, |_: &str| Err("refused".to_string())).is_err());
+}
+
 #[test]
 fn the_shot_body_asks_for_exactly_tg_tokens_past_eos() {
     let b = shot_body("qwen3.5-4b", "hello", TG);
