@@ -1,0 +1,119 @@
+metadata:
+  kind: schema
+  version: 1.0.0
+  created: '2026-10-14'
+  author: PAIML Engineering
+  description: |
+    The apr response contract for machine consumers (#3720, derived from #3716's consumer
+    requirements: a consumer that locks a generated asset to what produced it needs to know
+    how the run ended, and why). One schema for every machine-readable `apr run` output,
+    not a copy per mode.
+
+    Every JSON output carries `status` (ok | refused | failed) and, iff not ok, an
+    error naming its kind. A generation that produced no answer is a failure, never
+    success with "".
+  references:
+  - '#3720: apr response contract for consumers'
+  - '#3716: consumer requirements'
+  - '#3793: constrained decoding refusals (exit 15, refusal.kind)'
+  - '#3775: apr code -p --output-format json (same status/kind names)'
+equations:
+  status_envelope:
+    formula: |
+      forall run r with a machine-readable output mode:
+        stdout(r) is exactly one JSON document D (on --stream: the terminal "final" event)
+        D.status in {"ok", "refused", "failed"}
+        D.error is present  <=>  D.status != "ok"
+        D.error = { kind: snake_case(variant(e)), message: display(e), exit_code: exit(r) }
+        status(e) = refused  <=>  a capability, limit or policy said no
+    domain: apr run --json / --stream
+    codomain: the document a consumer parses
+    invariants:
+    - A run that ends before it has a result still writes one document (the envelope, the model, text null)
+    - error.exit_code is exactly the process's exit status, never re-mapped
+    - Existing fields stay; status and error are added beside them
+    - A constraint refusal keeps exit 15; its kind is constraint_refused and which refusal it was stays in refusal.kind
+    preconditions:
+    - the output mode is --json or --stream (not --benchmark)
+    postconditions:
+    - a consumer can tell refused from failed from ok without reading stderr
+    lean_theorem: Theorems.Status_Envelope
+    notes: |
+      Refused kinds: file_not_found, not_a_file, missing_companion_file, invalid_format,
+      invalid_input, invalid_model_file, feature_disabled, http_not_found, not_implemented,
+      parity_failed, backend_unavailable, constraint_refused. Failed kinds: io_error,
+      validation_failed, aprender_error, model_load_failed, inference_failed, network_error,
+      empty_completion.
+  empty_completion:
+    formula: |
+      trim(text(r)) == ""
+        ==>  status = "failed", error.kind = "empty_completion", apr run exits 8
+    domain: an apr run generation that ran
+    codomain: never exit 0 with an empty answer
+    invariants:
+    - The run's own fields (tokens, timings, backend) are still reported beside the error
+    - A constraint refusal of the same run takes precedence (exit 15, constraint_refused)
+    preconditions:
+    - generation ran to completion
+    postconditions:
+    - '"no answer" is never read as success'
+    lean_theorem: Theorems.Empty_Completion
+    notes: The qwen3-8b golden gate defect (#3724) had this shape, an empty answer read as a model defect;
+      in production it would have read as success.
+proof_obligations:
+- id: RESP-INV-001
+  type: invariant
+  property: every CLI error has one kind, one status, and its own exit code in the envelope
+  formal: "∀ e ∈ CliError: envelope(e).error.kind = kind(e) ∧ envelope(e).error.exit_code = exit(e)"
+  applies_to: status_envelope
+- id: RESP-INV-002
+  type: invariant
+  property: a run with no result still writes exactly one document
+  formal: "fails_before_result(r, e) ⇒ stdout(r) = [error_document(e)]"
+  applies_to: status_envelope
+- id: RESP-INV-003
+  type: invariant
+  property: an empty completion is a named failure
+  formal: "(trim(text) = \"\" ∧ ¬constraint_refused(r) ⇒ kind = empty_completion) ∧ (kind = empty_completion ⇒ trim(text) = \"\")"
+  applies_to: empty_completion
+enforcement:
+  cli_error_envelope:
+    description: Every CliError variant maps to a kind, a status and its exit code
+    check: run_tests_response_contract::FALSIFY-RESP-001
+    severity: ERROR
+  one_document:
+    description: A --json/--stream run writes one document on every exit
+    check: run_tests_response_contract::FALSIFY-RESP-002
+    severity: ERROR
+  empty_completion_refused:
+    description: An empty or whitespace answer fails by name with exit 8
+    check: run_tests_response_contract::FALSIFY-RESP-003
+    severity: ERROR
+falsification_tests:
+- id: FALSIFY-RESP-001
+  rule: Every CliError has the contract kind, status and exit code
+  prediction: the case table over every variant matches kind(), status(), exit_code_value() and envelope()
+  test: response_contract_every_cli_error_has_its_kind_status_and_exit_code
+  file: crates/apr-cli/src/commands/run_tests_response_contract.rs
+  if_fails: a consumer cannot tell refused from failed, or the envelope re-maps an exit code
+- id: FALSIFY-RESP-002
+  rule: One document on every exit
+  prediction: ok carries status and no error; a run with no result writes the envelope with the model;
+    a constraint refused before output keeps its refusal fields; the stream's final event carries it
+  test: |
+    response_contract_a_run_that_ended_ok_says_so_and_carries_no_error
+    response_contract_a_run_that_never_produced_a_result_still_writes_one_document
+    response_contract_a_constraint_refused_before_output_keeps_its_refusal_fields
+    response_contract_the_stream_final_event_carries_the_envelope
+  file: crates/apr-cli/src/commands/run_tests_response_contract.rs
+  if_fails: a machine consumer reads nothing (or two documents) on a failure
+- id: FALSIFY-RESP-003
+  rule: Empty is not ok
+  prediction: empty and whitespace answers fail as empty_completion with exit 8, through reconcile; a
+    constraint refusal of the same run wins
+  test: |
+    response_contract_an_empty_completion_is_a_failure_that_names_why
+    response_contract_an_empty_run_exits_non_zero_through_reconcile
+    response_contract_a_constraint_refusal_wins_over_empty
+  file: crates/apr-cli/src/commands/run_tests_response_contract.rs
+  if_fails: an empty answer reads as success (the #3724 shape)
