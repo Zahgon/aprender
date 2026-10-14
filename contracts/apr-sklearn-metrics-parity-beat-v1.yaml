@@ -46,3 +46,10 @@ beat:
   baseline_sourced_date: "2026-07-04"
   approved_compute: CPU
   ci_gate_name: "beat_sklearn_metrics_parity"
+
+falsification_tests:
+  - id: FALSIFY-BEAT-METRICS-PARITY-001
+    rule: "aprender's metrics match sklearn within the contract's beat_threshold"
+    prediction: "The test reads beat_threshold (0.0001) from this file and asserts the largest deviation of aprender's metrics from the sklearn oracle values is <= it. CI runs this target (explicit command 120)"
+    test: "cargo test -p aprender-core --test beat_sklearn_metrics_parity beat_sklearn_metrics_parity"
+    if_fails: "An aprender metric no longer matches sklearn's value for the same inputs"

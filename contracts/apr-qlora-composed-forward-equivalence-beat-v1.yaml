@@ -45,3 +45,10 @@ beat:
   baseline_sourced_date: "2026-07-03"
   approved_compute: CPU
   ci_gate_name: "beat_qlora_composed_forward_equivalence"
+
+falsification_tests:
+  - id: FALSIFY-BEAT-QLORA-COMPOSED-001
+    rule: "The composed QLoRA forward (base plus scaled B@A applied at run time) gives the same output as the plain forward over folded weights, within the contract's beat_threshold"
+    prediction: "The test runs both paths on a tiny config and asserts equal output shapes and a max abs difference < 1e-4 (this file's beat_threshold). The tolerance is a constant in the test. It is a plain #[test] in the aprender-train lib, so workspace-test runs it"
+    test: "cargo test -p aprender-train --lib transformer::attention::tests::beat_qlora_composed_forward_equivalence"
+    if_fails: "The composed QLoRA forward drops a bias, scales the adapter wrongly or transposes it, so it diverges from the merged model"

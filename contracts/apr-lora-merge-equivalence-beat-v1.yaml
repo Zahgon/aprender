@@ -41,3 +41,10 @@ beat:
   baseline_sourced_date: "2026-06-14"
   approved_compute: CPU
   ci_gate_name: "beat_lora_merge_forward_equivalence"
+
+falsification_tests:
+  - id: FALSIFY-BEAT-LORA-MERGE-001
+    rule: "A merged LoRA model gives the same forward output as base plus adapter, within the contract's beat_threshold"
+    prediction: "The test asserts the merged weights' forward output differs from the unmerged base-plus-adapter forward by a max abs < 1e-4 (this file's beat_threshold). The tolerance is a constant in the test. CI runs it (explicit command 190)"
+    test: "cargo test -p aprender-train-lora --lib merge::tests::beat_lora_merge_forward_equivalence"
+    if_fails: "Merging a LoRA adapter changes the model's output"

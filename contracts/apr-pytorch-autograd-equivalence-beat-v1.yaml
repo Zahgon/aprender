@@ -41,3 +41,10 @@ beat:
   baseline_sourced_date: "2026-06-13"
   approved_compute: CPU
   ci_gate_name: "beat_pytorch_autograd_grad"
+
+falsification_tests:
+  - id: FALSIFY-BEAT-PYTORCH-AUTOGRAD-001
+    rule: "aprender autograd gradients match PyTorch within the contract's beat_threshold"
+    prediction: "The test runs a two-layer MLP with MSE loss, asserts the loss matches PyTorch's within 1e-4, then asserts the largest abs difference over dW1, db1, dW2 and db2 from the pinned PyTorch gradients is < 1e-4 (this file's beat_threshold). The tolerance is a constant in the test. CI runs this target (explicit command 180)"
+    test: "cargo test -p aprender-core --test beat_pytorch_autograd_grad beat_apr_autograd_matches_pytorch_gradients"
+    if_fails: "aprender's autograd computes different gradients from PyTorch for the same network"

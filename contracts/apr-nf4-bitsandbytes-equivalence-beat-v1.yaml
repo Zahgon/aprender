@@ -41,3 +41,10 @@ beat:
   baseline_sourced_date: "2026-06-13"
   approved_compute: CPU
   ci_gate_name: "beat_nf4_bitsandbytes_equivalence"
+
+falsification_tests:
+  - id: FALSIFY-BEAT-NF4-BNB-001
+    rule: "aprender NF4 reconstruction matches bitsandbytes within the contract's beat_threshold"
+    prediction: "The test reconstructs NF4 weights and asserts the max abs difference from the pinned bitsandbytes reconstruction < 1e-3 (this file's beat_threshold 0.0010) and the round-trip MSE within 1e-4 of bitsandbytes'. The tolerance is a constant in the test, not read from this file. CI runs it (explicit command 170)"
+    test: "cargo test -p aprender-compute --lib brick::quant_ops::nf4::tests::beat_nf4_bitsandbytes_equivalence"
+    if_fails: "aprender's NF4 dequantization no longer matches bitsandbytes"

@@ -54,3 +54,10 @@ beat:
   baseline_sourced_date: "2026-06-15"
   approved_compute: CPU
   ci_gate_name: "beat_lora_gguf_lossless_deploy_pmat712"
+
+falsification_tests:
+  - id: FALSIFY-BEAT-LORA-GGUF-DEPLOY-001
+    rule: "A merged LoRA model exported as F32 GGUF gives the same forward output as the merged .apr"
+    prediction: "beat_lora_gguf_lossless_deploy_pmat712 merges an adapter with run_merge, exports F32 GGUF with apr_export, loads q_proj from both files, checks the shapes agree and the input is non-constant, and asserts max|y_apr - y_gguf| <= 1e-4 (this file's beat_threshold; the tolerance is a constant in the test). It is in apr-cli's lib tests behind the default `training` feature, so workspace-test runs it"
+    test: "cargo test -p apr-cli --lib commands::finetune::tests::beat_lora_gguf_lossless_deploy_pmat712"
+    if_fails: "The exported GGUF serves different outputs from the model that was fine-tuned"

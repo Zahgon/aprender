@@ -52,3 +52,10 @@ beat:
   baseline_sourced_date: "2026-07-04"
   approved_compute: CPU
   ci_gate_name: "beat_sklearn_svc_accuracy"
+
+falsification_tests:
+  - id: FALSIFY-BEAT-SVC-001
+    rule: "apr meets the contract's beat_threshold on its canonical task"
+    prediction: "The test reads beat_threshold (0.9400) from this file and asserts the RBF multiclass SVC's test accuracy >= it. CI runs this target (explicit command 140)"
+    test: "cargo test -p aprender-core --test beat_sklearn_svc_accuracy beat_sklearn_svc_accuracy"
+    if_fails: "aprender's multiclass SVC is less accurate than the contract allows against sklearn"

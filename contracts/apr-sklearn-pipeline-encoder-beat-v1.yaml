@@ -47,3 +47,10 @@ beat:
   baseline_sourced_date: "2026-07-04"
   approved_compute: CPU
   ci_gate_name: "beat_sklearn_pipeline_encoder"
+
+falsification_tests:
+  - id: FALSIFY-BEAT-PIPELINE-ENCODER-001
+    rule: "apr meets the contract's beat_threshold on its canonical task"
+    prediction: "The test reads beat_threshold (0.9000) from this file and asserts the encoder pipeline's test accuracy on the categorical split >= it. CI runs this target (explicit command 150)"
+    test: "cargo test -p aprender-core --test beat_sklearn_pipeline_encoder beat_sklearn_pipeline_encoder"
+    if_fails: "The encoder plus classifier pipeline is less accurate than the contract allows"

@@ -31,3 +31,10 @@ beat:
   baseline_sourced_date: "2026-06-11"
   approved_compute: CPU       # one of: CPU | GPU (PMAT-741 supports both)
   ci_gate_name: "beat_sklearn_iris"   # the test that enforces this gate
+
+falsification_tests:
+  - id: FALSIFY-BEAT-SKLEARN-IRIS-001
+    rule: "apr meets the contract's beat_threshold on its canonical task"
+    prediction: "beat_sklearn_iris_accuracy reads beat_threshold (0.9200) from this file, trains RandomForestClassifier(100) on the i%3 Iris split (100 train, 50 test) and asserts test accuracy >= it. CI runs this target (explicit command 100)"
+    test: "cargo test -p aprender-core --test beat_sklearn_iris beat_sklearn_iris_accuracy"
+    if_fails: "aprender's random forest has fallen below the sklearn floor minus the 2pp margin on Iris"
