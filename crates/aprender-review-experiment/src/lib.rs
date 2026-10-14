@@ -18,6 +18,7 @@ pub mod contamination;
 pub mod corpus;
 pub mod crux_perf;
 pub mod harness;
+pub mod pp_tg;
 pub mod prereg;
 pub mod receipt;
 pub mod score;
