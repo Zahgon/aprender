@@ -38,12 +38,14 @@ equations:
     description: "A non-ASCII char is encoded to its per-byte glyph token ids, not silently dropped"
     formula: "bpe_encode(\"é\", vocab{'Ã':10,'©':11}, [], {}) == [10, 11]; NOT [] (é = UTF-8 [0xC3,0xA9])"
     note: "Each UTF-8 byte becomes its own bytes_to_unicode glyph token so the per-glyph vocab entries resolve."
-falsification:
+falsification_tests:
   - id: FALSIFY-TOKENIZER-GPT2-ENC-NONASCII
     description: "GPT-2 byte-level encode keeps a non-ASCII char. Discharges C-GPT2BPE-ENC-002."
-    test: "falsify_bpe_encode_non_ascii_accented_latin — vocab {'Ã':10,'©':11}, encode 'é' (bytes 0xC3,0xA9): RED pre-fix [] (byte_to_bpe_char returned absent '<0xC3>'/'<0xA9>' -> filter_map drops both), GREEN post-fix [10,11]."
+    test: "cargo test -p aprender-serve --lib falsify_bpe_encode_non_ascii_accented_latin"
+    prediction: "falsify_bpe_encode_non_ascii_accented_latin — vocab {'Ã':10,'©':11}, encode 'é' (bytes 0xC3,0xA9): RED pre-fix [] (byte_to_bpe_char returned absent '<0xC3>'/'<0xA9>' -> filter_map drops both), GREEN post-fix [10,11]."
     evidence: "cargo test -p aprender-serve --lib falsify_bpe_encode_non_ascii_accented_latin"
   - id: FALSIFY-TOKENIZER-GPT2-ENC-ROUNDTRIP
     description: "Encode byte->glyph inverts decode glyph->byte for every byte. Discharges C-GPT2BPE-ENC-001."
-    test: "falsify_byte_to_bpe_char_roundtrips_all_bytes / falsify_gpt2_byte_to_unicode_roundtrip_all_bytes — ∀ b in 0..=255: gpt2_unicode_to_byte(byte_to_bpe_char(b)) == Some(b): RED pre-fix (bytes >=0x80 returned multi-char '<0xNN>'), GREEN post-fix all 256 round-trip."
+    test: "cargo test -p aprender-serve --lib falsify_byte_to_bpe_char_roundtrips_all_bytes"
+    prediction: "falsify_byte_to_bpe_char_roundtrips_all_bytes / falsify_gpt2_byte_to_unicode_roundtrip_all_bytes — ∀ b in 0..=255: gpt2_unicode_to_byte(byte_to_bpe_char(b)) == Some(b): RED pre-fix (bytes >=0x80 returned multi-char '<0xNN>'), GREEN post-fix all 256 round-trip."
     evidence: "cargo test -p aprender-serve --lib falsify_byte_to_bpe_char_roundtrips_all_bytes"

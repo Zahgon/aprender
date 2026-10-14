@@ -53,43 +53,51 @@ equations:
     formula: "∀ (i,j,v) ∈ COO: CSR[i,j] contains v (duplicates summed)"
     note: "Verified by to_dense() roundtrip equality"
 
-falsification:
+falsification_tests:
   - id: FALSIFY-SPARSE-001
     description: "CSR rejects non-monotonic offsets"
-    test: "test_reject_non_monotonic_offsets"
+    test: "cargo test -p aprender-sparse --lib test_reject_non_monotonic_offsets"
+    prediction: "test_reject_non_monotonic_offsets"
     evidence: "cargo test -p aprender-sparse --lib test_reject_non_monotonic_offsets"
 
   - id: FALSIFY-SPARSE-002
     description: "CSR rejects nonzero first offset"
-    test: "test_reject_nonzero_first_offset"
+    test: "cargo test -p aprender-sparse --lib test_reject_nonzero_first_offset"
+    prediction: "test_reject_nonzero_first_offset"
     evidence: "cargo test -p aprender-sparse --lib test_reject_nonzero_first_offset"
 
   - id: FALSIFY-SPARSE-003
     description: "CSR rejects column out of bounds"
-    test: "test_reject_column_out_of_bounds"
+    test: "cargo test -p aprender-sparse --lib test_reject_column_out_of_bounds"
+    prediction: "test_reject_column_out_of_bounds"
     evidence: "cargo test -p aprender-sparse --lib test_reject_column_out_of_bounds"
 
   - id: FALSIFY-SPARSE-004
     description: "SpMV matches dense for identity matrix"
-    test: "test_spmv_identity"
+    test: "cargo test -p aprender-sparse --lib test_spmv_identity"
+    prediction: "test_spmv_identity"
     evidence: "cargo test -p aprender-sparse --lib test_spmv_identity"
 
   - id: FALSIFY-SPARSE-005
     description: "SpMV alpha/beta parameters work correctly"
-    test: "test_spmv_alpha_beta"
+    test: "cargo test -p aprender-sparse --lib test_spmv_alpha_beta"
+    prediction: "test_spmv_alpha_beta"
     evidence: "cargo test -p aprender-sparse --lib test_spmv_alpha_beta"
 
   - id: FALSIFY-SPARSE-006
     description: "SpGEMM produces correct identity product"
-    test: "test_spgemm_identity"
+    test: "cargo test -p aprender-sparse --lib test_spgemm_identity"
+    prediction: "test_spgemm_identity"
     evidence: "cargo test -p aprender-sparse --lib test_spgemm_identity"
 
   - id: FALSIFY-SPARSE-007
     description: "COO→CSR roundtrip preserves all entries"
-    test: "test_coo_to_csr_basic + test_to_dense_roundtrip"
+    test: "cargo test -p aprender-sparse --lib test_coo_to_csr"
+    prediction: "test_coo_to_csr_basic + test_to_dense_roundtrip"
     evidence: "cargo test -p aprender-sparse --lib test_coo_to_csr"
 
   - id: FALSIFY-SPARSE-008
     description: "Property: SpMV is linear (matches dense for random inputs)"
-    test: "prop_spmv_matches_dense"
+    test: "cargo test -p aprender-sparse --lib prop_spmv_matches_dense"
+    prediction: "prop_spmv_matches_dense"
     evidence: "cargo test -p aprender-sparse --lib prop_spmv_matches_dense"

@@ -39,8 +39,9 @@ equations:
     formula: "clip_and_step calls clip_grad_norm_refs(params, max_norm) on the same params given to step_refs; no computed scale is discarded"
     note: "Regression guard against the `let _ = scale;` discard. CPU and WGPU trainers must agree."
 
-falsification:
+falsification_tests:
   - id: FALSIFY-TRAINER-GRADCLIP-001
     description: "clip_and_step actually clips an oversized gradient to max_grad_norm. Discharges C-GRADCLIP-001/002."
-    test: "falsify_clip_and_step_actually_clips_gradients — inject grad norm ~4420 with max_grad_norm=1.0; RED pre-fix post-step norm 4420 (unclipped), GREEN post-fix <= 1.0."
+    test: "cargo test -p aprender-train --lib falsify_clip_and_step_actually_clips_gradients"
+    prediction: "falsify_clip_and_step_actually_clips_gradients — inject grad norm ~4420 with max_grad_norm=1.0; RED pre-fix post-step norm 4420 (unclipped), GREEN post-fix <= 1.0."
     evidence: "cargo test -p aprender-train --lib falsify_clip_and_step_actually_clips_gradients"

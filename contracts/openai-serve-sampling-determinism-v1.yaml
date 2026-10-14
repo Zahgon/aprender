@@ -70,10 +70,11 @@ equations:
     formula: |
       generate(prompt, cfg) == generate(prompt, cfg)   for all cfg with fixed seed
 
-falsification:
+falsification_tests:
   - id: F-SEED-DETERMINISM-001
     description: "Same seed produces the same sampled token AND the same multi-token stream"
-    test: |
+    test: "cargo test -p aprender-serve --lib gguf::inference::generation_tests::test_sample_topk_seeded_same_seed_is_deterministic"
+    prediction: |
       Unit test: two StdRng seeded from the same value, sampled over a
       flat non-degenerate distribution with temperature=1.5, top_k=50,
       produce the same first token and the same 16-token stream. RED on
@@ -82,7 +83,8 @@ falsification:
 
   - id: F-SEED-DETERMINISM-002
     description: "Different seeds can diverge (the sampler is not secretly greedy — it actually consumes the RNG)"
-    test: |
+    test: "cargo test -p aprender-serve --lib gguf::inference::generation_tests::test_sample_topk_seeded_different_seeds_can_diverge"
+    prediction: |
       Unit test: seed=42 vs seed=43 over a 16-token stream differ in at
       least one position. Guards against a degenerate fix that ignores
       the RNG entirely (which would make seed meaningless).
@@ -90,7 +92,8 @@ falsification:
 
   - id: F-SEED-DETERMINISM-003
     description: "End-to-end: generate_with_cache (the HTTP dense path) is reproducible across runs for the same prompt+seed+temperature"
-    test: |
+    test: "cargo test -p aprender-serve --lib gguf::inference::generation_tests::test_generate_with_cache_is_seed_deterministic"
+    prediction: |
       Unit test: build a small test model, call generate_with_cache
       twice with temperature=1.2, top_k=40, seed=777; the two token
       sequences must be identical. RED on the bug: rand::rng() makes

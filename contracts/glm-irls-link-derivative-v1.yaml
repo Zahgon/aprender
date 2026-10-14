@@ -31,8 +31,9 @@ equations:
     description: "GLM::fit recovers the correct MLE coefficients on a known logistic fit"
     formula: "Binomial/logit on x=[-2..2], y=[0.1..0.9] ⇒ slope ≈ 1.1266, P(y|x=-2) ≈ 0.0951"
     note: "The link-derivative swap yields slope 1.0333 / P 0.1124."
-falsification:
+falsification_tests:
   - id: FALSIFY-GLM-IRLS-LINK-DERIV
     description: "GLM IRLS converges to the correct logistic coefficients. Discharges C-GLMIRLS-001/002."
-    test: "falsify_glm_irls_link_derivative — Binomial/logit fit: RED slope 1.0333 / P 0.1124, GREEN slope 1.1266 / P 0.0951."
+    test: "cargo test -p aprender-core --lib falsify_glm_irls_link_derivative"
+    prediction: "falsify_glm_irls_link_derivative — Binomial/logit fit: RED slope 1.0333 / P 0.1124, GREEN slope 1.1266 / P 0.0951."
     evidence: "cargo test -p aprender-core --lib falsify_glm_irls_link_derivative"

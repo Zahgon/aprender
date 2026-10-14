@@ -48,12 +48,14 @@ equations:
     formula: "u1 = 1 << (2*it); u2 = 2 << (2*it); low gains 16 iff qh[l] & u1; high gains 16 iff qh[l] & u2; NOT (qh[idx/8] >> (idx%8)) & 1"
     note: "Regression guard against the per-element bit addressing that read the wrong qh byte/bit for elements 8..255."
 
-falsification:
+falsification_tests:
   - id: FALSIFY-DEQUANT-Q5K-001
     description: "Q5_K dequant of a 176-byte block places the high nibble of qs[0] at out[32], not out[1]. Discharges C-Q5K-001."
-    test: "test_q5k_dequant_stride32_nibble_layout — d=1.0, dmin=0.0, scales=1/mins=0, qh=0, qs[0]=0x21: RED pre-fix out[1]=2.0 / out[32]=0.0; GREEN post-fix out[0]=1.0 / out[1]=0.0 / out[32]=2.0. All-zero qs cannot distinguish (both yield zeros)."
+    test: "cargo test -p aprender-compute --lib q5k_dequant_tests::test_q5k_dequant_stride32_nibble_layout"
+    prediction: "test_q5k_dequant_stride32_nibble_layout — d=1.0, dmin=0.0, scales=1/mins=0, qh=0, qs[0]=0x21: RED pre-fix out[1]=2.0 / out[32]=0.0; GREEN post-fix out[0]=1.0 / out[1]=0.0 / out[32]=2.0. All-zero qs cannot distinguish (both yield zeros)."
     evidence: "cargo test -p aprender-compute --lib q5k_dequant_tests::test_q5k_dequant_stride32_nibble_layout"
   - id: FALSIFY-DEQUANT-Q5K-002
     description: "Q5_K dequant reads the 5th bit from qh[l] bit (2*it)/(2*it+1). Discharges C-Q5K-002."
-    test: "test_q5k_dequant_fifth_bit_placement — qh[0]=0x03 (bits 0,1 set), qs[0]=0x21: RED pre-fix out[32]=0.0; GREEN post-fix out[0]=17.0 (1+16) / out[32]=18.0 (2+16)."
+    test: "cargo test -p aprender-compute --lib q5k_dequant_tests::test_q5k_dequant_fifth_bit_placement"
+    prediction: "test_q5k_dequant_fifth_bit_placement — qh[0]=0x03 (bits 0,1 set), qs[0]=0x21: RED pre-fix out[32]=0.0; GREEN post-fix out[0]=17.0 (1+16) / out[32]=18.0 (2+16)."
     evidence: "cargo test -p aprender-compute --lib q5k_dequant_tests::test_q5k_dequant_fifth_bit_placement"

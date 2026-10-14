@@ -29,13 +29,15 @@ equations:
     formula: "∀ data, codec: compressed_size(data, codec) ≤ len(data) + overhead(codec)"
     note: "LZ4 overhead ~16 bytes, Zstd ~18 bytes for incompressible data"
 
-falsification:
+falsification_tests:
   - id: FALSIFY-COMP-001
     description: "LZ4 roundtrip is lossless"
-    test: "compression roundtrip tests"
+    test: "cargo test -p aprender-core --lib --features format-compression test_lz4_compression_roundtrip"
+    prediction: "decompress_payload(compress_payload(data, Lz4)) == data for a 1000-byte buffer, and the compressed payload is smaller than the input"
     evidence: "cargo test -p aprender-core --lib compression"
 
   - id: FALSIFY-COMP-002
     description: "Zstd roundtrip is lossless"
-    test: "compression roundtrip tests"
+    test: "cargo test -p aprender-core --lib --features format-compression test_zstd_compression_roundtrip"
+    prediction: "a 10,000-float model saved with Zstd loads back equal to the original"
     evidence: "cargo test -p aprender-core --lib compression"

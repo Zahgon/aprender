@@ -38,8 +38,9 @@ equations:
     formula: "scale in [-32, 31] (six-bit, offset -32); NOT (nibble & 0x0F) - 8 in [-8, 7]"
     note: "Regression guard against the 4-bit nibble unpack that dropped the upper 2 bits of 8 of the 12 scale bytes."
 
-falsification:
+falsification_tests:
   - id: FALSIFY-DEQUANT-Q3K-001
     description: "Q3_K dequant of a non-trivial block equals the GGML reference. Discharges C-Q3K-001/002."
-    test: "test_dequantize_q3_k_ggml_golden — seed-7 deterministic 110-byte block, d=1.0: RED pre-fix out[1]=12 / maxabs ~28, GREEN post-fix out[1]=-84 / maxabs 124 (numpy GGML oracle). All-zero-input tests cannot distinguish (both yield zeros)."
+    test: "cargo test -p aprender-core --lib test_dequantize_q3_k_ggml_golden"
+    prediction: "test_dequantize_q3_k_ggml_golden — seed-7 deterministic 110-byte block, d=1.0: RED pre-fix out[1]=12 / maxabs ~28, GREEN post-fix out[1]=-84 / maxabs 124 (numpy GGML oracle). All-zero-input tests cannot distinguish (both yield zeros)."
     evidence: "cargo test -p aprender-core --lib test_dequantize_q3_k_ggml_golden"

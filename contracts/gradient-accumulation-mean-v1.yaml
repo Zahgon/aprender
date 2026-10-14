@@ -34,8 +34,9 @@ equations:
     description: "K-step accumulation over K identical micro-batches equals a single batch (same LR)"
     formula: "param(accum=K, K identical batches) == param(accum=1, 1 batch), same optimizer/LR"
     note: "The pre-fix SUM moved the parameter K× as far."
-falsification:
+falsification_tests:
   - id: FALSIFY-GRAD-ACCUM-MEAN
     description: "Accumulation steps on the mean, not the sum. Discharges C-GRADACC-001/002."
-    test: "falsify_gradient_accumulation_is_mean_not_sum — SGD(lr=1), clip off: accum=2 over two identical batches vs accum=1 over one. RED b=[3,4] (2× move), GREEN b=[2,3]==a."
+    test: "cargo test -p aprender-train --lib falsify_gradient_accumulation_is_mean_not_sum"
+    prediction: "falsify_gradient_accumulation_is_mean_not_sum — SGD(lr=1), clip off: accum=2 over two identical batches vs accum=1 over one. RED b=[3,4] (2× move), GREEN b=[2,3]==a."
     evidence: "cargo test -p aprender-train --lib falsify_gradient_accumulation_is_mean_not_sum"

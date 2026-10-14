@@ -50,28 +50,33 @@ equations:
     formula: "∀ variant ∈ Architecture \\ {Auto} : is_llm(variant) ∨ ¬is_llm(variant) is intentional"
     note: "Audio models (Whisper, Moonshine) and BERT return false; all others return true"
 
-falsification:
+falsification_tests:
   - id: FALSIFY-PARITY-001
     description: "Enum→YAML parity: every non-Auto variant has a YAML file"
-    test: "tests in converter_types_tests_parity.rs: test_every_architecture_has_model_family_yaml"
+    test: "cargo test -p aprender-core --lib test_every_architecture_has_model_family_yaml"
+    prediction: "tests in converter_types_tests_parity.rs: test_every_architecture_has_model_family_yaml"
     evidence: "cargo test -p aprender-core --lib test_every_architecture_has_model_family_yaml"
 
   - id: FALSIFY-PARITY-002
     description: "YAML→Enum parity: every YAML family is recognized by from_model_type()"
-    test: "tests in converter_types_tests_parity.rs: test_every_model_family_yaml_has_architecture"
+    test: "cargo test -p aprender-core --lib test_every_model_family_yaml_has_architecture"
+    prediction: "tests in converter_types_tests_parity.rs: test_every_model_family_yaml_has_architecture"
     evidence: "cargo test -p aprender-core --lib test_every_model_family_yaml_has_architecture"
 
   - id: FALSIFY-PARITY-003
     description: "from_model_type() returns correct variant for all new architectures"
-    test: "tests in converter_types_tests_parity.rs: test_from_model_type_new_variants"
+    test: "cargo test -p aprender-core --lib test_from_model_type_new_variants"
+    prediction: "tests in converter_types_tests_parity.rs: test_from_model_type_new_variants"
     evidence: "cargo test -p aprender-core --lib test_from_model_type_new_variants"
 
   - id: FALSIFY-PARITY-004
     description: "display_name() is non-empty for all variants"
-    test: "tests in converter_types_tests_parity.rs: test_display_name_all_variants"
+    test: "cargo test -p aprender-core --lib test_display_name_all_variants"
+    prediction: "tests in converter_types_tests_parity.rs: test_display_name_all_variants"
     evidence: "cargo test -p aprender-core --lib test_display_name_all_variants"
 
   - id: FALSIFY-PARITY-005
     description: "is_llm() classification matches model-family contract constraints"
-    test: "tests in converter_types_tests_parity.rs: test_is_llm_matches_contract"
+    test: "cargo test -p aprender-core --lib test_is_llm_matches_contract"
+    prediction: "tests in converter_types_tests_parity.rs: test_is_llm_matches_contract"
     evidence: "cargo test -p aprender-core --lib test_is_llm_matches_contract"

@@ -32,8 +32,9 @@ equations:
     description: "Non-ASCII generated text decodes to the real characters, not mojibake"
     formula: "decode(byte_level_glyphs(中)) == \"中\"; NOT the UTF-8-re-encoded \"ä¸Ń\""
     note: "decode must not fall through to char::encode_utf8 for a remapped byte glyph."
-falsification:
+falsification_tests:
   - id: FALSIFY-TOKENIZER-GPT2-NONASCII
     description: "GPT-2 byte-level decode round-trips a non-ASCII char. Discharges C-GPT2BPE-001/002."
-    test: "falsify_gpt2_decode_non_ascii_roundtrip — vocab ['ä','¸','Ń'] (bytes 0xE4,0xB8,0xAD) decodes to 中: RED pre-fix 'ä¸Ń' (mojibake), GREEN post-fix '中'."
+    test: "cargo test -p aprender-serve --lib falsify_gpt2_decode_non_ascii_roundtrip"
+    prediction: "falsify_gpt2_decode_non_ascii_roundtrip — vocab ['ä','¸','Ń'] (bytes 0xE4,0xB8,0xAD) decodes to 中: RED pre-fix 'ä¸Ń' (mojibake), GREEN post-fix '中'."
     evidence: "cargo test -p aprender-serve --lib falsify_gpt2_decode_non_ascii_roundtrip"

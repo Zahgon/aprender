@@ -37,8 +37,9 @@ equations:
     formula: "to_layer reads self.scale (the stored value); it does NOT recompute alpha/rank or alpha/sqrt(rank)"
     note: "The adapter stores the scale VALUE, not the scaling mode, so reconstruction must be value-based (LoRALayer::with_scale)."
 
-falsification:
+falsification_tests:
   - id: FALSIFY-LORA-ADAPTER-SCALE-001
     description: "rsLoRA scale (alpha/sqrt(rank)) survives the adapter round-trip. Discharges C-LORA-SCALE-001/002."
-    test: "test_rslora_scale_survives_roundtrip — rank=16, alpha=16: rsLoRA scale = 4.0; RED pre-fix reloaded.scale()=1.0 (alpha/rank), GREEN post-fix 4.0."
+    test: "cargo test -p aprender-train --lib test_rslora_scale_survives_roundtrip"
+    prediction: "test_rslora_scale_survives_roundtrip — rank=16, alpha=16: rsLoRA scale = 4.0; RED pre-fix reloaded.scale()=1.0 (alpha/rank), GREEN post-fix 4.0."
     evidence: "cargo test -p aprender-train --lib test_rslora_scale_survives_roundtrip"

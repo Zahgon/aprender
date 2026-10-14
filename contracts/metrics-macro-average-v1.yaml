@@ -58,10 +58,11 @@ equations:
       ŷ = y  ⇒  macro_precision = macro_recall = macro_f1 = 1.0
       # holds for non-contiguous labels e.g. {0, 2}; pre-fix this returned 2/3
 
-falsification:
+falsification_tests:
   - id: FALSIFY-METRICS_MACRO_AVERAGE_V1_001
     description: "Perfect classifier on non-contiguous labels {0,2} scores macro precision/recall/f1 = 1.0 (was 0.6667)"
-    test: |
+    test: "cargo test -p aprender-core --lib tests_macro_present_labels::macro_average_noncontiguous_labels"
+    prediction: |
       Unit test: y_true = y_pred = [0,2,0,2]. precision/recall/f1 with
       Average::Macro must all equal 1.0 (±1e-6). RED (max+1 divisor):
       (1.0 + 0.0 + 1.0)/3 = 0.6667. GREEN (present-label divisor):
@@ -70,21 +71,24 @@ falsification:
     evidence: "cargo test -p aprender-core --lib tests_macro_present_labels::macro_average_noncontiguous_labels"
   - id: FALSIFY-METRICS_MACRO_AVERAGE_V1_002
     description: "Swapped predictions on {0,2} score macro precision = 0.5 (was 0.3333)"
-    test: |
+    test: "cargo test -p aprender-core --lib tests_macro_present_labels::macro_average_noncontiguous_labels"
+    prediction: |
       Unit test: y_true = [0,0,2,2], y_pred = [0,2,2,0]. Each present class has
       precision 0.5, so macro = (0.5 + 0.5)/2 = 0.5. RED (max+1 divisor):
       (0.5 + 0.0 + 0.5)/3 = 0.3333. Verified against scikit-learn = 0.5.
     evidence: "cargo test -p aprender-core --lib tests_macro_present_labels::macro_average_noncontiguous_labels"
   - id: FALSIFY-METRICS_MACRO_AVERAGE_V1_003
     description: "jaccard_score and fbeta_score share the divisor and also reach 1.0 on perfect {0,2}"
-    test: |
+    test: "cargo test -p aprender-core --lib tests_macro_present_labels::macro_average_noncontiguous_jaccard_fbeta"
+    prediction: |
       Unit test: y_true = y_pred = [0,2,0,2]. jaccard_score and fbeta_score
       (beta=1.0 and beta=0.5) with Average::Macro all equal 1.0 (±1e-6).
       RED: 2/3 (absent class 1 folds a 0.0 in). GREEN: 1.0.
     evidence: "cargo test -p aprender-core --lib tests_macro_present_labels::macro_average_noncontiguous_jaccard_fbeta"
   - id: FALSIFY-METRICS_MACRO_AVERAGE_V1_004
     description: "Contiguous labels {0,1,2} are unchanged — every class present ⇒ divisor == n_classes"
-    test: |
+    test: "cargo test -p aprender-core --lib tests_macro_present_labels::macro_average_contiguous_labels_unchanged"
+    prediction: |
       Unit test: perfect dense {0,1,2} still scores 1.0; the known imperfect
       dense case (y_true=[0,1,2,0,1,2], y_pred=[0,2,1,0,0,1]) keeps macro
       precision = (2/3)/3. Guards against the fix altering already-correct

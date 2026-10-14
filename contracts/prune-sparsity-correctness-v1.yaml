@@ -36,8 +36,9 @@ equations:
     formula: "effective_prune_fraction(target_ratio, sparsity) = sparsity if sparsity > 0 else target_ratio; never max(·)"
     note: "Regression guard against the sparsity.max(target_ratio) override. Keeps the applied fraction consistent with the stamped pruning_sparsity metadata."
 
-falsification:
+falsification_tests:
   - id: FALSIFY-PRUNE-SPARSITY-001
     description: "--sparsity below the target-ratio default is honored, not raised. Discharges C-PRUNE-001/002."
-    test: "test_magnitude_sparsity_below_target_ratio_not_overridden — 64 distinct magnitudes, --sparsity 0.25 (target_ratio default 0.5): RED pre-fix 32/64 zeroed (50%), GREEN post-fix 16/64 (25%)."
+    test: "cargo test -p apr-cli --lib test_magnitude_sparsity_below_target_ratio_not_overridden"
+    prediction: "test_magnitude_sparsity_below_target_ratio_not_overridden — 64 distinct magnitudes, --sparsity 0.25 (target_ratio default 0.5): RED pre-fix 32/64 zeroed (50%), GREEN post-fix 16/64 (25%)."
     evidence: "cargo test -p apr-cli --lib test_magnitude_sparsity_below_target_ratio_not_overridden"

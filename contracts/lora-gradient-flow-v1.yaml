@@ -31,18 +31,21 @@ equations:
     description: "RoPE is autograd-connected: grad_x = R(-θ)·grad_out (transpose rotation)"
     formula: "grad_x[i] = g[i]·cos(θ) + g[i+half]·sin(θ); grad_x[i+half] = -g[i]·sin(θ) + g[i+half]·cos(θ)"
 
-falsification:
+falsification_tests:
   - id: FALSIFY-LORA_GRADIENT_FLOW_V1_001
     description: "∇W_base == 0 during LoRA training"
-    test: "crates/aprender-train/src/finetune/instruct_pipeline/tests.rs::falsify_pmat805_cpu_train_step_trains_lora_overfit_one_batch (base weights frozen; only lora_layers stepped)"
+    test: "cargo test -p aprender-train --lib falsify_pmat805"
+    prediction: "crates/aprender-train/src/finetune/instruct_pipeline/tests.rs::falsify_pmat805_cpu_train_step_trains_lora_overfit_one_batch (base weights frozen; only lora_layers stepped)"
     evidence: "cargo test -p aprender-train --lib falsify_pmat805"
 
   - id: FALSIFY-LORA_GRADIENT_FLOW_V1_002
     description: "∇A, ∇B non-zero for non-zero loss — overfit-one-batch moves BOTH Q and V adapters and strictly decreases loss"
-    test: "crates/aprender-train/src/finetune/instruct_pipeline/tests.rs::falsify_pmat805_cpu_train_step_trains_lora_overfit_one_batch"
+    test: "cargo test -p aprender-train --lib falsify_pmat805_cpu_train_step_trains_lora_overfit_one_batch"
+    prediction: "crates/aprender-train/src/finetune/instruct_pipeline/tests.rs::falsify_pmat805_cpu_train_step_trains_lora_overfit_one_batch"
     evidence: "cargo test -p aprender-train --lib falsify_pmat805_cpu_train_step_trains_lora_overfit_one_batch"
 
   - id: FALSIFY-LORA_GRADIENT_FLOW_V1_003
     description: "RoPE backward matches finite-difference gradients (graph not severed at RoPE)"
-    test: "crates/aprender-train/src/transformer/attention.rs::tests::falsify_pmat805_rope_backward_matches_finite_difference"
+    test: "cargo test -p aprender-train --lib falsify_pmat805_rope_backward_matches_finite_difference"
+    prediction: "crates/aprender-train/src/transformer/attention.rs::tests::falsify_pmat805_rope_backward_matches_finite_difference"
     evidence: "cargo test -p aprender-train --lib falsify_pmat805_rope_backward_matches_finite_difference"
