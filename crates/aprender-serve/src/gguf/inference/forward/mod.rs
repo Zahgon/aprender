@@ -27,4 +27,6 @@ mod core_tests;
 #[cfg(test)]
 mod encoder_decoder_tests;
 #[cfg(test)]
+mod forward_allowlist_a4_tests;
+#[cfg(test)]
 mod single_tests;
