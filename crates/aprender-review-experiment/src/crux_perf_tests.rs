@@ -273,3 +273,52 @@ fn falsify_crux_perf_006_rc_missing_t0_or_t1_for_an_admitted_cell_is_red() {
         2
     );
 }
+
+#[test]
+fn insane_stored_stats_are_refused_never_gated_green() {
+    let good = receipt("v0.73.0", 1.0);
+    assert_eq!(good.check(TAG_SHA), Ok(()));
+    // A NaN median compares false against every bound: it must refuse, not read as GREEN.
+    let mut bad = good.clone();
+    bad.apr.decode.median = f64::NAN;
+    assert_eq!(bad.check(TAG_SHA), Err(Refusal::InsaneStats(Phase::Decode)));
+    assert_eq!(
+        gate(&good, Some(&bad), None, &[]),
+        Err(Refusal::InsaneStats(Phase::Decode))
+    );
+    assert_eq!(
+        gate(&bad, Some(&good), None, &[]),
+        Err(Refusal::InsaneStats(Phase::Decode))
+    );
+    let mut zero = good.clone();
+    zero.competitor_phases.ttft.ci_lo = 0.0;
+    assert_eq!(zero.check(TAG_SHA), Err(Refusal::InsaneStats(Phase::Ttft)));
+    let mut unordered = good;
+    unordered.apr.prefill.ci_hi = unordered.apr.prefill.median / 2.0;
+    assert_eq!(
+        unordered.check(TAG_SHA),
+        Err(Refusal::InsaneStats(Phase::Prefill))
+    );
+}
+
+#[test]
+fn cell_id_fields_are_nul_separated_so_shifted_boundaries_differ() {
+    let mut a = cell();
+    a.host = "ab".to_string();
+    a.gpu = "c".to_string();
+    let mut b = cell();
+    b.host = "a".to_string();
+    b.gpu = "bc".to_string();
+    assert_ne!(a.id(), b.id());
+}
+
+#[test]
+fn the_same_seed_gives_the_same_bootstrap_ci() {
+    let xs = samples(15.7, 1.0);
+    let (p, q) = (
+        PhaseStats::from_samples(&xs, 42).expect("seven samples"),
+        PhaseStats::from_samples(&xs, 42).expect("seven samples"),
+    );
+    assert_eq!(p, q);
+    assert!(p.is_sane());
+}

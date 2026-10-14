@@ -109,6 +109,17 @@ impl PhaseStats {
             n: xs.len(),
         })
     }
+
+    /// Finite, positive and ordered (`ci_lo <= median <= ci_hi`, `median <= p95`). A stored
+    /// figure that fails this would compare false against every bound and read as GREEN.
+    #[must_use]
+    pub fn is_sane(&self) -> bool {
+        let all = [self.median, self.p95, self.ci_lo, self.ci_hi];
+        all.iter().all(|x| x.is_finite() && *x > 0.0)
+            && self.ci_lo <= self.median
+            && self.median <= self.ci_hi
+            && self.median <= self.p95
+    }
 }
 
 /// A timed phase.
@@ -156,6 +167,11 @@ impl Phases {
             Phase::Prefill => &self.prefill,
             Phase::Decode => &self.decode,
         }
+    }
+
+    /// The first phase whose stored statistics are not [`PhaseStats::is_sane`].
+    fn insane(&self) -> Option<Phase> {
+        PHASES.into_iter().find(|p| !self.get(*p).is_sane())
     }
 }
 
@@ -211,12 +227,23 @@ pub struct CruxPerfReceipt {
 pub enum Refusal {
     SchemaVersion(String),
     CompetitorVersionMissing,
-    CellIdMismatch { claimed: String, derived: String },
+    CellIdMismatch {
+        claimed: String,
+        derived: String,
+    },
     PromptSetMismatch,
     TooFewRuns(usize),
-    NewSeries { current: String, other: String },
-    BinaryShaMismatch { receipt: String, tag_asset: String },
+    NewSeries {
+        current: String,
+        other: String,
+    },
+    BinaryShaMismatch {
+        receipt: String,
+        tag_asset: String,
+    },
     RatioInconsistent(Phase),
+    /// A stored phase figure is non-finite, non-positive or out of order.
+    InsaneStats(Phase),
 }
 
 /// What a T2 blob may be used for.
@@ -337,11 +364,23 @@ impl CruxPerfReceipt {
     }
 
     /// Cell id, prompt set, run count and the stored ratios against the samples.
+    fn check_stats(&self) -> Result<(), Refusal> {
+        match self
+            .apr
+            .insane()
+            .or_else(|| self.competitor_phases.insane())
+        {
+            Some(p) => Err(Refusal::InsaneStats(p)),
+            None => Ok(()),
+        }
+    }
+
     fn check_consistency(&self) -> Result<(), Refusal> {
         self.check_cell_id()?;
         if self.prompt_set_sha != self.cell.prompt_set_sha {
             return Err(Refusal::PromptSetMismatch);
         }
+        self.check_stats()?;
         let n = min_runs(&self.apr, &self.competitor_phases);
         if self.n_runs != n || n < MIN_RUNS {
             return Err(Refusal::TooFewRuns(n));
@@ -390,7 +429,9 @@ pub fn gate(
     last3: &[&CruxPerfReceipt],
 ) -> Result<Gate, Refusal> {
     cur.check_cell_id()?;
+    cur.check_stats()?;
     for o in prev.iter().chain(released.iter()).chain(last3.iter()) {
+        o.check_stats()?;
         if o.cell != cur.cell || o.cell_id != cur.cell_id {
             return Err(Refusal::NewSeries {
                 current: cur.cell_id.clone(),
