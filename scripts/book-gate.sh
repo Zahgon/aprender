@@ -87,7 +87,7 @@ fi
 if [ -f "$PAGE_PATH" ]; then
     if grep -qE '\b(trueno|realizar|entrenar|batuta|presentar|renacer)\b' "$PAGE_PATH" 2>/dev/null; then
         # Allow legacy names only in strikethrough (~~name~~) or code comments explaining migration
-        REAL_LEGACY=$(grep -cE '\buse (trueno|realizar|entrenar|batuta|presentar|renacer)::' "$PAGE_PATH" 2>/dev/null || echo 0)
+        REAL_LEGACY=$(grep -cE '\buse (trueno|realizar|entrenar|batuta|presentar|renacer)::' "$PAGE_PATH" 2>/dev/null || true)
         if [ "$REAL_LEGACY" -gt 0 ]; then
             echo "  G7  FAIL: $REAL_LEGACY legacy use-imports"
             FAIL=1
@@ -101,7 +101,7 @@ fi
 
 # Gate 8: No placeholder text
 if [ -f "$PAGE_PATH" ]; then
-    PLACEHOLDERS=$(grep -ciE '\bTODO\b|\bTBD\b|\bWIP\b|\bcoming soon\b|\bunder construction\b' "$PAGE_PATH" 2>/dev/null || echo 0)
+    PLACEHOLDERS=$(grep -ciE '\bTODO\b|\bTBD\b|\bWIP\b|\bcoming soon\b|\bunder construction\b' "$PAGE_PATH" 2>/dev/null || true)
     if [ "$PLACEHOLDERS" -gt 0 ]; then
         echo "  G8  FAIL: $PLACEHOLDERS placeholder(s)"
         FAIL=1
@@ -113,7 +113,7 @@ fi
 # Gate 9: Section cross-check (L2 fix)
 # Contract sections must appear as H2 headings in page
 if [ -f "$PAGE_PATH" ]; then
-    CONTRACT_SECTIONS=$(grep "heading:" "$CONTRACT" 2>/dev/null | sed 's/.*heading: *"//' | tr -d '"' | head -20)
+    CONTRACT_SECTIONS=$({ grep "heading:" "$CONTRACT" 2>/dev/null || true; } | sed 's/.*heading: *"//' | tr -d '"' | head -20)
     if [ -n "$CONTRACT_SECTIONS" ]; then
         PAGE_H2S=$(grep "^## " "$PAGE_PATH" 2>/dev/null | sed 's/^## //')
         MISSING_SECTIONS=0
@@ -144,7 +144,7 @@ fi
 if [ -f "$PAGE_PATH" ]; then
     CATEGORY=$(grep "category:" "$CONTRACT" 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"')
     # Count non-boilerplate lines (skip frontmatter, blank, headings, code fences, includes)
-    PROSE_LINES=$(tail -n +5 "$PAGE_PATH" | grep -cvE '^$|^#|^>|^```|^\{\{|^Run:|^---|^<!--' 2>/dev/null || echo 0)
+    PROSE_LINES=$(tail -n +5 "$PAGE_PATH" | grep -cvE '^$|^#|^>|^```|^\{\{|^Run:|^---|^<!--' 2>/dev/null || true)
     if [ "$CATEGORY" = "chapter" ] && [ "$PROSE_LINES" -lt 5 ]; then
         if [ "$STRICT" = "--strict" ]; then
             echo "  G10 FAIL: only $PROSE_LINES prose lines (chapter needs >=5)"
@@ -162,9 +162,9 @@ fi
 # If contract declares api_calls, example must have matching use statements
 if [ -n "$EXAMPLE" ] && [ "$EXAMPLE" != "none" ]; then
     EXAMPLE_FILE="crates/aprender-core/examples/${EXAMPLE}.rs"
-    HAS_API_CALLS=$(grep -c "api_calls:" "$CONTRACT" 2>/dev/null || echo 0)
+    HAS_API_CALLS=$(grep -c "api_calls:" "$CONTRACT" 2>/dev/null || true)
     if [ "$HAS_API_CALLS" -gt 0 ] && [ -f "$EXAMPLE_FILE" ]; then
-        IMPORTS=$(grep -c "^use aprender::" "$EXAMPLE_FILE" 2>/dev/null || echo 0)
+        IMPORTS=$(grep -c "^use aprender::" "$EXAMPLE_FILE" 2>/dev/null || true)
         if [ "$IMPORTS" -eq 0 ]; then
             echo "  G11 FAIL: contract has api_calls but example has 0 aprender imports"
             FAIL=1
