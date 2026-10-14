@@ -15,6 +15,14 @@
 
 use super::{simd_dot, simd_softmax};
 
+/// One zeroed allocation per layer (#4783). `vec![vec![0.0; n]; layers]` clones layer 0 into every
+/// other layer, and a clone writes every byte, so construction committed `layers - 1` full layers
+/// before a token was written. `vec![0.0; n]` is a zeroed allocation the OS backs lazily, so memory
+/// is committed only as positions are written, as in `StreamingKVCache::new` (#4778).
+fn zeroed_layers(num_layers: usize, n: usize) -> Vec<Vec<f32>> {
+    (0..num_layers).map(|_| vec![0.0; n]).collect()
+}
+
 /// Key-Value cache for autoregressive generation
 ///
 /// Stores past key and value tensors to avoid recomputation during generation.
@@ -58,11 +66,9 @@ impl KVCache {
     /// * `max_seq_len` - Maximum sequence length to cache
     #[must_use]
     pub fn new(num_layers: usize, hidden_dim: usize, max_seq_len: usize) -> Self {
-        let k_cache = vec![vec![0.0; max_seq_len * hidden_dim]; num_layers];
-        let v_cache = vec![vec![0.0; max_seq_len * hidden_dim]; num_layers];
         Self {
-            k_cache,
-            v_cache,
+            k_cache: zeroed_layers(num_layers, max_seq_len * hidden_dim),
+            v_cache: zeroed_layers(num_layers, max_seq_len * hidden_dim),
             seq_len: 0,
             hidden_dim,
         }
@@ -252,11 +258,9 @@ impl OptimizedKVCache {
     /// Create a new optimized KV cache
     #[must_use]
     pub fn new(num_layers: usize, hidden_dim: usize, max_seq_len: usize) -> Self {
-        let k_cache = vec![vec![0.0; max_seq_len * hidden_dim]; num_layers];
-        let v_cache = vec![vec![0.0; hidden_dim * max_seq_len]; num_layers];
         Self {
-            k_cache,
-            v_cache,
+            k_cache: zeroed_layers(num_layers, max_seq_len * hidden_dim),
+            v_cache: zeroed_layers(num_layers, hidden_dim * max_seq_len),
             seq_len: 0,
             hidden_dim,
             max_seq_len,
