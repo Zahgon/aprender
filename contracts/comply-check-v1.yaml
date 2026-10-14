@@ -33,3 +33,10 @@ falsification:
     description: "∀ binding in code: ∃ equation in YAML"
     test: "Related tests in crates/aprender-contracts/src/"
     evidence: "cargo test --lib"
+
+falsification_tests:
+  - id: FALSIFY-COMPLY_CHECK_V1_001-T
+    rule: "An equation with no code binding is reported, never passed silently"
+    prediction: "explain_contract on a contract with one equation f and a binding registry with no bindings prints 'f: missing'. This tests the detector on a synthetic contract; it does not sweep the real contracts/ tree for unbound equations"
+    test: "cargo test -p aprender-contracts --lib explain_binding_status_missing_equation"
+    if_fails: "The binding check reports an unbound equation as bound or omits it, so a YAML equation with no code passes the comply check"

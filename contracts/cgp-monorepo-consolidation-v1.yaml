@@ -306,3 +306,10 @@ phases:
   - id: P6-archive
     name: "Archive old repos as read-only"
     deliverable: "19 repos archived, README points to monorepo"
+
+falsification_tests:
+  - id: FALSIFY-MONO-012-T
+    rule: "Every workspace member sits at depth crates/<name>/Cargo.toml or is the root manifest"
+    prediction: "cargo metadata --no-deps lists no local package whose manifest path, relative to the workspace root, has more than three components. It checks depth only: a member at a depth-3 path outside crates/ (e.g. tools/foo/Cargo.toml) would pass"
+    test: "cargo test -p aprender-core --test monorepo_invariants test_flat_layout_no_nested_crates"
+    if_fails: "A crate was added nested inside another crate directory, such as crates/<parent>/crates/<child>"

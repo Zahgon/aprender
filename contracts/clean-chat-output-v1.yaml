@@ -141,3 +141,50 @@ status_history:
     date: "2026-05-21"
     pr: "TBD"
     summary: "Initial contract registering the M287→#1852→#1853 cascade invariants as falsifier-backed guarantees. Codifies the sanitization layer that prevents 'Human:'/'User:'/'Assistant:' / ChatML markers from leaking into chat-completion responses."
+
+falsification_tests:
+  - id: FALSIFY-CLEAN-CHAT-OUTPUT-V1_001-T1
+    rule: "A leading Human: prefix is stripped and the body kept"
+    prediction: "test_clean_chat_output_leading_human_prefix passes: clean_chat_output of 'Human: Here's what I have so far:' plus a body does not start with 'Human:' and still contains the body text. It checks the prefix is gone, not exact equality with the body"
+    test: "cargo test -p aprender-serve --lib test_clean_chat_output_leading_human_prefix"
+    if_fails: "A leading Human: role marker leaks into the reply"
+  - id: FALSIFY-CLEAN-CHAT-OUTPUT-V1_001-T2
+    rule: "A leading User: prefix is stripped and the body kept"
+    prediction: "test_clean_chat_output_leading_user_prefix passes: the result of 'User: please explain this code' does not start with 'User:' and contains 'please explain this code'"
+    test: "cargo test -p aprender-serve --lib test_clean_chat_output_leading_user_prefix"
+    if_fails: "A leading User: role marker leaks into the reply"
+  - id: FALSIFY-CLEAN-CHAT-OUTPUT-V1_001-T3
+    rule: "A leading Assistant: prefix is stripped and the body kept"
+    prediction: "test_clean_chat_output_leading_assistant_prefix passes: the result of 'Assistant: here is my answer' does not start with 'Assistant:' and contains 'here is my answer'"
+    test: "cargo test -p aprender-serve --lib test_clean_chat_output_leading_assistant_prefix"
+    if_fails: "A leading Assistant: role marker leaks into the reply"
+  - id: FALSIFY-CLEAN-CHAT-OUTPUT-V1_002-T1
+    rule: "An end-of-turn token in the body truncates there"
+    prediction: "test_clean_chat_output_im_end_gh219 passes: 'Good answer<|im_end|>extra garbage' becomes 'Good answer' and 'Some text<|endoftext|>more text' becomes 'Some text'"
+    test: "cargo test -p aprender-serve --lib test_clean_chat_output_im_end_gh219"
+    if_fails: "Text after an end-of-turn token reaches the user"
+  - id: FALSIFY-CLEAN-CHAT-OUTPUT-V1_002-T2
+    rule: "A new Human: or User: turn in the body truncates there"
+    prediction: "test_clean_chat_output_human_turn_gh219 passes: 'Response\\nHuman: new question' and 'Response\\nUser: what?' both become 'Response'"
+    test: "cargo test -p aprender-serve --lib test_clean_chat_output_human_turn_gh219"
+    if_fails: "The model's hallucinated next user turn reaches the user"
+  - id: FALSIFY-CLEAN-CHAT-OUTPUT-V1_003-T
+    rule: "The earliest stop sequence wins"
+    prediction: "test_clean_chat_output_earliest_wins_gh219 passes: 'Hello</s>mid<|im_end|>end' becomes 'Hello'"
+    test: "cargo test -p aprender-serve --lib test_clean_chat_output_earliest_wins_gh219"
+    if_fails: "A later stop sequence is used and text between the two leaks"
+  - id: FALSIFY-CLEAN-CHAT-OUTPUT-V1_004-T
+    rule: "Clean text passes through unchanged"
+    prediction: "test_clean_chat_output_no_stop_sequences_gh219 passes: 'Hello, world!' is returned unchanged. The input has no surrounding whitespace, so the trim half of this condition is witnessed only by the V1_005 stop-sequence case"
+    test: "cargo test -p aprender-serve --lib test_clean_chat_output_no_stop_sequences_gh219"
+    if_fails: "Clean model output is altered"
+  - id: FALSIFY-CLEAN-CHAT-OUTPUT-V1_005-T1
+    rule: "Empty input stays empty"
+    prediction: "test_clean_chat_output_empty_gh219 passes: clean_chat_output('') returns ''"
+    test: "cargo test -p aprender-serve --lib test_clean_chat_output_empty_gh219"
+    if_fails: "Empty input produces non-empty output"
+  - id: FALSIFY-CLEAN-CHAT-OUTPUT-V1_005-T2
+    rule: "A stop-only input collapses to empty and surrounding whitespace is trimmed"
+    prediction: "test_clean_chat_output_only_stop_sequence_gh219 passes: '<|im_end|>' becomes '' and '  answer  <|im_end|>' becomes 'answer'. No test feeds a whitespace-only input"
+    test: "cargo test -p aprender-serve --lib test_clean_chat_output_only_stop_sequence_gh219"
+    if_fails: "A bare stop token or padding whitespace reaches the user"

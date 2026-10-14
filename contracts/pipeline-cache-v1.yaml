@@ -33,3 +33,10 @@ falsification:
     description: "output after eviction matches recompute from scratch"
     test: "Related tests in crates/aprender-serve/src/"
     evidence: "cargo test --lib"
+
+falsification_tests:
+  - id: FALSIFY-PIPELINE_CACHE_V1_001-T
+    rule: "cache.len() grows by exactly 1 per decode step"
+    prediction: "For positions 0..7 with an 8-slot AprKVCache, each forward_with_cache call returns Ok and cache.len() equals pos + 1 after it; after position 7 the length is 8 and capacity() is 8. The test stops at capacity and does not step past it"
+    test: "cargo test -p aprender-serve --lib test_kv_cache_near_capacity"
+    if_fails: "A decode step appends no entry or more than one entry to the KV cache"

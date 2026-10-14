@@ -42,3 +42,15 @@ falsification:
     description: "∀ token: Σ selected_weights[token] = 1.0 after renorm"
     test: "Related tests in crates/aprender-serve/src/gpu/scheduler/moe_dispatch.rs"
     evidence: "cargo test --lib"
+
+falsification_tests:
+  - id: FALSIFY-MOE_ROUTER_V1_002-T
+    rule: "The router selects exactly k experts per token"
+    prediction: "With 8 experts, k=4 and an all-zero gate, the dispatch returns indices.len() == 4 and every selected weight within 1e-6 of 0.25. One token, one k; the test does not vary num_experts_per_token"
+    test: "cargo test -p aprender-serve --lib test_zero_gate_uniform_routing"
+    if_fails: "Top-k selection returns more or fewer than k experts, or the renormalised weights of a uniform gate are not 1/k"
+  - id: FALSIFY-MOE_ROUTER_V1_003-T
+    rule: "The selected weights sum to 1 after renormalisation, even for large logits"
+    prediction: "With gate logits near 250 (k=2), every selected weight is finite, experts 0 and 1 are chosen in that order, and |Σ weights − 1| < 1e-6"
+    test: "cargo test -p aprender-serve --lib test_softmax_stability_large_logits"
+    if_fails: "Softmax overflows on large logits or the top-k weights are not renormalised to sum to 1"

@@ -172,3 +172,10 @@ falsification:
     description: "GGUF vocabulary extraction matches tokenizer.json"
     test: "GGUF tokenizer loader tests"
     evidence: "cargo test -p aprender-core --lib gguf_tokenizer"
+
+falsification_tests:
+  - id: FALSIFY-TOK-002-T
+    rule: "Special tokens are read from the added_tokens of tokenizer.json"
+    prediction: "load_from_json on a tokenizer.json whose added_tokens hold <special> (special: true) and normal (special: false) succeeds; is_special_token('<special>') is true, is_special_token('normal') is false, and token_to_id('normal') is 101. The input is an inline JSON string, not a model's tokenizer.json file"
+    test: "cargo test -p aprender-core --lib test_load_from_json_with_special_added_tokens"
+    if_fails: "The loader ignores the special flag of added_tokens, marks every added token special, or drops non-special added tokens from the vocabulary"

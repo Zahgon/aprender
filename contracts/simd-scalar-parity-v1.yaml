@@ -33,3 +33,10 @@ falsification:
     description: "∀ input_len: SIMD + scalar remainder = complete output"
     test: "Related tests in crates/aprender-compute/src/backends/"
     evidence: "cargo test --lib"
+
+falsification_tests:
+  - id: FALSIFY-SIMD_SCALAR_PARITY_V1_001-T
+    rule: "SIMD and scalar outputs agree within 1e-5"
+    prediction: "Over 1000 seeded random pairs of 127-element vectors, Avx2Backend add and mul match ScalarBackend element-wise within 1e-5, and dot matches within a tolerance that scales with the vector length. Narrower than the condition: AVX2 only (no AVX-512 or NEON), three ops, and on a host without AVX2 and FMA the test returns before any assert"
+    test: "cargo test -p aprender-compute --lib test_avx2_vs_scalar_golden_parity"
+    if_fails: "An AVX2 kernel diverges from the scalar reference, including on the 127-element remainder lane"
