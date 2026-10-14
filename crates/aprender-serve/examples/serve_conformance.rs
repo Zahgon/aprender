@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! cargo run -p aprender-serve --example serve_conformance -- \
-//!     --url http://127.0.0.1:8080 --model qwen3-1.7b-q4km --backend cpu --out receipt.json
+//!     --url http://127.0.0.1:8080 --model qwen3.5-0.8b-q4km --backend cpu --out receipt.json
 //! ```
 //!
 //! Exit 0 only when every cell is `pass`. A `fail`, a `not_measured` cell or a
