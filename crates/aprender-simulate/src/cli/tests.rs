@@ -822,7 +822,7 @@ fn test_print_emc_report_non_compliant() {
 
 #[test]
 fn test_print_emc_validation_results_valid() {
-    let yaml: serde_yaml::Value = serde_yaml::from_str(
+    let yaml: serde_json::Value = crate::yaml::from_str(
         r#"
         identity:
           name: "Test EMC"
@@ -836,21 +836,21 @@ fn test_print_emc_validation_results_valid() {
     "#,
     )
     .ok()
-    .unwrap_or(serde_yaml::Value::Null);
+    .unwrap_or(serde_json::Value::Null);
 
     print_emc_validation_results(&yaml, &[], &[]);
 }
 
 #[test]
 fn test_print_emc_validation_results_with_errors() {
-    let yaml: serde_yaml::Value = serde_yaml::from_str(
+    let yaml: serde_json::Value = crate::yaml::from_str(
         r#"
         identity:
           name: "Incomplete EMC"
     "#,
     )
     .ok()
-    .unwrap_or(serde_yaml::Value::Null);
+    .unwrap_or(serde_json::Value::Null);
 
     let errors = vec![
         "Missing required field: emc_version".to_string(),
@@ -863,7 +863,7 @@ fn test_print_emc_validation_results_with_errors() {
 
 #[test]
 fn test_print_emc_validation_results_null_yaml() {
-    let yaml = serde_yaml::Value::Null;
+    let yaml = serde_json::Value::Null;
     print_emc_validation_results(&yaml, &[], &[]);
 }
 
@@ -874,7 +874,7 @@ fn test_print_emc_validation_results_null_yaml() {
 
 #[test]
 fn test_schema_validation_integration() {
-    let valid_yaml: serde_yaml::Value = serde_yaml::from_str(
+    let valid_yaml: serde_json::Value = crate::yaml::from_str(
         r#"
         emc_version: "1.0"
         emc_id: "test/integration"
@@ -894,7 +894,7 @@ fn test_schema_validation_integration() {
     "#,
     )
     .ok()
-    .unwrap_or(serde_yaml::Value::Null);
+    .unwrap_or(serde_json::Value::Null);
 
     let (errors, warnings) = validate_emc_schema(&valid_yaml);
     assert!(errors.is_empty());

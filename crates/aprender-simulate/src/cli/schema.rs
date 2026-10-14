@@ -17,7 +17,7 @@
 ///
 /// A tuple of (errors, warnings) vectors.
 #[must_use]
-pub fn validate_emc_schema(yaml: &serde_yaml::Value) -> (Vec<String>, Vec<String>) {
+pub fn validate_emc_schema(yaml: &serde_json::Value) -> (Vec<String>, Vec<String>) {
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
 
@@ -30,7 +30,7 @@ pub fn validate_emc_schema(yaml: &serde_yaml::Value) -> (Vec<String>, Vec<String
     (errors, warnings)
 }
 
-fn check_required_top_level_fields(yaml: &serde_yaml::Value, errors: &mut Vec<String>) {
+fn check_required_top_level_fields(yaml: &serde_json::Value, errors: &mut Vec<String>) {
     let required = [
         "emc_version",
         "emc_id",
@@ -47,7 +47,7 @@ fn check_required_top_level_fields(yaml: &serde_yaml::Value, errors: &mut Vec<St
 }
 
 fn check_identity_section(
-    yaml: &serde_yaml::Value,
+    yaml: &serde_json::Value,
     errors: &mut Vec<String>,
     warnings: &mut Vec<String>,
 ) {
@@ -62,7 +62,7 @@ fn check_identity_section(
     }
 }
 
-fn check_governing_equation_section(yaml: &serde_yaml::Value, errors: &mut Vec<String>) {
+fn check_governing_equation_section(yaml: &serde_json::Value, errors: &mut Vec<String>) {
     let Some(eq) = yaml.get("governing_equation") else {
         return;
     };
@@ -71,7 +71,7 @@ fn check_governing_equation_section(yaml: &serde_yaml::Value, errors: &mut Vec<S
     }
 }
 
-fn check_analytical_derivation_section(yaml: &serde_yaml::Value, errors: &mut Vec<String>) {
+fn check_analytical_derivation_section(yaml: &serde_json::Value, errors: &mut Vec<String>) {
     let Some(deriv) = yaml.get("analytical_derivation") else {
         return;
     };
@@ -80,7 +80,7 @@ fn check_analytical_derivation_section(yaml: &serde_yaml::Value, errors: &mut Ve
     }
 }
 
-fn check_edd_sections(yaml: &serde_yaml::Value, warnings: &mut Vec<String>) {
+fn check_edd_sections(yaml: &serde_json::Value, warnings: &mut Vec<String>) {
     if yaml.get("verification_tests").is_none() {
         warnings.push("Missing EDD-required section: verification_tests".to_string());
     }
@@ -92,10 +92,10 @@ fn check_edd_sections(yaml: &serde_yaml::Value, warnings: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_yaml::Value;
+    use serde_json::Value;
 
     fn minimal_valid_emc() -> Value {
-        serde_yaml::from_str(
+        crate::yaml::from_str(
             r#"
             emc_version: "1.0"
             emc_id: "test/example"
@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn test_missing_emc_version() {
-        let yaml: Value = serde_yaml::from_str(
+        let yaml: Value = crate::yaml::from_str(
             r#"
             emc_id: "test/example"
             identity:
@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn test_missing_emc_id() {
-        let yaml: Value = serde_yaml::from_str(
+        let yaml: Value = crate::yaml::from_str(
             r#"
             emc_version: "1.0"
             identity:
@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn test_missing_identity() {
-        let yaml: Value = serde_yaml::from_str(
+        let yaml: Value = crate::yaml::from_str(
             r#"
             emc_version: "1.0"
             emc_id: "test/example"
@@ -187,7 +187,7 @@ mod tests {
 
     #[test]
     fn test_missing_identity_name() {
-        let yaml: Value = serde_yaml::from_str(
+        let yaml: Value = crate::yaml::from_str(
             r#"
             emc_version: "1.0"
             emc_id: "test/example"
@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn test_missing_identity_version_warning() {
-        let yaml: Value = serde_yaml::from_str(
+        let yaml: Value = crate::yaml::from_str(
             r#"
             emc_version: "1.0"
             emc_id: "test/example"
@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn test_missing_governing_equation() {
-        let yaml: Value = serde_yaml::from_str(
+        let yaml: Value = crate::yaml::from_str(
             r#"
             emc_version: "1.0"
             emc_id: "test/example"
@@ -252,7 +252,7 @@ mod tests {
 
     #[test]
     fn test_governing_equation_no_latex_or_plaintext() {
-        let yaml: Value = serde_yaml::from_str(
+        let yaml: Value = crate::yaml::from_str(
             r#"
             emc_version: "1.0"
             emc_id: "test/example"
@@ -276,7 +276,7 @@ mod tests {
 
     #[test]
     fn test_governing_equation_with_plain_text_only() {
-        let yaml: Value = serde_yaml::from_str(
+        let yaml: Value = crate::yaml::from_str(
             r#"
             emc_version: "1.0"
             emc_id: "test/example"
@@ -302,7 +302,7 @@ mod tests {
 
     #[test]
     fn test_missing_analytical_derivation() {
-        let yaml: Value = serde_yaml::from_str(
+        let yaml: Value = crate::yaml::from_str(
             r#"
             emc_version: "1.0"
             emc_id: "test/example"
@@ -322,7 +322,7 @@ mod tests {
 
     #[test]
     fn test_missing_primary_citation() {
-        let yaml: Value = serde_yaml::from_str(
+        let yaml: Value = crate::yaml::from_str(
             r#"
             emc_version: "1.0"
             emc_id: "test/example"
@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn test_missing_domain_of_validity() {
-        let yaml: Value = serde_yaml::from_str(
+        let yaml: Value = crate::yaml::from_str(
             r#"
             emc_version: "1.0"
             emc_id: "test/example"
@@ -375,7 +375,7 @@ mod tests {
 
     #[test]
     fn test_with_verification_tests_no_warning() {
-        let yaml: Value = serde_yaml::from_str(
+        let yaml: Value = crate::yaml::from_str(
             r#"
             emc_version: "1.0"
             emc_id: "test/example"
@@ -401,7 +401,7 @@ mod tests {
 
     #[test]
     fn test_with_falsification_criteria_no_warning() {
-        let yaml: Value = serde_yaml::from_str(
+        let yaml: Value = crate::yaml::from_str(
             r#"
             emc_version: "1.0"
             emc_id: "test/example"
@@ -437,7 +437,7 @@ mod tests {
 
     #[test]
     fn test_multiple_errors() {
-        let yaml: Value = serde_yaml::from_str(
+        let yaml: Value = crate::yaml::from_str(
             r#"
             identity:
               version: "1.0"

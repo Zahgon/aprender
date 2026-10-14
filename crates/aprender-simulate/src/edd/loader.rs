@@ -181,7 +181,7 @@ pub struct VerificationTestYaml {
     #[serde(default)]
     pub parameters: HashMap<String, f64>,
     #[serde(default)]
-    pub expected: HashMap<String, serde_yaml::Value>,
+    pub expected: HashMap<String, serde_json::Value>,
     #[serde(default)]
     pub tolerance: Option<f64>,
     #[serde(default)]
@@ -225,7 +225,7 @@ impl EmcYaml {
     /// # Errors
     /// Returns error if YAML is invalid.
     pub fn from_yaml(yaml: &str) -> Result<Self, String> {
-        serde_yaml::from_str(yaml).map_err(|e| format!("Failed to parse EMC YAML: {e}"))
+        crate::yaml::from_str(yaml).map_err(|e| format!("Failed to parse EMC YAML: {e}"))
     }
 
     /// Convert to an `EquationModelCard`.
@@ -287,7 +287,7 @@ impl EmcYaml {
                 let expected = test
                     .expected
                     .get("value")
-                    .and_then(serde_yaml::Value::as_f64)
+                    .and_then(serde_json::Value::as_f64)
                     .unwrap_or(0.0);
                 let tolerance = test.tolerance.unwrap_or(1e-6);
                 let mut vtest = VerificationTest::new(&test.name, expected, tolerance);
@@ -459,7 +459,7 @@ pub struct SimulationYaml {
     #[serde(default)]
     pub duration: Option<DurationYaml>,
     #[serde(default)]
-    pub parameters: HashMap<String, serde_yaml::Value>,
+    pub parameters: HashMap<String, serde_json::Value>,
 }
 
 /// Duration settings.
@@ -513,7 +513,7 @@ impl ExperimentYaml {
     /// # Errors
     /// Returns error if YAML is invalid.
     pub fn from_yaml(yaml: &str) -> Result<Self, String> {
-        serde_yaml::from_str(yaml).map_err(|e| format!("Failed to parse experiment YAML: {e}"))
+        crate::yaml::from_str(yaml).map_err(|e| format!("Failed to parse experiment YAML: {e}"))
     }
 
     /// Convert to an `ExperimentSpec`.
@@ -596,6 +596,19 @@ impl ExperimentYaml {
             }
         }
 
+        self.validate_hypothesis_section(&mut errors);
+        self.validate_falsification_section(&mut errors);
+        self.validate_simulation_duration(&mut errors);
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+
+    /// Schema check: the hypothesis section (part of `validate_schema`).
+    fn validate_hypothesis_section(&self, errors: &mut Vec<String>) {
         // Hypothesis validation
         if let Some(ref hyp) = self.hypothesis {
             if hyp.null_hypothesis.len() < 10 {
@@ -615,7 +628,10 @@ impl ExperimentYaml {
         } else {
             errors.push("Experiment must have a hypothesis section".to_string());
         }
+    }
 
+    /// Schema check: the falsification section (part of `validate_schema`).
+    fn validate_falsification_section(&self, errors: &mut Vec<String>) {
         // Falsification criteria validation
         if let Some(ref fals) = self.falsification {
             if fals.criteria.is_empty() && !fals.import_from_emc {
@@ -632,7 +648,10 @@ impl ExperimentYaml {
         } else {
             errors.push("Experiment must have falsification section".to_string());
         }
+    }
 
+    /// Schema check: the simulation duration (part of `validate_schema`).
+    fn validate_simulation_duration(&self, errors: &mut Vec<String>) {
         // Simulation duration validation
         if let Some(ref sim) = self.simulation {
             if let Some(ref dur) = sim.duration {
@@ -643,12 +662,6 @@ impl ExperimentYaml {
                     errors.push("Replications must be at least 1".to_string());
                 }
             }
-        }
-
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
         }
     }
 }

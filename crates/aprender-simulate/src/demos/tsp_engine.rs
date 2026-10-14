@@ -220,23 +220,7 @@ impl TspEngine {
             improved = false;
             for i in 0..self.n - 1 {
                 for j in i + 2..self.n {
-                    // Skip adjacent edges
-                    if j == i + 1 || (i == 0 && j == self.n - 1) {
-                        continue;
-                    }
-
-                    // Calculate improvement
-                    let a = tour[i];
-                    let b = tour[i + 1];
-                    let c = tour[j];
-                    let d = tour[(j + 1) % self.n];
-
-                    let current = self.distances[a][b] + self.distances[c][d];
-                    let swapped = self.distances[a][c] + self.distances[b][d];
-
-                    if swapped < current {
-                        // Reverse segment [i+1, j]
-                        tour[i + 1..=j].reverse();
+                    if self.try_two_opt_move(tour, i, j) {
                         improved = true;
                         improvements += 1;
                     }
@@ -245,6 +229,31 @@ impl TspEngine {
         }
 
         improvements
+    }
+
+    /// Try one 2-opt move on edges (i, i+1) and (j, j+1); apply it if it
+    /// shortens the tour. Returns whether the move was applied.
+    fn try_two_opt_move(&self, tour: &mut [usize], i: usize, j: usize) -> bool {
+        // Skip adjacent edges
+        if j == i + 1 || (i == 0 && j == self.n - 1) {
+            return false;
+        }
+
+        // Calculate improvement
+        let a = tour[i];
+        let b = tour[i + 1];
+        let c = tour[j];
+        let d = tour[(j + 1) % self.n];
+
+        let current = self.distances[a][b] + self.distances[c][d];
+        let swapped = self.distances[a][c] + self.distances[b][d];
+
+        if swapped < current {
+            // Reverse segment [i+1, j]
+            tour[i + 1..=j].reverse();
+            return true;
+        }
+        false
     }
 
     /// Perform one restart iteration.
@@ -284,7 +293,7 @@ impl DemoEngine for TspEngine {
     type StepResult = TspStepResult;
 
     fn from_yaml(yaml: &str) -> Result<Self, DemoError> {
-        let config: TspConfig = serde_yaml::from_str(yaml)?;
+        let config: TspConfig = crate::yaml::from_str(yaml)?;
         Ok(Self::from_config(config))
     }
 
