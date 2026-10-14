@@ -1082,12 +1082,6 @@ impl entrenar_distill::teacher_provider::TeacherLogitsProvider for TruncatingTea
     }
 }
 
-/// Config-driven distillation mode (ALB-011).
-///
-/// Supports two-stage workflow:
-///   --plan: validate config + show estimates
-///   --stage precompute: extract teacher logits to sharded files
-///   --stage train: train student with KD loss from precomputed logits
 /// #4552 train-arch-honesty-v1: every backend (the CUDA one and its --plan
 /// included) refuses an unmodelled teacher/student architecture by name,
 /// before any weight read.
@@ -1099,6 +1093,12 @@ fn refuse_unmodelled_teacher_student(teacher: &Path, student: Option<&Path>) -> 
     Ok(())
 }
 
+/// Config-driven distillation mode (ALB-011).
+///
+/// Supports two-stage workflow:
+///   --plan: validate config + show estimates
+///   --stage precompute: extract teacher logits to sharded files
+///   --stage train: train student with KD loss from precomputed logits
 fn run_config_mode(
     config_path: &Path,
     stage: Option<&str>,

@@ -1366,6 +1366,8 @@ pub(crate) fn run(
         println!();
     }
 
+    // #4552: --plan returns before any resolver; it refuses as the run does.
+    super::model_config::refuse_unmodelled_model(model_path, model_size)?;
     let model_params = resolve_model_params(model_size, model_path)?;
 
     let mut config = plan(model_params, vram_gb, ft_method.into())

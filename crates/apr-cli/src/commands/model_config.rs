@@ -156,15 +156,15 @@ pub(crate) fn resolve_transformer_config(
     model_path: Option<&Path>,
     model_size: Option<&str>,
 ) -> Result<entrenar::transformer::TransformerConfig> {
+    // #4552: GGUF `general.architecture` and remote ids too, not only the
+    // .apr header and config.json the attempts below read.
+    if let Some(path) = model_path {
+        refuse_unmodelled_model_path(path)?;
+    }
     // Attempt 1: Read architecture from .apr file metadata
     if let Some(path) = model_path.filter(|p| p.is_file()) {
         if let Some(config) = read_apr_architecture(path)? {
             return Ok(config);
-        }
-        // #4552: every config.json the sibling read below may use, the pacha
-        // `<stem>.config.json` included, is checked first.
-        for candidate in sibling_config_candidates(path) {
-            refuse_unmodelled_hf_config(&candidate)?;
         }
         // Attempt 2: a .safetensors / .gguf checkout ships its architecture in
         // a sibling config.json. Before #2417 this was only consulted when the
@@ -288,6 +288,24 @@ fn read_hf_config_file(config_path: &Path) -> Option<entrenar::transformer::Tran
 /// Local implementation of the size-string-to-config mapping. The upstream
 /// `TransformerConfig::from_size_str()` exists in local entrenar source but
 /// is not yet published in entrenar 0.7.5.
+/// `--model-size` spellings that name the Qwen3.5 hybrid (#4552).
+const QWEN35_SIZE_ALIASES: [&str; 4] = ["9B", "qwen3.5-9b", "qwen3_5", "qwen3.5"];
+
+/// #4552: one refusal for everything a training verb is told about its model,
+/// a path (or remote id) and a `--model-size`, so `--plan` refuses as the run does.
+pub(crate) fn refuse_unmodelled_model(
+    model_path: Option<&Path>,
+    model_size: Option<&str>,
+) -> Result<()> {
+    if let Some(path) = model_path {
+        refuse_unmodelled_model_path(path)?;
+    }
+    if model_size.is_some_and(|s| QWEN35_SIZE_ALIASES.contains(&s)) {
+        refuse_unmodelled_arch(Some("qwen3.5-9b"))?;
+    }
+    Ok(())
+}
+
 pub(crate) fn resolve_transformer_config_by_size(
     model_size: Option<&str>,
 ) -> Result<entrenar::transformer::TransformerConfig> {
@@ -300,7 +318,7 @@ pub(crate) fn resolve_transformer_config_by_size(
             "13B" | "llama2-13b" => Ok(TransformerConfig::llama2_13b()),
             "mistral-7b" => Ok(TransformerConfig::mistral_7b()),
             // #4552: a dense preset with no GDN layers; refused, not silently built.
-            "9B" | "qwen3.5-9b" | "qwen3_5" | "qwen3.5" => {
+            size if QWEN35_SIZE_ALIASES.contains(&size) => {
                 refuse_unmodelled_arch(Some("qwen3.5-9b")).map(|()| TransformerConfig::qwen3_5_9b())
             }
             unknown => Err(CliError::ValidationFailed(format!(
@@ -646,6 +664,21 @@ mod arch_resolution_tests {
         ] {
             assert!(refuse_unmodelled_model_path(Path::new(id)).is_ok(), "{id}");
         }
+
+        // C314 r4: the resolver every finetune task shares, and the --plan refusal,
+        // refuse a remote id or GGUF even when --model-size names a dense preset.
+        for path in [Path::new("Qwen/Qwen3.5-9B"), hybrid.as_path()] {
+            let msg = resolve_transformer_config(Some(path), Some("0.5B"))
+                .expect_err("hybrid behind a dense --model-size")
+                .to_string();
+            assert!(msg.contains("UnsupportedArch"), "{msg}");
+            assert!(refuse_unmodelled_model(Some(path), Some("0.5B")).is_err());
+        }
+        assert!(refuse_unmodelled_model(None, Some("9B")).is_err());
+        assert!(refuse_unmodelled_model(None, Some("0.5B")).is_ok());
+        assert!(
+            resolve_transformer_config(Some(Path::new("Qwen/Qwen2.5-0.5B")), Some("0.5B")).is_ok()
+        );
     }
 }
 
