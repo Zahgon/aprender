@@ -79,7 +79,7 @@ impl SimConfig {
     ///
     /// Returns error if parsing or validation fails.
     pub fn from_yaml(yaml: &str) -> SimResult<Self> {
-        let config: Self = serde_yaml::from_str(yaml)?;
+        let config: Self = crate::yaml_from_str(yaml)?;
 
         // Poka-Yoke: validate all constraints
         config.validate()?;
@@ -1214,7 +1214,7 @@ domains:
 velocity: "100 m/s"
 length: "10 km"
 "#;
-        let config: Result<TestConfig, _> = serde_yaml::from_str(yaml);
+        let config: Result<TestConfig, _> = crate::yaml_from_str(yaml);
         assert!(config.is_ok());
 
         let config = config.ok().unwrap();
@@ -1234,14 +1234,14 @@ length: "10 km"
         let yaml = r#"
 velocity: "100"
 "#;
-        let config: Result<TestConfig, _> = serde_yaml::from_str(yaml);
+        let config: Result<TestConfig, _> = crate::yaml_from_str(yaml);
         assert!(config.is_err());
 
         // Invalid unit should fail
         let yaml = r#"
 velocity: "100 parsecs"
 "#;
-        let config: Result<TestConfig, _> = serde_yaml::from_str(yaml);
+        let config: Result<TestConfig, _> = crate::yaml_from_str(yaml);
         assert!(config.is_err());
     }
 

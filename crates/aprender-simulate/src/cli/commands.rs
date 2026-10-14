@@ -371,7 +371,7 @@ pub fn emc_validate(path: &Path) -> ExitCode {
     }
 
     // Then run the semantic validation
-    let yaml: serde_yaml::Value = match serde_yaml::from_str(&contents) {
+    let yaml: serde_json::Value = match crate::yaml_from_str(&contents) {
         Ok(y) => y,
         Err(e) => {
             eprintln!("YAML Syntax Error: {e}");

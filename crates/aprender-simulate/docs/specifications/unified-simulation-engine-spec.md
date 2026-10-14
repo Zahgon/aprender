@@ -2509,7 +2509,7 @@ impl SimularConfig {
     /// Load and validate configuration
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(path)?;
-        let config: Self = serde_yaml::from_str(&content)?;
+        let config: Self = crate::yaml_from_str(&content)?;
 
         // Poka-Yoke: validate all constraints
         config.validate()?;

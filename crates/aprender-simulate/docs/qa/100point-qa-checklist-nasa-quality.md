@@ -60,7 +60,7 @@ This checklist employs **Popperian falsification**: each checkpoint is framed as
 
 | # | Null Hypothesis (H₀) | Falsification Method | Pass Criteria | Actual Outcome | Status |
 |---|---------------------|---------------------|---------------|----------------|--------|
-| 21 | H₀: Invalid config YAML accepted | Fuzz YAML parser with 10000 malformed inputs | All rejected with clear errors | serde_yaml + validator crate validation | **PASSED** |
+| 21 | H₀: Invalid config YAML accepted | Fuzz YAML parser with 10000 malformed inputs | All rejected with clear errors | serde-saphyr (serde-yaml 0.9 when PASSED was recorded) + validator crate validation | **PASSED** |
 | 22 | H₀: Negative mass allowed | Attempt mass = -1.0 in body creation | Type system or runtime rejection | Config tests verify rejection | **PASSED** |
 | 23 | H₀: Future timestamps schedulable | Schedule event at t = current_time - 1 | Rejected at schedule time | Scheduler allows past (immediate exec) | **PASSED** |
 | 24 | H₀: Uninitialized state accessible | Access state before simulation start | Compile-time or panic prevention | SimState::default() always valid | **PASSED** |

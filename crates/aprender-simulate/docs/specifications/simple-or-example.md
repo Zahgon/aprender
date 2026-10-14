@@ -445,7 +445,7 @@ impl TspGraspDemo {
     /// - Matrix dimensions don't match city count
     /// - Triangle inequality violated (Jidoka)
     pub fn from_yaml(yaml: &str) -> Result<Self, TspError> {
-        let config: TspInstanceYaml = serde_yaml::from_str(yaml)
+        let config: TspInstanceYaml = crate::yaml_from_str(yaml)
             .map_err(|e| TspError::ParseError(e.to_string()))?;
 
         // Jidoka: Validate before proceeding

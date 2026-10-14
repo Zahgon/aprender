@@ -216,7 +216,7 @@ impl ExperimentSpec {
     /// # Errors
     /// Returns error if YAML is invalid or missing required fields.
     pub fn from_yaml(yaml: &str) -> Result<Self, String> {
-        serde_yaml::from_str(yaml).map_err(|e| format!("Failed to parse experiment YAML: {e}"))
+        crate::yaml_from_str(yaml).map_err(|e| format!("Failed to parse experiment YAML: {e}"))
     }
 
     /// Serialize to YAML string.
@@ -224,7 +224,7 @@ impl ExperimentSpec {
     /// # Errors
     /// Returns error if serialization fails.
     pub fn to_yaml(&self) -> Result<String, String> {
-        serde_yaml::to_string(self).map_err(|e| format!("Failed to serialize experiment: {e}"))
+        serde_saphyr::to_string(self).map_err(|e| format!("Failed to serialize experiment: {e}"))
     }
 
     /// Validate the experiment specification.
@@ -496,7 +496,7 @@ mod tests {
         let criterion =
             FalsificationCriterion::new("test", "x > 0", FalsificationAction::RejectModel);
 
-        let yaml = serde_yaml::to_string(&criterion).ok();
+        let yaml = serde_saphyr::to_string(&criterion).ok();
         assert!(yaml.is_some());
         let yaml = yaml.unwrap();
         assert!(yaml.contains("reject_model"));

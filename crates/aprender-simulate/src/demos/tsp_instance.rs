@@ -279,7 +279,7 @@ impl TspInstanceYaml {
     ///
     /// Returns `TspInstanceError::ParseError` if YAML is invalid.
     pub fn from_yaml(yaml: &str) -> Result<Self, TspInstanceError> {
-        serde_yaml::from_str(yaml).map_err(|e| TspInstanceError::ParseError(e.to_string()))
+        crate::yaml_from_str(yaml).map_err(|e| TspInstanceError::ParseError(e.to_string()))
     }
 
     /// Load TSP instance from a YAML file.
@@ -299,7 +299,7 @@ impl TspInstanceYaml {
     ///
     /// Returns error if serialization fails.
     pub fn to_yaml(&self) -> Result<String, TspInstanceError> {
-        serde_yaml::to_string(self).map_err(|e| TspInstanceError::ParseError(e.to_string()))
+        serde_saphyr::to_string(self).map_err(|e| TspInstanceError::ParseError(e.to_string()))
     }
 
     /// Number of cities in the instance.

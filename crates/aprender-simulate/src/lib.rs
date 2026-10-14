@@ -73,6 +73,19 @@ pub mod scenarios;
 pub mod tui;
 pub mod visualization;
 
+/// Parse YAML text with the standard stage options (#5205).
+///
+/// The one crate-wide YAML parse entry point: every reader in this crate goes through it,
+/// so the options cannot drift between call sites.
+pub(crate) fn yaml_from_str<T: serde::de::DeserializeOwned>(
+    s: &str,
+) -> Result<T, serde_saphyr::Error> {
+    serde_saphyr::from_str_with_options(
+        s,
+        serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false },
+    )
+}
+
 /// Prelude for convenient imports
 pub mod prelude {
     pub use crate::config::{SimConfig, SimConfigBuilder};
