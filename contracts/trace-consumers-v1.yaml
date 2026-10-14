@@ -1,0 +1,419 @@
+metadata:
+  version: "1.0.0"
+  created: "2026-10-14"
+  author: PAIML Engineering
+  registry: true
+  references:
+    - "aprender#5314"
+  description: |
+    trace-consumers-v1: who reads each trace, profile and metrics surface the
+    built binaries expose. A surface with no consumer is output nobody acts on.
+name: trace-consumers
+version: "1.0.0"
+scope: "crates/aprender-contracts/src/trace_consumers.rs, crates/aprender-contracts/examples/trace_consumers.rs, evidence/binary/snapshot.jsonl"
+description: |
+  TRACE-001 TR-08 (#5314). The surface list is never written by hand: `derive`
+  reads it off the tracked built-binary snapshot (`evidence/binary/snapshot.jsonl`,
+  written by `scripts/dogfood_surfaces.sh --snapshot`). Every command, HTTP route
+  and MCP tool of every bin target is a trace surface when a whole token of its
+  bin name or its own name is one of `bench, benchmark, cbtop, memtrace, metrics,
+  monitor, otlp, profile, profiling, roofline, telemetry, trace, traces, tracing`.
+  The `apr` pair (apr-cli and the root facade) is one surface per name. Flags are
+  not in the snapshot, so a `--trace` flag is out of scope here.
+
+  The `consumers:` block below registers each derived surface once. A consumer is
+  a `ledger`, a `gate` or a `runbook`, named as `<file>#<job, target or heading>`.
+  An entry is `active` only with the `first_green` run that proved its consumer
+  green, `report-only` until then, or `deprecated` with an `X.Y.Z` `remove_by`.
+
+  Measured at 1.0.0 on the snapshot as tracked: 69 surfaces, 4 with a consumer
+  (5.8%). The other 65 carry no consumer and no deprecation, so the check is RED
+  on them by design: each needs a consumer or a deprecation ruling. No entry has
+  a recorded first green run, so none is `active`.
+
+  The at-HEAD check (`cargo run -p aprender-contracts --example trace_consumers`)
+  is LAB (C324): it runs at night, never on a PR, merge-queue or release path.
+  The falsification tests below hold the checker itself and run with the lib.
+equations:
+  C-TCR-001:
+    description: "The registry and the derived surfaces are the same set, each entry once."
+    formula: "keys(registry) = derive(snapshot) ∧ ∀ s: |{e ∈ registry : key(e) = s}| ≤ 1 ∧ derive(snapshot) ≠ ∅"
+  C-TCR-002:
+    description: "Every entry names a consumer or is deprecated, and an active entry carries its first green run."
+    formula: "∀ e: (status(e) ≠ deprecated ⟹ consumer(e) ≠ ⊥) ∧ (status(e) = active ⟹ first_green(e) ≠ ⊥)"
+  C-TCR-003:
+    description: "A deprecated surface is gone by its remove_by version."
+    formula: "∀ e: status(e) = deprecated ⟹ semver(remove_by(e)) ≠ ⊥ ∧ version(workspace) < remove_by(e)"
+proof_obligations:
+  - id: PO-TCR-001
+    kind: correctness
+    statement: "check reports Unregistered for a derived surface with no entry, NotDerived for an entry the binaries no longer expose, Duplicate for a surface registered twice, and NothingDerived for an empty derivation; derive keeps whole tokens only."
+    discharged_by: FALSIFY-TCR-001
+  - id: PO-TCR-002
+    kind: correctness
+    statement: "check reports NoConsumer for a non-deprecated entry without a consumer and ActiveWithoutFirstGreen for an active entry without first_green."
+    discharged_by: FALSIFY-TCR-002
+  - id: PO-TCR-003
+    kind: correctness
+    statement: "check reports DeprecatedPastRemoveBy once the workspace version reaches remove_by, and BadRemoveBy for a missing or non-X.Y.Z remove_by."
+    discharged_by: FALSIFY-TCR-003
+falsification:
+  - id: FALSIFY-TCR-001
+    description: "A derived surface nobody registered, or an entry for a surface no binary exposes, passes check. Discharges C-TCR-001 and PO-TCR-001."
+    test: "cargo test -p aprender-contracts --lib trace_consumers::tests::falsify_tcr_001"
+  - id: FALSIFY-TCR-002
+    description: "An active entry without first_green, or an entry with no consumer that is not deprecated, passes check. Discharges C-TCR-002 and PO-TCR-002."
+    test: "cargo test -p aprender-contracts --lib trace_consumers::tests::falsify_tcr_002"
+  - id: FALSIFY-TCR-003
+    description: "A deprecated surface still exposed at or past remove_by, or deprecated without an X.Y.Z remove_by, passes check. Discharges C-TCR-003 and PO-TCR-003."
+    test: "cargo test -p aprender-contracts --lib trace_consumers::tests::falsify_tcr_003"
+consumers:
+  - binary: apr
+    kind: command
+    surface: "bench"
+    consumer: {kind: gate, ref: ".github/workflows/edge-fast-verbs-nightly.yml#edge"}
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "cbtop"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "cgp bench"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "cgp profile binary"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "cgp profile compare"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "cgp profile cublas"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "cgp profile kernel"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "cgp profile library"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "cgp profile metal"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "cgp profile parallel"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "cgp profile python"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "cgp profile quant"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "cgp profile scalar"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "cgp profile scaling"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "cgp profile simd"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "cgp profile wasm"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "cgp profile wgpu"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "cgp roofline"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "cgp trace"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "ddp-metrics-lint"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "gpu-memtrace-lint"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "hang-trace-lint"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "monitor"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "otlp-lint"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "profile"
+    consumer: {kind: gate, ref: ".github/workflows/qwen-story-daily.yml#story"}
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "pv roofline"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "react-trace-lint"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "test llm bench"
+    consumer: {kind: ledger, ref: "scripts/parity_host_receipt.sh#run_band_body"}
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "trace"
+    consumer: {kind: runbook, ref: "CLAUDE.md#Debugging: Use apr Tools First (MANDATORY)"}
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: command
+    surface: "zram benchmark"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: route
+    surface: "GET /metrics"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: route
+    surface: "GET /metrics/dispatch"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: route
+    surface: "GET /v1/metrics"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: route
+    surface: "POST /metrics/dispatch/reset"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: tool
+    surface: "apr.bench"
+    status: report-only
+    platforms: [linux]
+  - binary: apr
+    kind: tool
+    surface: "apr.trace"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-cbtop
+    kind: command
+    surface: "bench"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-cbtop
+    kind: command
+    surface: "optimize analyze"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-cbtop
+    kind: command
+    surface: "optimize baseline"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-cbtop
+    kind: command
+    surface: "optimize check"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-cgp
+    kind: command
+    surface: "bench"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-cgp
+    kind: command
+    surface: "profile binary"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-cgp
+    kind: command
+    surface: "profile compare"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-cgp
+    kind: command
+    surface: "profile cublas"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-cgp
+    kind: command
+    surface: "profile kernel"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-cgp
+    kind: command
+    surface: "profile library"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-cgp
+    kind: command
+    surface: "profile metal"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-cgp
+    kind: command
+    surface: "profile parallel"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-cgp
+    kind: command
+    surface: "profile python"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-cgp
+    kind: command
+    surface: "profile quant"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-cgp
+    kind: command
+    surface: "profile scalar"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-cgp
+    kind: command
+    surface: "profile scaling"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-cgp
+    kind: command
+    surface: "profile simd"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-cgp
+    kind: command
+    surface: "profile wasm"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-cgp
+    kind: command
+    surface: "profile wgpu"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-cgp
+    kind: command
+    surface: "roofline"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-cgp
+    kind: command
+    surface: "trace"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-orchestrate
+    kind: route
+    surface: "GET /api/v1/metrics"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-orchestrate
+    kind: route
+    surface: "GET /api/v1/train/runs/:id/metrics"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-profile
+    kind: command
+    surface: "validate"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-test-cli
+    kind: command
+    surface: "llm bench"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-train-bench
+    kind: command
+    surface: "ablation"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-train-bench
+    kind: command
+    surface: "alpha"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-train-bench
+    kind: command
+    surface: "compare"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-train-bench
+    kind: command
+    surface: "cost-performance"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-train-bench
+    kind: command
+    surface: "recommend"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-train-bench
+    kind: command
+    surface: "temperature"
+    status: report-only
+    platforms: [linux]
+  - binary: aprender-zram
+    kind: command
+    surface: "benchmark"
+    status: report-only
+    platforms: [linux]
+  - binary: pv
+    kind: command
+    surface: "roofline"
+    status: report-only
+    platforms: [linux]
