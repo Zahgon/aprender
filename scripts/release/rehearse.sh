@@ -82,6 +82,8 @@ RATE_FLOOR=1000
 # That workflow's file, and the train that reads its run (--in-run): wiring() holds the one to the other.
 REHEARSAL_WF="$SCRIPT_DIR/../../.github/workflows/$WORKFLOW"
 TRAIN_SCRIPT="$SCRIPT_DIR/nightly_train.sh"
+# D1's line comes from here: the d1 judge row renders R4's FAIL echo from this file, so a reworded R4 turns it red
+PREFLIGHT_SCRIPT="$SCRIPT_DIR/../check_publish_preflight.sh"
 # A night's own record: the artifact its rehearse job uploads (night.txt, rehearsal/night.env, ...). The streak reads
 # it for the night's C, newest night first, and reads none past the night that makes nightly_greens.sh's NEED.
 RECORD_ARTIFACT=release-rehearsal
@@ -127,7 +129,7 @@ STAGES
 # on it (ERE) | the defect, as the spec states it. D7 also has a trace check (dledger_d7).
 dledger_table() {
     cat <<'DLEDGER'
-D1|ap:preflight,cascade|FAIL +R4 HEAD .* is not an ancestor of origin/release/|preflight R4 requires origin/release/<V>, which no script creates
+D1|ap:preflight,cascade|FAIL +R4 HEAD |preflight R4 refuses a HEAD on neither origin/main nor origin/release/<V> (the release route is main)
 D2|t2,ap:dogfood|\[FAIL\] declared:check_model_ladder|the dogfood ladder gate runs with no CRUX receipt dir, beside the models lane that writes them
 D4|cascade|FAIL +R7 |the cascade's own preflight runs without the CRUX receipts
 D5|ship|no T-2 GO receipt for origin/main|prepare_bump.sh --ship needs a T-2 GO that cannot exist
@@ -1140,6 +1142,14 @@ fixture_night() {
     printf 'release: 0.71.0\n\nPmat-Ticket: PMAT-1\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n' > "$d/bump.msg"
 }
 
+# r4_fail_line -> the line preflight R4 prints when it refuses, rendered from its echo in
+# check_publish_preflight.sh (#5059: D1 matched a wording R4 stopped printing, so it could never fail).
+# A reworded R4 that D1's line no longer matches, or no R4 FAIL echo at all, turns d1_line_names_d1 red.
+r4_fail_line() {
+    grep -m1 'echo "FAIL  R4 HEAD ' "$PREFLIGHT_SCRIPT" \
+        | sed -e 's/^ *echo "//' -e 's/"$//' -e 's/\${head:0:9}/abc123456/' -e 's#\$release_ref#origin/release/0.71.0#'
+}
+
 selftest_judge() {
     local n=0 d o rc
     j() { # j NAME WANT_RC WANT_OUT MUTATION
@@ -1167,7 +1177,7 @@ selftest_judge() {
     j a_bump_not_on_c_is_red 1 "RED   stage ap:dogfood    measured on b0b" \
         'printf "beef\n" > "$d/bump.parent"'
     j d1_line_names_d1 1 "RED   D1 OPEN in ap:preflight: FAIL  R4 HEAD" \
-        'printf "FAIL  R4 HEAD abc is not an ancestor of origin/release/0.71.0 (or that ref does not exist)\n" > "$d/logs/ap_preflight.log"'
+        'r4_fail_line > "$d/logs/ap_preflight.log"'
     j d2_line_names_d2 1 "RED   D2 OPEN in t2:" \
         'printf "  [FAIL] declared:check_model_ladder  exit=1\n" > "$d/logs/t2.log"'
     j d4_line_names_d4 1 "RED   D4 OPEN in cascade" \
@@ -1527,6 +1537,7 @@ mutants() {
         d=$(mktemp -d "${tmp:?}/m.XXXXXX") && mkdir -p "$d/scripts/release" "$d/.github/workflows" \
             && cp -- "$SCRIPT_PATH" "$SCRIPT_DIR/lib_write_guard.sh" "$SCRIPT_DIR/lib_rehearsal.sh" "$SCRIPT_DIR/nightly_greens.sh" \
                 "$SCRIPT_DIR/release_lanes.sh" "$SCRIPT_DIR/autopilot.sh" "$TRAIN_SCRIPT" "$d/scripts/release/" \
+            && cp -- "$PREFLIGHT_SCRIPT" "$d/scripts/" \
             && cp -- "$REHEARSAL_WF" "$d/.github/workflows/" && printf '%s/scripts/release' "$d"
     }
     dir=$(mdir) || return 2
@@ -1584,7 +1595,9 @@ unreached_is_green           rehearse.sh         s/unreached) printf 'RED   stag
 other_commit_is_green        rehearse.sh         s/if \[ "\$commit" = "\$c" \] ||/if true ||/
 bump_parent_not_checked      rehearse.sh         s/\&\& \[ "\$bparent" = "\$c" \]; }/; }/
 dledger_sig_ignored          rehearse.sh         s/\[ -n "\$hit" \] \&\& { echo "OPEN in \$s: \$hit"; return; }/:/
-unreached_d_row_clears       rehearse.sh         s/\[ "\$rc" = 0 \] || notrun="\$notrun \$s(\${rc:-not run})"/:/
+d1_old_branch_route_line     rehearse.sh         s/^D1|ap:preflight,cascade|FAIL +R4 HEAD |/D1|ap:preflight,cascade|FAIL +R4 HEAD .* is not an ancestor of origin\/release\/|/
+r4_fail_reworded             ../check_publish_preflight.sh s/echo "FAIL  R4 HEAD \${head:0:9} is an ancestor/echo "FAIL  R4: HEAD \${head:0:9} is an ancestor/
+unreached_d_row_clears       rehearse.sh        s/\[ "\$rc" = 0 \] || notrun="\$notrun \$s(\${rc:-not run})"/:/
 d7_fable_allowed             rehearse.sh         s/^FLEET_MODELS='Claude Opus 5\\.5|/FLEET_MODELS='Claude Fable 5\\.1|Claude Opus 5\\.5|/
 d7_no_trailer_clears         rehearse.sh         s/echo "OPEN in the bump commit: no Co-Authored-By trailer"/echo CLEAR/
 green_with_reds              rehearse.sh         s/if \[ "\$reds" -eq 0 \]; then echo "VERDICT GREEN/if true; then echo "VERDICT GREEN/
