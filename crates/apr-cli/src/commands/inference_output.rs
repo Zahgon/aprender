@@ -190,6 +190,8 @@ struct InferenceOutput {
     usage: RunUsage,
     /// #4026: see `RunResult::logprobs`.
     logprobs: Option<serde_json::Value>,
+    /// #3793: the refusal a constrained output earned after it was produced.
+    constraint_refusal: Option<crate::error::ConstraintRefusal>,
 }
 
 /// Execute inference on model
@@ -220,6 +222,21 @@ fn execute_inference(
     // Fallback: placeholder when realizar not available
     #[cfg(not(feature = "inference"))]
     {
+        // #3793: no engine here to mask with, so a constraint is refused by name, never
+        // dropped for the placeholder below.
+        if options.constraint.is_set() {
+            return Err(CliError::ConstraintRefused(
+                crate::error::ConstraintRefusal {
+                    kind: "StructuredOutputNotCompiled",
+                    message: "StructuredOutputNotCompiled: this build has no `inference` \
+                              feature, so a schema or grammar cannot be enforced (refused \
+                              rather than ignored)"
+                        .to_string(),
+                    removed_by: Some("build apr with the `inference` feature".to_string()),
+                    finish_reason: None,
+                },
+            ));
+        }
         let input_desc =
             input_path.map_or_else(|| "stdin".to_string(), |p| p.display().to_string());
 
@@ -240,6 +257,7 @@ fn execute_inference(
             generated_tokens: None,
             token_texts: None,
             usage: RunUsage::default(),
+            constraint_refusal: None,
         })
     }
 }
@@ -292,7 +310,7 @@ fn decode_token_pieces(model_path: &Path, ids: &[u32]) -> Option<Vec<String>> {
 /// which is what MCP clients relayed verbatim. The payload must carry the
 /// underlying diagnosis only.
 #[cfg(feature = "inference")]
-fn inference_error<E: std::fmt::Display>(e: E) -> CliError {
+pub(crate) fn inference_error<E: std::fmt::Display>(e: E) -> CliError {
     CliError::InferenceFailed(e.to_string())
 }
 
@@ -319,8 +337,14 @@ pub(crate) fn realizar_config(
         None
     };
 
+    // #3793: --json-schema / --grammar, read and checked before the model loads
+    let request = crate::commands::constrained_run::constraint_request(&options.constraint)?;
+
     // Build inference config
     let mut config = InferenceConfig::new(model_path);
+    if let Some(ref r) = request {
+        config = config.with_constraint(r.clone());
+    }
     if let Some(ref p) = prompt {
         config = config.with_prompt(p);
     }
@@ -382,7 +406,8 @@ fn execute_with_realizar(
     // context window); the prompt count is `input_token_count`, taken after the
     // chat template, so it is the number the model actually read.
     let _ = realizar::session::take_last_turn_steps(); // #4026: never an earlier run's steps
-    let (result, report) = run_inference_report(&config).map_err(inference_error)?;
+    let (result, report) = run_inference_report(&config)
+        .map_err(crate::commands::constrained_run::inference_or_refusal)?;
     let (prompt_ids, generated_ids) = result
         .tokens
         .split_at(result.input_token_count.min(result.tokens.len()));
@@ -394,6 +419,15 @@ fn execute_with_realizar(
         report.finish_reason == Some(realizar::infer::run_report::FinishReason::Stop),
         realizar::session::take_last_turn_steps(),
     )?;
+    // #3793: a cut document is Truncated; a complete one must pass the second reader
+    let constraint_refusal = config.constraint.as_ref().and_then(|r| {
+        crate::commands::constrained_run::constraint_verdict(
+            r,
+            report.finish_reason,
+            &result.text,
+            options.max_tokens,
+        )
+    });
 
     // Report performance if benchmarking
     if options.benchmark {
@@ -444,6 +478,7 @@ fn execute_with_realizar(
                 .map(|g| (result.inference_ms - g).max(0.0).round() as u64),
         },
         logprobs,
+        constraint_refusal,
     })
 }
 

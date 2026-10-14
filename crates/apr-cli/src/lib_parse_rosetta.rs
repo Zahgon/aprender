@@ -326,6 +326,8 @@
             verbose: false,
             backend: BackendArg::default(),
             thinking: ThinkingArg::default(),
+            json_schema: None,
+            grammar: None,
         };
         let paths = extract_model_paths(&cmd);
         assert!(

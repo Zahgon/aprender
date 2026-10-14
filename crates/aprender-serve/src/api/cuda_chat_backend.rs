@@ -1146,9 +1146,8 @@ async fn try_apr_q4k_chat_backend(
     ))
 }
 
-/// GH-152: verbose request logging for the chat-completions endpoint, a no-op
-/// unless `state.is_verbose()`.
-fn log_verbose_chat_request(state: &AppState, request: &ChatCompletionRequest) {
+/// GH-152: Verbose request logging
+fn log_chat_request(state: &AppState, request: &ChatCompletionRequest) {
     if !state.is_verbose() {
         return;
     }
@@ -1164,23 +1163,22 @@ fn log_verbose_chat_request(state: &AppState, request: &ChatCompletionRequest) {
     );
 }
 
-/// The `X-Trace-Level` header, lower-cased, when present and valid UTF-8.
-fn trace_level_header(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get("X-Trace-Level")
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_lowercase)
-}
-
-/// A fresh `chatcmpl-q4k-<millis>` id for one chat-completions request.
-fn new_chat_request_id() -> String {
-    format!(
-        "chatcmpl-q4k-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis()
-    )
+/// What is answered before any backend is tried. #3723: two spellings of the thinking toggle
+/// that disagree are refused, never picked between. #4971: so is `top_logprobs`
+/// without `logprobs: true`. #3568 PR 4: a `response_format` is
+/// answered through the one engine, or refused by name.
+async fn answered_before_the_chain(
+    state: &AppState,
+    request: &ChatCompletionRequest,
+    request_id: &str,
+    trace_level: Option<&str>,
+    start: Instant,
+    cancel: &CancelToken,
+) -> Option<Response> {
+    if let Some(reason) = request.field_conflict() {
+        return Some(fail_response(state, StatusCode::BAD_REQUEST, reason));
+    }
+    try_constrained_chat(state, request, request_id, trace_level, start, cancel).await
 }
 
 /// OpenAI-compatible /v1/chat/completions endpoint (supports streaming)
@@ -1191,16 +1189,32 @@ pub async fn openai_chat_completions_handler(
     Json(request): Json<ChatCompletionRequest>,
 ) -> Response {
     let start = Instant::now();
-    log_verbose_chat_request(&state, &request);
+    log_chat_request(&state, &request);
 
-    let trace_level = trace_level_header(&headers);
+    let trace_level = headers
+        .get("X-Trace-Level")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_lowercase);
 
-    let request_id = new_chat_request_id();
+    let request_id = format!(
+        "chatcmpl-q4k-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
 
-    // #3723: two spellings of the thinking toggle that disagree are refused, never picked between.
-    // #4971: so is `top_logprobs` without `logprobs: true`.
-    if let Some(reason) = request.field_conflict() {
-        return fail_response(&state, StatusCode::BAD_REQUEST, reason);
+    if let Some(r) = answered_before_the_chain(
+        &state,
+        &request,
+        &request_id,
+        trace_level.as_deref(),
+        start,
+        &cancel,
+    )
+    .await
+    {
+        return r;
     }
 
     // #3571: a Qwen3.5 hybrid is answered from its resident session or not at all.
@@ -1221,16 +1235,46 @@ pub async fn openai_chat_completions_handler(
         return r;
     }
 
-    if let Some(r) = try_accelerated_backends(
+    #[cfg(feature = "gpu")]
+    if let Some(r) = try_gpu_backend(
         &state,
         &request,
         &request_id,
         trace_level.as_deref(),
         start,
         &cancel,
-    )
-    .await
+    ) {
+        return r;
+    }
+
+    #[cfg(feature = "gpu")]
+    if let Some(r) = try_cached_backend(
+        &state,
+        &request,
+        &request_id,
+        trace_level.as_deref(),
+        start,
+        &cancel,
+    ) {
+        return r;
+    }
+
+    #[cfg(feature = "cuda")]
+    if let Some(r) =
+        try_cuda_backend(&state, &request, &request_id, trace_level.as_deref(), start, &cancel).await
     {
+        return r;
+    }
+
+    // ALB-110: APR Q4K GPU backend via dedicated inference thread
+    #[cfg(feature = "cuda")]
+    if let Some(r) = try_apr_q4k_chat_backend(&state, &request, &request_id, trace_level.as_deref(), start, &cancel).await {
+        return r;
+    }
+
+    // #169: SafeTensors CUDA backend (format parity)
+    #[cfg(feature = "cuda")]
+    if let Some(r) = try_safetensors_cuda_backend(&state, &request, &request_id, start, &cancel) {
         return r;
     }
 
@@ -1242,65 +1286,6 @@ pub async fn openai_chat_completions_handler(
         start,
         &cancel,
     )
-}
-
-/// The GPU/CUDA arm of the chat backend chain: (non-batched) GPU, then the
-/// residency cache, then (cuda-only) the CUDA q4k backend, the APR Q4K GPU
-/// backend, and the SafeTensors CUDA backend. `None` when nothing in this
-/// arm is compiled in or resident, so the caller falls through to
-/// [`cpu_chat_backends`].
-///
-/// Lifted out of [`openai_chat_completions_handler`] for the same reason as
-/// `cpu_chat_backends`: each accelerated backend added to the dispatch table
-/// cost the handler the same branch, unconditionally on every request.
-/// `async` is only exercised when built `--features cuda`; without it every
-/// `.await` point is `#[cfg]`-gated out, same as elsewhere in this file.
-#[allow(clippy::unused_async)]
-async fn try_accelerated_backends(
-    state: &AppState,
-    request: &ChatCompletionRequest,
-    request_id: &str,
-    trace_level: Option<&str>,
-    start: Instant,
-    cancel: &CancelToken,
-) -> Option<Response> {
-    #[cfg(feature = "gpu")]
-    if let Some(r) = try_gpu_backend(state, request, request_id, trace_level, start, cancel) {
-        return Some(r);
-    }
-
-    #[cfg(feature = "gpu")]
-    if let Some(r) = try_cached_backend(state, request, request_id, trace_level, start, cancel) {
-        return Some(r);
-    }
-
-    #[cfg(feature = "cuda")]
-    if let Some(r) =
-        try_cuda_backend(state, request, request_id, trace_level, start, cancel).await
-    {
-        return Some(r);
-    }
-
-    // ALB-110: APR Q4K GPU backend via dedicated inference thread
-    #[cfg(feature = "cuda")]
-    if let Some(r) =
-        try_apr_q4k_chat_backend(state, request, request_id, trace_level, start, cancel).await
-    {
-        return Some(r);
-    }
-
-    // #169: SafeTensors CUDA backend (format parity)
-    #[cfg(feature = "cuda")]
-    if let Some(r) = try_safetensors_cuda_backend(state, request, request_id, start, cancel) {
-        return Some(r);
-    }
-
-    // Silences "unused" when built with neither `gpu` nor `cuda` — every
-    // branch above is `#[cfg]`-gated, so with both features off this
-    // function's parameters otherwise go unread.
-    let _ = (state, request, request_id, trace_level, start, cancel);
-
-    None
 }
 
 /// The CPU tail of the chat backend chain: quantized, then the f32

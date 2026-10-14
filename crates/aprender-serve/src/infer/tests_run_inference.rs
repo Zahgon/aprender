@@ -367,6 +367,7 @@
             force_chat_template: false,
             thinking: None,
             logprobs_top_k: 0,
+            constraint: None,
         };
 
         let debug = format!("{:?}", config);
@@ -403,6 +404,7 @@
             force_chat_template: false,
             thinking: None,
             logprobs_top_k: 0,
+            constraint: None,
         };
 
         let cloned = original.clone();

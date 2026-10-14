@@ -38,6 +38,8 @@ fn dispatch_run(
     thinking: Option<bool>,
     // #4026: `--logprobs K`, 0 when absent.
     logprobs_top_k: usize,
+    // #3793: --json-schema / --grammar
+    constraint: run::ConstraintArgs,
 ) -> Result<(), CliError> {
     let effective_trace = trace || trace_payload;
     let effective_trace_level = if trace_payload {
@@ -77,6 +79,7 @@ fn dispatch_run(
         chat_template,
         thinking,
         logprobs_top_k,
+        constraint,
     )
 }
 
