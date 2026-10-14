@@ -30,29 +30,30 @@ description: |
   FORMAT_ERROR (edit does not parse or does not apply under the task's edit format),
   TIMEOUT / SANDBOX_ERROR (from the sandbox status), NO_TESTS (0 F2P tests executed),
   then RESOLVED or FAILED. Only RESOLVED counts toward a pass. Every label stays in the
-  denominator.
+  denominator. pre(t, out) := edits(out) ≠ ∅ ∧ parses(out, fmt(t)) ∧ applies(edits(out), snapshot(t)).
+  ACE-VER-006 is the function itself; every other equation is a consequence of it.
 
 equations:
   ACE-VER-001:
     description: "Resolved is the SWE-bench rule, with every F2P test actually executed"
-    formula: "RESOLVED ⇔ rep.status = ok ∧ executed(F2P) = F2P ∧ ∀ x ∈ F2P. pass(x) ∧ ∀ y ∈ P2P. pass(y)"
+    formula: "RESOLVED ⇔ pre(t, out) ∧ rep.status = ok ∧ executed(F2P) = F2P ∧ ∀ x ∈ F2P. pass(x) ∧ ∀ y ∈ P2P. pass(y)"
   ACE-VER-002:
     description: "Empty model output is never resolved"
     formula: "edits(out) = ∅ ⇒ verdict = EMPTY"
     note: "Holds even when the hidden tests would pass on the untouched snapshot; ACE-TASK-003 should have excluded that task, and this is the second line."
   ACE-VER-003:
     description: "Zero executed tests is never resolved"
-    formula: "rep.tests_executed = 0 ∨ executed(F2P) ≠ F2P ⇒ verdict ≠ RESOLVED;  and if pre(t, out) ∧ rep.status = ok then verdict = NO_TESTS"
+    formula: "(rep.tests_executed = 0 ∨ executed(F2P) ≠ F2P) ⇒ verdict ≠ RESOLVED;  pre(t, out) ∧ rep.status = ok ∧ (rep.tests_executed = 0 ∨ executed(F2P) ≠ F2P) ⇒ verdict = NO_TESTS"
     note: "pre(t, out) := edits(out) ≠ ∅ ∧ parses(out, fmt(t)) ∧ applies(edits(out), snapshot(t)). EMPTY, FORMAT_ERROR, TIMEOUT and SANDBOX_ERROR are checked first (description order), so VER-003 never contradicts VER-002/004/005."
   ACE-VER-004:
     description: "A sandbox failure is never resolved and never dropped"
-    formula: "pre(t, out) ∧ rep.killed_by = timeout ⇒ TIMEOUT;  pre(t, out) ∧ rep.status = sandbox_error ⇒ SANDBOX_ERROR;  both stay in |T|"
+    formula: "pre(t, out) ∧ rep.killed_by = timeout ⇒ TIMEOUT;  pre(t, out) ∧ rep.killed_by ≠ timeout ∧ rep.status ≠ ok ⇒ SANDBOX_ERROR;  both stay in |T|"
   ACE-VER-005:
     description: "A malformed or non-applying edit is a format error, not silently repaired"
-    formula: "¬parses(out, fmt(t)) ∨ ¬applies(edits(out), snapshot(t)) ⇒ verdict = FORMAT_ERROR"
+    formula: "edits(out) ≠ ∅ ∧ (¬parses(out, fmt(t)) ∨ ¬applies(edits(out), snapshot(t))) ⇒ verdict = FORMAT_ERROR"
   ACE-VER-006:
     description: "The label set is closed and total"
-    formula: "∀ (t, out, rep). ∃! v ∈ V. verdict(t, out, rep) = v"
+    formula: "verdict = first match of [ edits(out) = ∅ → EMPTY;  ¬parses ∨ ¬applies → FORMAT_ERROR;  killed_by = timeout → TIMEOUT;  status ≠ ok → SANDBOX_ERROR;  tests_executed = 0 ∨ executed(F2P) ≠ F2P → NO_TESTS;  all_pass(F2P ∪ P2P) → RESOLVED;  otherwise → FAILED ],  so ∀ (t, out, rep). ∃! v ∈ V. verdict(t, out, rep) = v"
   ACE-VER-007:
     description: "A P2P regression fails the task even when every F2P passes"
     formula: "∃ y ∈ P2P. ¬pass(y) ⇒ verdict ≠ RESOLVED"
@@ -61,7 +62,7 @@ proof_obligations:
   - id: ACE-VER-PO-001
     type: equivalence
     property: "RESOLVED matches the SWE-bench rule exactly (ACE-VER-001)"
-    formal: "verdict = RESOLVED ⇔ ok ∧ F2P ⊆ executed ∧ all_pass(F2P ∪ P2P)"
+    formal: "verdict = RESOLVED ⇔ pre(t, out) ∧ ok ∧ F2P ⊆ executed ∧ all_pass(F2P ∪ P2P)"
   - id: ACE-VER-PO-002
     type: invariant
     property: "Empty output gives EMPTY whatever the report says (ACE-VER-002)"
@@ -77,15 +78,15 @@ proof_obligations:
   - id: ACE-VER-PO-005
     type: invariant
     property: "A non-applying edit is FORMAT_ERROR (ACE-VER-005)"
-    formal: "¬applies(edits(out)) ⇒ verdict = FORMAT_ERROR"
+    formal: "edits(out) ≠ ∅ ∧ ¬applies(edits(out)) ⇒ verdict = FORMAT_ERROR"
   - id: ACE-VER-PO-006
     type: completeness
     property: "verdict is total over all inputs and returns exactly one label (ACE-VER-006)"
-    formal: "∀ inputs. verdict(inputs) ∈ V"
+    formal: "∀ inputs. verdict(inputs) ∈ V, and the first-match order of ACE-VER-006 picks exactly one"
   - id: ACE-VER-PO-007
     type: invariant
     property: "Any P2P failure blocks RESOLVED (ACE-VER-007)"
-    formal: "∃ y ∈ P2P. fail(y) ⇒ verdict = FAILED"
+    formal: "∃ y ∈ P2P. fail(y) ⇒ verdict ≠ RESOLVED"
 
 falsification_tests:
   - id: FALSIFY-ACE-VER-001

@@ -118,13 +118,14 @@ arm64 rebuilds of its images are validated (ACE-TASK-003 on arm64).
 ## 5. Verdict (contract `apr-code-eval-verdict-v1`)
 
 `verdict(task, model_output, sandbox_report)` returns exactly one of
-`RESOLVED, FAILED, FORMAT_ERROR, EMPTY, TIMEOUT, SANDBOX_ERROR, NO_TESTS`, checked in that
-order:
+`RESOLVED, FAILED, FORMAT_ERROR, EMPTY, TIMEOUT, SANDBOX_ERROR, NO_TESTS`. The rules are
+checked in this order and the first match wins (ACE-VER-006 is this function):
 
 1. no edit in the output → `EMPTY` (ACE-VER-002);
 2. the edit does not parse or does not apply under the task's edit format → `FORMAT_ERROR`
    (ACE-VER-005). The harness never fuzzy-applies or repairs the model's edits;
-3. sandbox timeout or error → `TIMEOUT` / `SANDBOX_ERROR` (ACE-VER-004);
+3. killed by the wall-clock limit → `TIMEOUT`; any other non-ok sandbox status (OOM, pids,
+   disk, missing runner report) → `SANDBOX_ERROR` (ACE-VER-004);
 4. not every F2P test executed → `NO_TESTS` (ACE-VER-003);
 5. all F2P pass and all P2P pass → `RESOLVED`, else `FAILED` (ACE-VER-001/007).
 

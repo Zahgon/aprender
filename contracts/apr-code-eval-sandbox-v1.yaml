@@ -49,7 +49,7 @@ equations:
     formula: "env ⊇ { SEED=s, TZ=UTC, LANG=C.UTF-8, SOURCE_DATE_EPOCH=t.release_epoch, PYTHONHASHSEED=s }  ∧  env ∩ host_secrets = ∅"
   ACE-SBX-006:
     description: "Determinism: the same inputs give the same verdict"
-    formula: "run(t, e, s, d) = run(t, e, s, d)  on (status, tests_passed, tests_failed, per_test)"
+    formula: "∀ i, j ∈ 1..N.  π(run_i(t, e, s, d)) = π(run_j(t, e, s, d)),  π = (status, tests_passed, tests_failed, per_test), run_i = the i-th independent execution in a fresh container"
     note: "A test that differs across N repeats is a flake. It is reported, and the task is quarantined, not retried until green."
   ACE-SBX-007:
     description: "Executed-test count is measured, not inferred"
