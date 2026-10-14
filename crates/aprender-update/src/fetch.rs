@@ -196,9 +196,15 @@ pub fn latest_release(
         "https://api.github.com/repos/{}/releases?per_page=30",
         p.repo
     );
-    Ok(net
-        .get(&url)?
-        .and_then(|b| newest_release_candidate(&b, p, target)))
+    // #5055: a 404 here is not "nothing published". A repository with no
+    // releases answers 200 with `[]`; a private one answers 404 to a request
+    // without credentials, which read as "up to date" with exit 0.
+    match net.get(&url)? {
+        Some(b) => Ok(newest_release_candidate(&b, p, target)),
+        None => Err(format!(
+            "{url}: 404, the repository is not found or not readable without credentials"
+        )),
+    }
 }
 
 pub fn nightly(net: &dyn Net, p: &Product, target: &str) -> Result<Option<Candidate>, String> {

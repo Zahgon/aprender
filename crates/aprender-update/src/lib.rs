@@ -470,6 +470,8 @@ mod tests {
             c, 1,
             "an explicit check that cannot reach the network says so"
         );
+        // #5055: this row used to assert the defect. A 404 on the listing is
+        // a private or missing repository, never "up to date".
         let (c, o) = update_with(
             &Fake(HashMap::new(), false),
             &P,
@@ -478,10 +480,16 @@ mod tests {
             exe,
             true,
         );
+        assert_eq!(c, 1, "a 404 listing is a failed check: {o:?}");
+        assert!(o[0].contains("404, the repository is not found"), "{o:?}");
+        assert!(!o[0].contains("up to date"), "{o:?}");
+        // nothing published is a 200 with an empty listing: that one is up to date
+        let empty = HashMap::from([(LATEST.to_string(), b"[]".to_vec())]);
+        let (c, o) = update_with(&Fake(empty, false), &P, T, &Installs::User, exe, true);
         assert_eq!(
             (c, o[0].as_str()),
             (0, "pv 0.69.0 is up to date"),
-            "nothing published (404s)"
+            "nothing published (an empty listing)"
         );
     }
 
