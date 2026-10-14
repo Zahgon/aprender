@@ -42,9 +42,10 @@ fn min_count_001_reports_the_w3c_result() {
 }
 
 /// Every vendored case either yields a report or is refused with exit 3 naming the file and the term; none panics, none is
-/// refused as unreadable (2), and no fewer run than the 19 of 35 measured on 2026-10-14 (the refusals are
-/// `sh:class`, `sh:datatype`, `sh:in`, `sh:maxLength`, `sh:minLength`, `sh:nodeKind`, `sh:pattern` on a node shape,
-/// `sh:or`, `sh:nodeKind sh:BlankNode` and a language-tagged literal).
+/// refused as unreadable (2), and no fewer run than the 19 of 37 files measured on 2026-10-14. The 18 refusals are
+/// `sh:class`, `sh:datatype`, `sh:flags`, `sh:in`, `sh:maxLength`, `sh:minLength`, `sh:node`, `sh:nodeKind` and
+/// `sh:pattern` on a node shape; `sh:flags` and `sh:or` on a property shape; a blank-node node shape;
+/// `sh:nodeKind sh:BlankNode`; and a language-tagged literal.
 #[test]
 fn every_vendored_case_reports_or_is_refused_by_name() {
     let (mut reported, mut refused) = (0, Vec::new());
