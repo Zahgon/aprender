@@ -29,7 +29,7 @@ pub fn run(
     let binding_registry = binding
         .map(|p| {
             let content = std::fs::read_to_string(p)?;
-            let reg: BindingRegistry = serde_yaml::from_str(&content)?;
+            let reg: BindingRegistry = serde_saphyr::from_str_with_options(&content, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false })?;
             Ok::<_, Box<dyn std::error::Error>>(reg)
         })
         .transpose()?;
