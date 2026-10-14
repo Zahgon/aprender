@@ -154,8 +154,8 @@ fn judge_sampled_on_seeds(
 
 /// Runs every seed. A seed the judge failed is counted; a FAULT (generation error, wrong
 /// backend) ends the leg with its own text. A fault is not a closure rate, and counting
-/// it would let a GPU fallback on all 8 seeds read as "0/8 passed", which the ladder's
-/// known_red clause covers (#4696 sign-off).
+/// it would let a GPU fallback on all 8 seeds read as "0/8 passed": a model property
+/// instead of the device fault it is (#4696 sign-off).
 #[cfg(feature = "inference")]
 fn run_sampled_seeds(
     seeds: &[u64],
@@ -458,8 +458,8 @@ mod golden_thinking_sampling_tests {
     }
 
     /// A judged failure is counted toward k/N; a fault stops the leg with text that is
-    /// not a closure rate, so the known_red clause `[0-3]/8 sampled runs passed` cannot
-    /// cover a GPU fallback or a generation error.
+    /// not a closure rate, so a GPU fallback or a generation error can never read as
+    /// "k/8 sampled runs passed".
     #[test]
     fn a_fault_ends_the_leg_and_is_not_counted_as_a_closure_miss() {
         let judged = run_sampled_seeds(&[0, 1, 2], |s| Ok((s == 1).then(|| "unclosed".into())))

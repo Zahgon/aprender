@@ -93,8 +93,9 @@ models:
       evidence/thinking-budgets/qwen35-0.8b-thinking-on-2026-10-04.md.
     # #4696 (GATE CHANGE): this row is judged SAMPLED, not greedy. The leg runs once per seed with
     # Qwen's recommended thinking sampler and passes iff at least `min_pass` runs pass the unchanged
-    # per-run judge (closed block, >= 3 words of reasoning, right answer). A run that errors or never
-    # runs counts as a FAILED seed, never as not run.
+    # per-run judge (closed block, >= 3 words of reasoning, right answer). Nothing is ever "not run":
+    # a seed whose generation errors or runs on the wrong backend ends the leg RED as a FAULT, with
+    # its own text, never read as a closure rate; a seed missing from the results fails the leg.
     sampling:
       temperature: 0.6
       top_k: 20
@@ -133,6 +134,6 @@ equations:
     domain: "m = a model whose row resolves a budget; sampler = (temperature, top_k, top_p) from the row"
     codomain: "PASS, or FAIL naming passes/seeds, the threshold and the first failing seed"
     invariants:
-      - "an errored or missing seed run is a failed seed, never a skipped one"
+      - "a faulted seed (generation error, wrong backend) ends the leg RED with its own text; a missing seed fails the leg; neither is ever skipped"
       - "1 <= min_pass <= |seeds|, temperature > 0 and a non-empty basis, else the leg refuses"
       - "a model whose row has no `sampling` is judged greedy, exactly as before"

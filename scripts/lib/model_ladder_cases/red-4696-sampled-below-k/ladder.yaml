@@ -34,12 +34,4 @@ ladder:
     id: q3-q4km
     required: true
     sha256: '1111111111111111111111111111111111111111111111111111111111111111'
-  known_red:
-  - rung: q3-q4km
-    sha256: '1111111111111111111111111111111111111111111111111111111111111111'
-    ticket: '#4030'
-    clause:
-    - '^golden_output FAIL: golden_output_thinking_on: [0-3]/8 sampled runs passed \(temperature
-      0\.6, top_k 20, top_p 0\.95, budget 2048\), below the required 4 \(#4696\);'
-    - '^apr qa exited \d+ — gates_failed: golden_output \(#3898\)$'
-    ruling: 'operator 2026-09-23 via aprender-cf: ships with ticket'
+  known_red: []
