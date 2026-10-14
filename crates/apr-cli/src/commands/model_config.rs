@@ -24,7 +24,7 @@ pub(crate) fn read_apr_architecture(
     };
     // #4552 train-arch-honesty-v1: refuse an architecture aprender-train does not
     // model by name, from the ~4 KB header, before any tensor is read.
-    refuse_unmodelled_arch(metadata.architecture.as_deref())?;
+    refuse_unmodelled_apr_metadata(&metadata)?;
     Ok(transformer_config_from_apr_metadata(
         metadata.hidden_size,
         metadata.num_heads,
@@ -62,9 +62,16 @@ fn read_apr_metadata(path: &Path) -> Option<aprender::format::v2::AprV2Metadata>
 /// #4552: header-only refusal for an `.apr` a training verb is about to read in
 /// full. A file that isn't APR v2 passes here; the verb's own parser reports it.
 pub(crate) fn refuse_unmodelled_apr(path: &Path) -> Result<()> {
-    read_apr_metadata(path).map_or(Ok(()), |m| {
-        refuse_unmodelled_arch(m.architecture.as_deref())
-    })
+    read_apr_metadata(path).map_or(Ok(()), |m| refuse_unmodelled_apr_metadata(&m))
+}
+
+/// #4552: every architecture claim an `.apr` header carries: `architecture`
+/// and the `hf_architecture` / `hf_model_type` pair `apr stamp` writes.
+fn refuse_unmodelled_apr_metadata(m: &aprender::format::v2::AprV2Metadata) -> Result<()> {
+    for claim in [&m.architecture, &m.hf_architecture, &m.hf_model_type] {
+        refuse_unmodelled_arch(claim.as_deref())?;
+    }
+    Ok(())
 }
 
 /// #4552: the refusal for any model a training verb is handed: an `.apr`
@@ -84,7 +91,7 @@ pub(crate) fn refuse_unmodelled_model_path(path: &Path) -> Result<()> {
         refuse_unmodelled_hf_config(&path.join("config.json"))?;
     } else {
         let id = path.to_string_lossy();
-        refuse_unmodelled_arch(id.rsplit('/').next())?;
+        refuse_unmodelled_arch(id.trim_end_matches('/').rsplit('/').next())?;
     }
     Ok(())
 }
@@ -322,7 +329,10 @@ pub(crate) fn resolve_transformer_config_by_size(
             "13B" | "llama2-13b" => Ok(TransformerConfig::llama2_13b()),
             "mistral-7b" => Ok(TransformerConfig::mistral_7b()),
             // #4552: a dense preset with no GDN layers; refused, not silently built.
-            size if QWEN35_SIZE_ALIASES.contains(&size) => {
+            size if QWEN35_SIZE_ALIASES
+                .iter()
+                .any(|a| a.eq_ignore_ascii_case(size)) =>
+            {
                 refuse_unmodelled_arch(Some("qwen3.5-9b")).map(|()| TransformerConfig::qwen3_5_9b())
             }
             unknown => Err(CliError::ValidationFailed(format!(
@@ -505,12 +515,20 @@ mod arch_resolution_tests {
     /// would accept. `truncate` cuts it right after the metadata section, so a
     /// reader that touches tensor data fails.
     fn apr_claiming(arch: &str, truncate: bool) -> tempfile::NamedTempFile {
+        apr_with(|m| m.architecture = Some(arch.to_string()), truncate)
+    }
+
+    /// An APR v2 file with dense dims and whatever claims `edit` stamps.
+    fn apr_with(
+        edit: impl FnOnce(&mut aprender::format::v2::AprV2Metadata),
+        truncate: bool,
+    ) -> tempfile::NamedTempFile {
         use aprender::format::v2::{
             AprV2Header, AprV2Metadata, AprV2Writer, TensorDType, HEADER_SIZE_V2,
         };
         use std::io::Write;
         let mut meta = AprV2Metadata::new("tah");
-        meta.architecture = Some(arch.to_string());
+        edit(&mut meta);
         meta.hidden_size = Some(64);
         meta.num_heads = Some(4);
         meta.num_kv_heads = Some(4);
@@ -548,6 +566,40 @@ mod arch_resolution_tests {
         assert!(resolve_transformer_config(Some(f.path()), None).is_ok());
     }
 
+    /// FALSIFY-TAH-001 (#4552 C314 r6): `apr stamp` writes `hf_architecture` and
+    /// `hf_model_type` beside a dense-looking `architecture`; each is a claim.
+    #[test]
+    fn falsify_tah_001_apr_hf_stamp_fields_are_claims() {
+        let stamped = [
+            apr_with(
+                |m| {
+                    m.architecture = Some("qwen2".into());
+                    m.hf_model_type = Some("qwen3_5".into());
+                },
+                true,
+            ),
+            apr_with(
+                |m| m.hf_architecture = Some("Qwen3_5ForCausalLM".into()),
+                true,
+            ),
+        ];
+        for f in &stamped {
+            let msg = refuse_unmodelled_apr(f.path())
+                .expect_err("hf stamp")
+                .to_string();
+            assert!(msg.contains("UnsupportedArch"), "{msg}");
+            assert!(resolve_transformer_config(Some(f.path()), None).is_err());
+        }
+        let dense = apr_with(
+            |m| {
+                m.architecture = Some("qwen2".into());
+                m.hf_model_type = Some("qwen2".into());
+            },
+            true,
+        );
+        assert!(refuse_unmodelled_apr(dense.path()).is_ok());
+    }
+
     /// FALSIFY-TAH-004 (#4552): the refusal comes from the header alone. The
     /// file is cut right after its metadata, so any tensor read would fail
     /// with a parse error instead of the named refusal.
@@ -565,7 +617,7 @@ mod arch_resolution_tests {
     /// #4552: the 3.5 size presets and a HF config.json claim are refused too.
     #[test]
     fn qwen35_size_preset_and_hf_config_are_refused() {
-        for size in ["9B", "qwen3.5-9b", "qwen3_5", "qwen3.5"] {
+        for size in ["9B", "qwen3.5-9b", "qwen3_5", "qwen3.5", "9b", "Qwen3.5"] {
             let msg = resolve_transformer_config_by_size(Some(size))
                 .expect_err(size)
                 .to_string();
@@ -657,6 +709,7 @@ mod arch_resolution_tests {
         for id in [
             "Qwen/Qwen3.5-9B",
             "hf://Qwen/Qwen3.5-27B",
+            "Qwen/Qwen3.5-9B/",
             "Qwen/Qwen3-Next-80B-A3B-Instruct",
         ] {
             assert!(refuse_unmodelled_model_path(Path::new(id)).is_err(), "{id}");
