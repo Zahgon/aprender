@@ -682,3 +682,30 @@ fn falsify_cpu_lora_qkv_bias_002_grad_flow_with_biases() {
         last_loss
     );
 }
+
+/// #4698: an adapter file that is there but cannot be read refuses the load, and no
+/// LoRA layer changes; no adapter file at all means fresh adapters.
+#[test]
+fn unreadable_trained_adapter_refuses_the_load_4698() {
+    let model_config = TransformerConfig::tiny();
+    let mut pipeline = InstructPipeline::new(&model_config, InstructConfig::default());
+    let snapshot = |layers: &[LoRALayer]| -> Vec<Vec<f32>> {
+        layers
+            .iter()
+            .flat_map(|l| [l.lora_a().data().to_vec(), l.lora_b().data().to_vec()])
+            .collect()
+    };
+    let layers = model_config.num_hidden_layers;
+    let before = snapshot(&pipeline.lora_layers);
+    let dir = tempfile::tempdir().expect("tempdir");
+    InstructPipeline::load_trained_adapter(dir.path(), &mut pipeline.lora_layers, layers)
+        .expect("no adapter file: fresh adapters");
+    assert_eq!(snapshot(&pipeline.lora_layers), before);
+
+    std::fs::write(dir.path().join("adapter_model.safetensors"), b"not a safetensors file")
+        .expect("write");
+    let err = InstructPipeline::load_trained_adapter(dir.path(), &mut pipeline.lora_layers, layers)
+        .expect_err("an unreadable adapter must refuse the load");
+    assert!(err.to_string().contains("adapter_model.safetensors"), "names the file: {err}");
+    assert_eq!(snapshot(&pipeline.lora_layers), before, "no LoRA layer may change");
+}
