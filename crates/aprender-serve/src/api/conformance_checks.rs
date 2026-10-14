@@ -396,3 +396,88 @@ pub fn anth_tool_use(obs: &[Observed]) -> Result<(), String> {
         other => Err(format!("stop_reason {other:?} (want tool_use)")),
     }
 }
+
+fn ollama_text(o: &Observed) -> Result<String, String> {
+    Ok(str_at(&ok_json(o)?, "/message/content")?.to_string())
+}
+
+/// Ollama `options.seed`: same seed at T=0.8 → identical `message.content`; a
+/// different seed → different text (the positive control, as in `oai_seed`).
+pub fn ollama_seed(obs: &[Observed]) -> Result<(), String> {
+    let [a, b, c] = obs else {
+        return Err(format!("{} responses (want 3)", obs.len()));
+    };
+    let (a, b, c) = (ollama_text(a)?, ollama_text(b)?, ollama_text(c)?);
+    if a != b {
+        return Err(format!(
+            "seed 7 twice gave different text: {:?} vs {:?}",
+            snippet(&a),
+            snippet(&b)
+        ));
+    }
+    if a == c {
+        return Err(format!(
+            "seeds 7 and 8 gave the same text at T=0.8 (sampling is greedy): {:?}",
+            snippet(&a)
+        ));
+    }
+    Ok(())
+}
+
+/// Ollama counts on a finished reply: `done: true`, `prompt_eval_count` > 0,
+/// 0 < `eval_count` ≤ `num_predict` 16.
+pub fn ollama_usage(obs: &[Observed]) -> Result<(), String> {
+    let v = ok_json(one(obs)?)?;
+    if v.get("done").and_then(Value::as_bool) != Some(true) {
+        return Err("done is absent or not true".to_string());
+    }
+    let p = u64_at(&v, "/prompt_eval_count")?;
+    let e = u64_at(&v, "/eval_count")?;
+    if p == 0 || e == 0 || e > 16 {
+        return Err(format!(
+            "prompt_eval_count={p} eval_count={e} (want >0, eval_count ≤ num_predict 16)"
+        ));
+    }
+    Ok(())
+}
+
+/// Ollama NDJSON stream: one JSON object per line, each with a `message`
+/// whose `content` is a string, `done: false` on every line but the last, and
+/// a last line with `done: true` and a string `done_reason`. As in
+/// `oai_stream`, empty text is the model's business, not the protocol's.
+pub fn ollama_done(obs: &[Observed]) -> Result<(), String> {
+    let o = one(obs)?;
+    if o.status != 200 {
+        return Err(format!(
+            "status {} (want 200): {}",
+            o.status,
+            snippet(&o.body)
+        ));
+    }
+    if !o.content_type.starts_with("application/x-ndjson") {
+        return Err(format!(
+            "content-type {:?} (want application/x-ndjson)",
+            o.content_type
+        ));
+    }
+    let lines: Vec<&str> = o.body.lines().filter(|l| !l.trim().is_empty()).collect();
+    let Some(last) = lines.len().checked_sub(1) else {
+        return Err("stream carried no lines".to_string());
+    };
+    for (i, line) in lines.iter().enumerate() {
+        let v: Value = serde_json::from_str(line)
+            .map_err(|e| format!("line {i} is not JSON ({e}): {}", snippet(line)))?;
+        str_at(&v, "/message/content").map_err(|e| format!("line {i}: {e}"))?;
+        let done = v
+            .get("done")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| format!("line {i}: done is absent or not a bool"))?;
+        if done != (i == last) {
+            return Err(format!("line {i} of {} has done: {done}", lines.len()));
+        }
+        if i == last {
+            str_at(&v, "/done_reason").map_err(|e| format!("last line: {e}"))?;
+        }
+    }
+    Ok(())
+}

@@ -21,14 +21,16 @@ metadata:
     asserts that a live Anthropic cell fails, and leaves the live cells to the
     receipt. The OpenAI cases (models, finish_reason, length, stream, usage,
     seed, tool_call) judge the surface described by
-    apr-serve-openai-compat-v1.yaml.
+    apr-serve-openai-compat-v1.yaml. The Ollama cases are POST /api/chat: seed
+    (R-3), usage (R-4) and done (R-5, the NDJSON stream); the Ollama shape
+    speaks R-3..R-5 only.
   references:
   - 'aprender#5349 — R-6 agent conformance suite runner'
   - 'aprender#4000 — EPIC 0.72 agent ready'
   - 'docs/specifications/EPIC-0.72-agent-ready-plan.md — rows E-1, R-1..R-6'
   - 'crates/aprender-serve/src/api/conformance.rs — Case, Cell, Verdict, cases, run_case, missing_cells, uncovered_rows'
   - 'crates/aprender-serve/src/api/conformance_checks.rs — one check per case'
-  - 'crates/aprender-serve/src/api/conformance_tests.rs — FALSIFY-ASM-001..007'
+  - 'crates/aprender-serve/src/api/conformance_tests.rs — FALSIFY-ASM-001..011'
   - 'crates/aprender-serve/examples/serve_conformance.rs — the HTTP runner and receipt'
 equations:
   conformance_cells:
@@ -109,11 +111,11 @@ falsification_tests:
   prediction: uncovered_rows(cases) is empty and case ids are unique
   test: 'cargo test -p aprender-serve --lib api::conformance::tests::suite_covers_every_row_on_every_shape'
   red_state: a row has no case on one shape — the suite passes without testing it
-  green_state: R-1 on Anthropic and R-2..R-5 on both shapes each have a case (PASS)
+  green_state: R-1 on Anthropic, R-2..R-5 on OpenAI and Anthropic, and R-3..R-5 on Ollama each have a case (PASS)
   if_fails: E-1's "at least one case per row per shape" is not enforced
 - id: FALSIFY-ASM-002
   rule: uncovered_rows names a removed row
-  prediction: removing every R-3 case reports R-3 OpenAi and R-3 Anthropic
+  prediction: removing every R-3 case reports R-3 OpenAi, R-3 Anthropic and R-3 Ollama
   test: 'cargo test -p aprender-serve --lib api::conformance::tests::uncovered_rows_names_a_missing_row'
   red_state: uncovered_rows returns empty for any suite
   green_state: both missing pairs are named (PASS)
@@ -160,6 +162,27 @@ falsification_tests:
   red_state: the check reads only the first delta, or accepts any finish_reason
   green_state: the five stream tool rows match their expected verdicts (PASS)
   if_fails: an apr serve that streams a tool call as text passes R-2
+- id: FALSIFY-ASM-009
+  rule: Ollama options.seed is judged like the OpenAI seed
+  prediction: ollama_seed passes seed 7 twice equal and seed 8 different in message.content; it fails three equal replies (greedy), three different replies (unseeded) and the OpenAI choices shape
+  test: 'cargo test -p aprender-serve --lib api::conformance::tests::check_case_table'
+  red_state: the check reads only one reply, or reads choices[0] on an Ollama body
+  green_state: the four ollama seed rows match their expected verdicts (PASS)
+  if_fails: an apr serve that ignores options.seed on /api/chat passes R-3
+- id: FALSIFY-ASM-010
+  rule: Ollama counts are present and bounded on a finished reply
+  prediction: ollama_usage passes done true with prompt_eval_count > 0 and 0 < eval_count ≤ 16; it fails absent counts, eval_count 17 and done false
+  test: 'cargo test -p aprender-serve --lib api::conformance::tests::check_case_table'
+  red_state: an absent count reads as zero or unknown and passes
+  green_state: the four ollama usage rows match their expected verdicts (PASS)
+  if_fails: an /api/chat reply without token counts passes R-4
+- id: FALSIFY-ASM-011
+  rule: the Ollama NDJSON stream ends exactly once, on a done_reason
+  prediction: ollama_done passes application/x-ndjson lines with done false until a last line with done true and a string done_reason; it fails a JSON content type, no done line, done before the end, a missing done_reason and a 404
+  test: 'cargo test -p aprender-serve --lib api::conformance::tests::check_case_table'
+  red_state: the check accepts any done line or treats done_reason as optional
+  green_state: the six ollama done rows match their expected verdicts (PASS)
+  if_fails: a truncated or unterminated /api/chat stream passes R-5
 qa_gate:
   id: F-ASM-001
   name: Agent Conformance Suite Contract
@@ -169,5 +192,5 @@ qa_gate:
   - not_measured_is_not_pass
   - missing_cells_named
   - anthropic_checks_bite
-  pass_criteria: FALSIFY-ASM-001..008 PASS; the live cells over the certified matrix are the serve_conformance receipt, not a test
+  pass_criteria: FALSIFY-ASM-001..011 PASS; the live cells over the certified matrix are the serve_conformance receipt, not a test
   falsification: Make oai_chat_finish accept an absent finish_reason — FALSIFY-ASM-006 FAILS

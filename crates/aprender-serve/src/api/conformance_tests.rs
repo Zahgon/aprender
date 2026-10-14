@@ -127,7 +127,10 @@ fn uncovered_rows_names_a_missing_row() {
         .into_iter()
         .filter(|c| c.row != "R-3")
         .collect();
-    assert_eq!(uncovered_rows(&suite), vec!["R-3 OpenAi", "R-3 Anthropic"]);
+    assert_eq!(
+        uncovered_rows(&suite),
+        vec!["R-3 OpenAi", "R-3 Anthropic", "R-3 Ollama"]
+    );
 }
 
 #[test]
@@ -222,6 +225,17 @@ fn check_case_table() {
         "data: [DONE]\n\n",
     );
     let text_sse = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+    let nd = "application/x-ndjson";
+    let ochat = |t: &str| {
+        obs(
+            200,
+            json,
+            &format!(
+                r#"{{"message":{{"role":"assistant","content":"{t}"}},"done":true,"prompt_eval_count":5,"eval_count":3}}"#
+            ),
+        )
+    };
+    let ollama_nd = "{\"message\":{\"role\":\"assistant\",\"content\":\"hi\"},\"done\":false}\n{\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true,\"done_reason\":\"stop\",\"prompt_eval_count\":5,\"eval_count\":1}\n";
     let rows: Vec<(&str, fn(&[Observed]) -> Result<(), String>, Vec<Observed>, bool)> = vec![
         ("tool_call ok", checks::oai_tool_call, vec![obs(200, json, tool_oai)], true),
         ("tool_call stripped", checks::oai_tool_call, vec![chat("hi")], false),
@@ -258,6 +272,20 @@ fn check_case_table() {
         ("stream content number", checks::oai_stream, vec![obs(200, sse, "data: {\"choices\":[{\"delta\":{\"content\":7},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")], false),
         ("stream only done", checks::oai_stream, vec![obs(200, sse, "data: [DONE]\n\n")], false),
         ("models empty", checks::oai_models, vec![obs(200, json, r#"{"data":[]}"#)], false),
+        ("ollama seed ok", checks::ollama_seed, vec![ochat("a"), ochat("a"), ochat("b")], true),
+        ("ollama seed greedy", checks::ollama_seed, vec![ochat("a"), ochat("a"), ochat("a")], false),
+        ("ollama seed unstable", checks::ollama_seed, vec![ochat("a"), ochat("b"), ochat("c")], false),
+        ("ollama seed oai shape", checks::ollama_seed, vec![chat("a"), chat("a"), chat("b")], false),
+        ("ollama usage ok", checks::ollama_usage, vec![ochat("hi")], true),
+        ("ollama usage absent", checks::ollama_usage, vec![obs(200, json, r#"{"message":{"content":"hi"},"done":true}"#)], false),
+        ("ollama usage over cap", checks::ollama_usage, vec![obs(200, json, r#"{"done":true,"prompt_eval_count":5,"eval_count":17}"#)], false),
+        ("ollama usage not done", checks::ollama_usage, vec![obs(200, json, r#"{"done":false,"prompt_eval_count":5,"eval_count":3}"#)], false),
+        ("ollama done ok", checks::ollama_done, vec![obs(200, nd, ollama_nd)], true),
+        ("ollama done json ct", checks::ollama_done, vec![obs(200, json, ollama_nd)], false),
+        ("ollama done never", checks::ollama_done, vec![obs(200, nd, &ollama_nd.replace("\"done\":true", "\"done\":false"))], false),
+        ("ollama done early", checks::ollama_done, vec![obs(200, nd, &ollama_nd.replace("\"done\":false", "\"done\":true"))], false),
+        ("ollama done no reason", checks::ollama_done, vec![obs(200, nd, &ollama_nd.replace(",\"done_reason\":\"stop\"", ""))], false),
+        ("ollama done 404", checks::ollama_done, vec![obs(404, nd, "")], false),
     ];
     for (name, check, observed, want_pass) in rows {
         let got = check(&observed);

@@ -23,6 +23,8 @@ pub enum Shape {
     OpenAi,
     /// `/v1/messages`.
     Anthropic,
+    /// Ollama `/api/chat`.
+    Ollama,
 }
 
 /// One HTTP request of a case.
@@ -121,6 +123,18 @@ fn anth_messages(model: &str, extra: Value) -> Value {
     body
 }
 
+/// Ollama caps generation with `options.num_predict`, not `max_tokens`.
+fn ollama_chat(model: &str, stream: bool, options: Value) -> Value {
+    let mut opts = json!({"num_predict": 16});
+    merge(&mut opts, options);
+    json!({
+        "model": model,
+        "messages": [{"role": "user", "content": PROMPT}],
+        "stream": stream,
+        "options": opts,
+    })
+}
+
 fn merge(body: &mut Value, extra: Value) {
     if let (Some(dst), Value::Object(src)) = (body.as_object_mut(), extra) {
         dst.extend(src);
@@ -172,6 +186,7 @@ pub fn cases(model: &str) -> Vec<Case> {
     use checks::*;
     let chat = "/v1/chat/completions";
     let msgs = "/v1/messages";
+    let ochat = "/api/chat";
     let seeded = |seed: u64| json!({"temperature": 0.8, "seed": seed});
     vec![
         Case {
@@ -276,6 +291,31 @@ pub fn cases(model: &str) -> Vec<Case> {
             requests: vec![post(msgs, anth_messages(model, weather_tool_anth()))],
             check: anth_tool_use,
         },
+        Case {
+            id: "ollama.chat.seed",
+            shape: Shape::Ollama,
+            row: "R-3",
+            requests: vec![
+                post(ochat, ollama_chat(model, false, seeded(7))),
+                post(ochat, ollama_chat(model, false, seeded(7))),
+                post(ochat, ollama_chat(model, false, seeded(8))),
+            ],
+            check: ollama_seed,
+        },
+        Case {
+            id: "ollama.chat.usage",
+            shape: Shape::Ollama,
+            row: "R-4",
+            requests: vec![post(ochat, ollama_chat(model, false, json!({})))],
+            check: ollama_usage,
+        },
+        Case {
+            id: "ollama.chat.done",
+            shape: Shape::Ollama,
+            row: "R-5",
+            requests: vec![post(ochat, ollama_chat(model, true, json!({})))],
+            check: ollama_done,
+        },
     ]
 }
 
@@ -337,14 +377,20 @@ pub fn missing_cells(
 }
 
 /// Rows R-1..R-5 each need at least one case per shape that speaks it (R-1
-/// is the Anthropic adapter, so it has no OpenAI case). Returns the uncovered
+/// is the Anthropic adapter, so it has no OpenAI case; the Ollama shape
+/// speaks R-3..R-5 only). Returns the uncovered
 /// (row, shape) pairs; an empty suite would otherwise pass.
 #[must_use]
 pub fn uncovered_rows(cases: &[Case]) -> Vec<String> {
     let mut gaps = Vec::new();
     for row in ["R-1", "R-2", "R-3", "R-4", "R-5"] {
-        for shape in [Shape::OpenAi, Shape::Anthropic] {
-            if row == "R-1" && shape == Shape::OpenAi {
+        for shape in [Shape::OpenAi, Shape::Anthropic, Shape::Ollama] {
+            let speaks = match shape {
+                Shape::OpenAi => row != "R-1",
+                Shape::Anthropic => true,
+                Shape::Ollama => !matches!(row, "R-1" | "R-2"),
+            };
+            if !speaks {
                 continue;
             }
             if !cases.iter().any(|c| c.row == row && c.shape == shape) {
