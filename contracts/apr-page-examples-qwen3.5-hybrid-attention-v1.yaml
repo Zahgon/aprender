@@ -60,3 +60,10 @@ falsification:
   - condition: "Legacy name in page text"
     severity: P0
     action: delete_from_summary
+
+falsification_tests:
+  - id: FALSIFY-PAGE-EXAMPLES-QWEN3.5-HYBRID-ATTENTION-001
+    rule: "The page exists, carries its PCU header, imports no legacy crate, holds no placeholder text and keeps every section this contract lists"
+    prediction: "scripts/book-gate.sh examples-qwen3.5-hybrid-attention --strict exits 0: book/src/examples/qwen3.5-hybrid-attention.md exists (G3), its first line carries PCU: (G4), it has no 'use trueno|realizar|entrenar|batuta|presentar|renacer::' line (G7) and no TODO, TBD, WIP, coming soon or under construction (G8), and every one of the 6 section headings this contract lists appears as a ## heading on the page (G9). It does not check for page sections the contract omits"
+    test: "bash scripts/book-gate.sh examples-qwen3.5-hybrid-attention --strict"
+    if_fails: "The book page drifted from its contract: it moved, lost a contracted section, or teaches a removed crate name"
