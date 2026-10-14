@@ -154,7 +154,7 @@ budget:
   min_train_tokens: 2_000_000_000    # 2B tokens minimum for 370M model
   max_train_tokens: 8_000_000_000    # 8B tokens ceiling (cost/time guard)
   min_files: 500_000
-  max_files: 5_000_000
+  max_files: "5_000_000"
 
 split:
   method: hash-by-file-sha256       # deterministic, no train/val leakage by repo

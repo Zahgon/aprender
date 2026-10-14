@@ -9,7 +9,7 @@ metadata:
 contract: embed-grad-zero-copy-v1
 version: 1.0.0
 status: implementing
-kaizen: 048
+kaizen: "048"
 measured_baseline:
   source: baselines/entrenar/cuda-trainer-profile-350m-rtx4090.yaml
   model: 350M (24L, 1024H, vocab=32000)

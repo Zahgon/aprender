@@ -9,7 +9,7 @@ metadata:
 contract: batched-matmul-zero-copy-v1
 version: 1.0.0
 status: implemented
-kaizen: 039
+kaizen: "039"
 invariants:
 - id: C-BATCHGEMM-001
   description: Batched matmul calls BLIS directly on sub-slices — no intermediate copies
