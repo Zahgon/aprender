@@ -516,10 +516,11 @@ pub(crate) fn run(
         )
     })?;
 
+    // #4552: before the exists check, so a remote id is refused by name.
+    refuse_unmodelled_teacher_student(teacher_path, student_path)?;
     if !teacher_path.exists() {
         return Err(CliError::FileNotFound(teacher_path.to_path_buf()));
     }
-    refuse_unmodelled_teacher_student(teacher_path, student_path)?;
 
     let distill_strategy: DistillStrategy = strategy.parse().map_err(CliError::ValidationFailed)?;
     validate_distill_params(temperature, alpha)?;

@@ -283,11 +283,6 @@ fn read_hf_config_file(config_path: &Path) -> Option<entrenar::transformer::Tran
     })
 }
 
-/// Resolve TransformerConfig from `--model-size` string only.
-///
-/// Local implementation of the size-string-to-config mapping. The upstream
-/// `TransformerConfig::from_size_str()` exists in local entrenar source but
-/// is not yet published in entrenar 0.7.5.
 /// `--model-size` spellings that name the Qwen3.5 hybrid (#4552).
 const QWEN35_SIZE_ALIASES: [&str; 4] = ["9B", "qwen3.5-9b", "qwen3_5", "qwen3.5"];
 
@@ -300,12 +295,21 @@ pub(crate) fn refuse_unmodelled_model(
     if let Some(path) = model_path {
         refuse_unmodelled_model_path(path)?;
     }
-    if model_size.is_some_and(|s| QWEN35_SIZE_ALIASES.contains(&s)) {
+    if model_size.is_some_and(|s| {
+        QWEN35_SIZE_ALIASES
+            .iter()
+            .any(|a| a.eq_ignore_ascii_case(s))
+    }) {
         refuse_unmodelled_arch(Some("qwen3.5-9b"))?;
     }
     Ok(())
 }
 
+/// Resolve TransformerConfig from `--model-size` string only.
+///
+/// Local implementation of the size-string-to-config mapping. The upstream
+/// `TransformerConfig::from_size_str()` exists in local entrenar source but
+/// is not yet published in entrenar 0.7.5.
 pub(crate) fn resolve_transformer_config_by_size(
     model_size: Option<&str>,
 ) -> Result<entrenar::transformer::TransformerConfig> {
@@ -675,6 +679,8 @@ mod arch_resolution_tests {
             assert!(refuse_unmodelled_model(Some(path), Some("0.5B")).is_err());
         }
         assert!(refuse_unmodelled_model(None, Some("9B")).is_err());
+        assert!(refuse_unmodelled_model(None, Some("9b")).is_err());
+        assert!(refuse_unmodelled_model(None, Some("Qwen3.5")).is_err());
         assert!(refuse_unmodelled_model(None, Some("0.5B")).is_ok());
         assert!(
             resolve_transformer_config(Some(Path::new("Qwen/Qwen2.5-0.5B")), Some("0.5B")).is_ok()
