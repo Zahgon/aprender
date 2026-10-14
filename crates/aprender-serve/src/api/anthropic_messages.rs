@@ -19,9 +19,11 @@
 //! entry with a `type` other than `custom`). A silently dropped image would let
 //! the model answer a question about a picture it never saw.
 //!
-//! `stream: true` is honoured at the WIRE level: the reply is encoded as the
-//! Messages SSE event sequence (`message_start` … `message_stop`) from the
-//! completed generation, the same way `/api/chat` encodes its NDJSON stream.
+//! `stream: true` streams live: the chat path's SSE chunks are re-encoded as
+//! the Messages event sequence (`message_start` … `message_stop`) while
+//! generation runs (see `anthropic_messages_live.rs`). If the chat path
+//! answers a streamed request with a whole JSON reply, that reply is encoded
+//! as the same sequence at once.
 #![allow(unreachable_pub)] // re-exported as pub(crate) from api/mod.rs
 
 use axum::{
@@ -443,9 +445,7 @@ pub fn to_chat_request(req: &MessagesRequest) -> Result<ChatCompletionRequest, S
         top_p: req.top_p,
         top_k: req.top_k,
         n: ChoiceCount::ONE,
-        // Always driven non-streaming; `stream:true` is honoured at the wire
-        // level by `sse_response`.
-        stream: false,
+        stream: req.stream,
         stop: req.stop_sequences.clone(),
         user: req.metadata.as_ref().and_then(|m| m.user_id.clone()),
         tools: req.tools.as_deref().map(to_openai_tools).transpose()?,
@@ -637,6 +637,14 @@ pub async fn anthropic_messages_handler(
         openai_chat_completions_handler(State(state), headers, Extension(cancel), Json(chat_req))
             .await;
     let status = inner.status();
+    let event_stream = inner
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.starts_with("text/event-stream"));
+    if status.is_success() && event_stream {
+        return live::live_response(inner);
+    }
     let bytes = axum::body::to_bytes(inner.into_body(), usize::MAX)
         .await
         .unwrap_or_default();
@@ -652,6 +660,9 @@ pub async fn anthropic_messages_handler(
         Err(msg) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &msg),
     }
 }
+
+#[path = "anthropic_messages_live.rs"]
+mod live;
 
 #[cfg(test)]
 #[path = "tests/anthropic_messages.rs"]

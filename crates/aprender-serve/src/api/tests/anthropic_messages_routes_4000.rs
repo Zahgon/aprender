@@ -41,6 +41,16 @@ async fn route_streams_the_messages_event_sequence() {
     assert_eq!(status, StatusCode::OK, "body: {body}");
     assert!(body.starts_with("event: message_start\n"), "body: {body}");
     assert!(body.contains("event: message_delta\n"), "body: {body}");
+    // Step 2: only the live encoder knows the prompt count at message_delta,
+    // so `input_tokens` there proves the chat path's stream was re-encoded
+    // rather than a finished reply replayed.
+    let delta: Value = body
+        .split("event: message_delta\ndata: ")
+        .nth(1)
+        .and_then(|rest| rest.lines().next())
+        .and_then(|line| serde_json::from_str(line).ok())
+        .expect("message_delta data");
+    assert!(delta["usage"]["input_tokens"].as_u64() > Some(0), "body: {body}");
     assert!(
         body.trim_end().ends_with(r#"data: {"type":"message_stop"}"#),
         "body: {body}"

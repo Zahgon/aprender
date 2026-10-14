@@ -49,7 +49,14 @@ fn system_string_and_text_turns_map_in_order() {
     assert_eq!(chat.stop.as_deref(), Some(&["\n\n".to_string()][..]));
     assert_eq!(chat.top_k, Some(1));
     assert_eq!(chat.user.as_deref(), Some("u1"));
-    assert!(!chat.stream, "generation is always driven non-streaming");
+    assert!(!chat.stream, "an unstreamed request is not streamed");
+    let streamed = parse(
+        r#"{"model":"m","max_tokens":4,"stream":true,"messages":[{"role":"user","content":"x"}]}"#,
+    );
+    assert!(
+        to_chat_request(&streamed).expect("translates").stream,
+        "stream:true is driven live"
+    );
 }
 
 #[test]
