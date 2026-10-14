@@ -128,7 +128,7 @@ fn bench_cuda_choice(backend: Option<&str>, cuda_ready: bool) -> Result<(bool, b
 
 /// The error for a CUDA benchmark that failed after `--backend cuda` was
 /// asked for; the automatic path falls back to CPU instead (GH-284).
-#[cfg(feature = "cuda")]
+#[cfg(feature = "inference")]
 fn cuda_required_failed(what: &str) -> CliError {
     CliError::ValidationFailed(format!(
         "--backend cuda: {what}; not falling back to CPU because the GPU was asked for"
@@ -258,6 +258,7 @@ fn run_gguf_benchmark(
             &gen_config,
             config,
             use_cuda,
+            cuda_required,
             start,
             tracer,
         );

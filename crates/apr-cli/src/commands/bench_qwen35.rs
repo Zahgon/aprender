@@ -1,7 +1,8 @@
 /// #4270: bench a Qwen3.5 hybrid GGUF by timing the one engine (`Qwen35Session`,
 /// the same session `apr run`/`chat`/`serve` drive) — never a bench-local loop.
 /// The session picks CUDA unless `use_cuda` is false, exactly as `apr run` does,
-/// and its route notices (including any CPU fallback) are printed.
+/// and its route notices (including any CPU fallback) are printed; under
+/// `--backend cuda` (`cuda_required`) a CPU session is an error instead.
 #[cfg(feature = "inference")]
 fn run_qwen35_session_benchmark(
     mapped: &realizar::gguf::MappedGGUFModel,
@@ -9,6 +10,7 @@ fn run_qwen35_session_benchmark(
     gen_config: &realizar::gguf::QuantizedGenerateConfig,
     config: &BenchConfig,
     use_cuda: bool,
+    cuda_required: bool,
     start: Instant,
     tracer: &TracerImpl,
 ) -> Result<BenchResult> {
@@ -19,6 +21,7 @@ fn run_qwen35_session_benchmark(
     for notice in session.notices() {
         bench_log(config, notice);
     }
+    require_gpu_session(session.on_gpu(), cuda_required, "did not come up on the GPU")?;
     let device = if session.on_gpu() {
         " (qwen35 session, GPU)"
     } else {
@@ -51,7 +54,21 @@ fn run_qwen35_session_benchmark(
         bench_log_iter(config, i, iter_time, Some(tokens_generated));
     }
     bench_log_done(config);
+    // The session may also drop to CPU mid-run; a number measured partly on
+    // CPU is not the GPU number `--backend cuda` asked for.
+    require_gpu_session(session.on_gpu(), cuda_required, "fell back to CPU during the run")?;
     calculate_benchmark_stats(iteration_times, total_tokens, first_token_time, config)
+}
+
+/// G1.3 (#5356): under `--backend cuda` the session must be, and stay, on the
+/// GPU. Its own fallback is a notice, not an error (it serves `apr run`), so the
+/// bench checks.
+#[cfg(feature = "inference")]
+fn require_gpu_session(on_gpu: bool, cuda_required: bool, what: &str) -> Result<()> {
+    if cuda_required && !on_gpu {
+        return Err(cuda_required_failed(&format!("the Qwen3.5 session {what}")));
+    }
+    Ok(())
 }
 
 /// One timed turn: `(turn, total, time to first token)`. The prompt must be
