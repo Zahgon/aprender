@@ -547,8 +547,8 @@ dependencies = [
  "aprender-update",
  "clap",
  "serde",
+ "serde-saphyr",
  "serde_json",
- "serde_yaml",
  "sha2 0.10.9",
  "tempfile",
 ]

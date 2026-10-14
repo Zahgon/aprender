@@ -400,7 +400,7 @@ const CASES: &[Case] = &[
         // A DUPLICATE MAPPING KEY — not an unknown-key rule at all despite
         // living in the same function: it fires off `strict_yaml_error`, i.e.
         // the document parses for the derived deserializer and is rejected by
-        // any strict reader (`yq`, PyYAML, `serde_yaml::Value`), which keeps
+        // any strict reader (`yq`, PyYAML, `serde_json::Value`), which keeps
         // one value and drops the other silently.
         //
         // The duplicate is nested inside an UNKNOWN top-level block, which is

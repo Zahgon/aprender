@@ -29,9 +29,9 @@
 //!   a `proof_obligations` entry that is not a mapping; a truthy `applies_to` that is not a
 //!   string; a truthy `proved_type` that is not a string, where a bound `fn` would be searched
 //!   for it;
-//! - YAML is read by `serde_yaml` (YAML 1.2), the script's by PyYAML (YAML 1.1): a plain
+//! - YAML is read by `serde-saphyr` (YAML 1.2), the script's by PyYAML (YAML 1.1): a plain
 //!   `yes`/`no`/`on`/`off` is a string here and a boolean there;
-//! - a document `serde_yaml` cannot read that PyYAML can (a duplicate key, an integer beyond
+//! - a document `serde-saphyr` cannot read that PyYAML can (a duplicate key, an integer beyond
 //!   64 bits, …) gets no checks 2 and 3 here. `pv validate` reads with the same parser, so
 //!   check 1 fails on it on both sides, and pv adds no parse line of its own: the report is
 //!   the script's unless PyYAML also finds a check-2 or check-3 problem in it, which pv then
@@ -54,7 +54,10 @@ use std::path::{Path, PathBuf};
 
 use provable_contracts::error::Severity;
 use provable_contracts::schema::validate_artifact;
-use serde_yaml::{Mapping, Value};
+use serde_json::{Map, Value};
+
+/// A YAML mapping in JSON form (string keys, document order).
+type Mapping = Map<String, Value>;
 
 use crate::contract_walk::{ObligationsRejected, ZeroContracts};
 
@@ -116,9 +119,9 @@ fn check_contract(root: &Path, rel: &str, src: &mut SrcTree) -> Vec<String> {
     let mut problems = check_validate(root, rel);
     let doc = match load(&root.join(rel)) {
         Ok(doc) => doc,
-        // A document `serde_yaml` refuses also fails `pv validate`, the script's only
+        // A document `serde-saphyr` refuses also fails `pv validate`, the script's only
         // report on it when PyYAML finds nothing else; a second line would miscount it.
-        // An `if`, not a match guard: every validate path parses with the same serde_yaml, so
+        // An `if`, not a match guard: every validate path parses with the same serde-saphyr reader, so
         // `problems` is never empty here and a guard's `-> true` mutant was equivalent (#4588).
         Err(Load::Parse(why)) => {
             if problems.is_empty() {
@@ -136,7 +139,7 @@ fn check_contract(root: &Path, rel: &str, src: &mut SrcTree) -> Vec<String> {
     problems
 }
 
-/// Why a contract could not be loaded. `Parse` is `serde_yaml` refusing the text.
+/// Why a contract could not be loaded. `Parse` is `serde-saphyr` refusing the text.
 enum Load {
     Parse(String),
     Other(String),
@@ -147,21 +150,67 @@ enum Load {
 fn load(path: &Path) -> Result<Mapping, Load> {
     let text =
         std::fs::read_to_string(path).map_err(|e| Load::Other(format!("cannot be read: {e}")))?;
-    let mut doc: Value = serde_yaml::from_str(&text)
+    let mut doc: Value = serde_saphyr::from_str_with_options(&text, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false })
         .map_err(|e| Load::Parse(format!("does not parse as YAML: {e}")))?;
     // One pass resolves one level; a merged mapping that itself merges needs another.
     loop {
         let before = doc.clone();
-        doc.apply_merge()
+        apply_merge(&mut doc)
             .map_err(|e| Load::Other(format!("has a merge key PyYAML refuses: {e}")))?;
         if doc == before {
             break;
         }
     }
     match doc {
-        Value::Mapping(m) => Ok(m),
+        Value::Object(m) => Ok(m),
         v if !truthy(&v) => Ok(Mapping::new()),
         _ => Err(Load::Other("is not a YAML mapping".into())),
+    }
+}
+
+/// Resolve one level of `<<` merge keys in every mapping under `v`, as serde_yaml 0.9's
+/// `Value::apply_merge` did (#5205): the reader keeps `<<` an ordinary key, explicit keys win
+/// over merged ones, and in a list of merges the earlier mapping wins. The error texts are
+/// serde_yaml's.
+fn apply_merge(v: &mut Value) -> Result<(), &'static str> {
+    let mut stack = vec![v];
+    while let Some(node) = stack.pop() {
+        match node {
+            Value::Object(mapping) => {
+                merge_level(mapping)?;
+                stack.extend(mapping.values_mut());
+            }
+            Value::Array(sequence) => stack.extend(sequence),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Resolve the `<<` key of one mapping (see [`apply_merge`]).
+fn merge_level(mapping: &mut Mapping) -> Result<(), &'static str> {
+    match mapping.remove("<<") {
+        None => Ok(()),
+        Some(Value::Object(merge)) => {
+            merge_into(mapping, merge);
+            Ok(())
+        }
+        Some(Value::Array(sequence)) => sequence.into_iter().try_for_each(|value| match value {
+            Value::Object(merge) => {
+                merge_into(mapping, merge);
+                Ok(())
+            }
+            Value::Array(_) => Err("expected a mapping for merging, but found sequence"),
+            _ => Err("expected a mapping for merging, but found scalar"),
+        }),
+        Some(_) => Err("expected a mapping or list of mappings for merging, but found scalar"),
+    }
+}
+
+/// Add `merge`'s keys to `mapping`; a key `mapping` already has wins.
+fn merge_into(mapping: &mut Mapping, merge: Mapping) {
+    for (k, v) in merge {
+        mapping.entry(k).or_insert(v);
     }
 }
 
@@ -173,9 +222,8 @@ fn truthy(v: &Value) -> bool {
         Value::Bool(b) => *b,
         Value::Number(n) => n.as_f64().is_none_or(|f| f != 0.0),
         Value::String(s) => !s.is_empty(),
-        Value::Sequence(s) => !s.is_empty(),
-        Value::Mapping(m) => !m.is_empty(),
-        Value::Tagged(_) => true,
+        Value::Array(s) => !s.is_empty(),
+        Value::Object(m) => !m.is_empty(),
     }
 }
 
@@ -197,12 +245,12 @@ fn check_validate(root: &Path, rel: &str) -> Vec<String> {
 fn check_visible(rel: &str, doc: &Mapping) -> Vec<String> {
     let hidden = match get_truthy(doc, "falsification") {
         None => 0,
-        Some(Value::Sequence(entries)) => entries
+        Some(Value::Array(entries)) => entries
             .iter()
-            .filter(|e| e.as_mapping().is_some_and(|m| m.contains_key("test")))
+            .filter(|e| e.as_object().is_some_and(|m| m.contains_key("test")))
             .count(),
         // Iterating a dict or a str yields keys or characters, never a dict.
-        Some(Value::Mapping(_) | Value::String(_)) => 0,
+        Some(Value::Object(_) | Value::String(_)) => 0,
         Some(_) => return vec![format!("{rel}: falsification is not a list")],
     };
     if hidden == 0 {
@@ -230,7 +278,7 @@ fn check_bindings(rel: &str, doc: &Mapping, src: &mut SrcTree) -> Vec<String> {
     };
     let mut problems = Vec::new();
     for ob in obligations {
-        let Some(ob) = ob.as_mapping() else {
+        let Some(ob) = ob.as_object() else {
             problems.push(format!("{rel}: a proof_obligations entry is not a mapping"));
             continue;
         };
@@ -238,7 +286,7 @@ fn check_bindings(rel: &str, doc: &Mapping, src: &mut SrcTree) -> Vec<String> {
         let Some(target) = get_truthy(ob, "applies_to") else {
             continue;
         };
-        if equations.contains(&target) {
+        if is_equation_key(&equations, target) {
             continue;
         }
         let Some(target) = target.as_str() else {
@@ -252,17 +300,29 @@ fn check_bindings(rel: &str, doc: &Mapping, src: &mut SrcTree) -> Vec<String> {
     problems
 }
 
+/// `target in equations`. Keys read in JSON form are strings, so a YAML `3:` key is `"3"`;
+/// a scalar `applies_to` matches it by its text, as the old Value-keyed lookup did.
+fn is_equation_key(equations: &[&str], target: &Value) -> bool {
+    let text = match target {
+        Value::String(s) => s.clone(),
+        Value::Number(n) => n.to_string(),
+        Value::Bool(b) => b.to_string(),
+        _ => return false,
+    };
+    equations.contains(&text.as_str())
+}
+
 /// The equation names, the proved type and the obligations, each read as the script reads
 /// them; a shape the script would die on is an error naming it.
-fn bindings_of(doc: &Mapping) -> Result<(Vec<&Value>, Proved<'_>, &[Value]), String> {
+fn bindings_of(doc: &Mapping) -> Result<(Vec<&str>, Proved<'_>, &[Value]), String> {
     let equations = match get_truthy(doc, "equations") {
         None => Vec::new(),
-        Some(Value::Mapping(m)) => m.keys().collect(),
+        Some(Value::Object(m)) => m.keys().map(String::as_str).collect(),
         Some(_) => return Err("equations is not a mapping".into()),
     };
     let proved = match get_truthy(doc, "metadata") {
         None => Proved::Absent,
-        Some(Value::Mapping(m)) => match get_truthy(m, "proved_type") {
+        Some(Value::Object(m)) => match get_truthy(m, "proved_type") {
             None => Proved::Absent,
             Some(Value::String(s)) => Proved::Type(s),
             Some(_) => Proved::NotAString,
@@ -271,7 +331,7 @@ fn bindings_of(doc: &Mapping) -> Result<(Vec<&Value>, Proved<'_>, &[Value]), Str
     };
     let obligations = match get_truthy(doc, "proof_obligations") {
         None => &[][..],
-        Some(Value::Sequence(obs)) => obs.as_slice(),
+        Some(Value::Array(obs)) => obs.as_slice(),
         Some(_) => return Err("proof_obligations is not a list".into()),
     };
     Ok((equations, proved, obligations))
