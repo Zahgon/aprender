@@ -13,6 +13,7 @@ tag inheritance from the release commit, B2 split by capability (cpu shards + gp
 derived from `cargo metadata` (TIERS deleted), unattended cascade under standing authorization with
 receipts, v0.68.0 = GitHub-only / 0.68.1 = crates.io, P0·Fan-out as the 0.69 train's first PR.
 Earlier revisions kept where still true. *(Merged 2026-09-18 onto the `main` lineage — #3268 §4.1–4.3, §5.1, §6.1–6.4, §10–§12 and #3455 `check_milestone_cut.sh` — which the 09-15/16/17 working copy had been cut before; where the two disagreed the later operator ruling wins and the older text is kept as history.)*
+**Revision 2026-10-14** — §14: release shape (#4434). Records the 2026-09-25 rc and promotion rulings and the 2026-10-12 45-minute window, each next to what the tree does today. The rc is cut on `release/X.Y.Z` green, not on a main sha, and that difference is stated rather than edited away.
 **Revision 2026-09-21** — §13: integration batches are the DEFAULT merge path (operator: "we are
 arbitrarily going slow because each PR adds time, but in most cases 80% of PR can be batched"),
 assembled by `scripts/batch_fold.sh`. Hard rule 9 and the §8 "hand-squashed batch" stop are amended
@@ -1101,3 +1102,35 @@ Deleting it early turns "which PR broke main" into a rebuild.
 | FX-B1 | `batch_fold.sh` resolves only the generated set: a code conflict and a README prose conflict are SKIP, a count-block conflict folds (`check_batch_fold.sh`, run by guard-tree on every PR) | treat README as wholly generated, or take every conflict → `check_batch_fold.sh --self-test` RED |
 | FX-B2 | a stale generated set is never silent: a clean fold touching the census exits 3 | never mark a clean fold stale → RED |
 | FX-B3 | a failed fixed point stops the batch (exit 2, the check named) | ignore `pv extract --check` → RED |
+
+## §14 Release shape — rc tag, promotion receipts, the 45-minute window (#4434)
+
+Operator rulings from two days set the release shape. They are recorded here in order, each with what the tree
+does today, so that no session treats a later-replaced line as in force. Where two rulings disagree,
+the later one wins (the 2026-09-18 merge rule above).
+
+### §14.1 The rulings
+
+| Date | Ruling (verbatim unless marked) | Source |
+|---|---|---|
+| 2026-09-25 | "Make today's rulings permanent — each gets a ticket, and "done" = merged + enforced" | #4434 |
+| 2026-09-25 | *(as recorded on #4434, not verbatim)* rc.N = tag on a queue-green main sha, cut within 5 min of green; no RC branches, no RC CI run. Hardware + clean-room + accuracy receipts run in parallel on the rc tag and gate PROMOTION, not the rc; a promotion failure → rc.N+1. CI = 5 fat jobs (x86 main, two GPU hosts, mac-refusal, determinism) with the same test set (Σ executed unchanged). | #4433, #4434 |
+| 2026-09-25 | "no, only release candidate and deployed to fleet and measured going forward all releases" | #4434 |
+| 2026-10-12 | "The frozen branch to release should be 0(1)" and "A release, i.e. frozen main, needs to release in 45 minutes; the end." | #5185 |
+
+### §14.2 What is in force, and what the tree does
+
+| Item | In force | As built (re-derive before citing) |
+|---|---|---|
+| rc tag | yes, cut by CI, never by hand | `scripts/release/rc_cut.sh` via `.github/workflows/rc-cut.yml`. It cuts `vX.Y.Z-rc.N` (N = max+1) when `ci / gate` and `workspace-test` are green on the tip of `release/X.Y.Z`, **not** on a main sha. It refuses a fork head, a non-`release/X.Y.Z` branch, a superseded tip, a re-run, and a branch whose final tag already exists (its self-test rows). The 2026-09-25 "no RC branches" line is therefore **not** what the tree does. Changing it is an operator ruling, not an edit to this file |
+| rc on every fleet host before it is visible | yes | the rc is a DRAFT prerelease until the fleet stage installs and verifies it on every reachable host (`rc_cut.sh`, step 2, #4327) |
+| receipts gate promotion, not the rc | yes | a red receipt means rc.N+1 on a new sha. The rc tag is never moved and never deleted (hard rules) |
+| 5 fat jobs, Σ executed unchanged | ruling recorded | not measured in this amendment. Re-derive the job list from `.github/workflows/ci.yml`, and the Σ from the `workspace-test` Summary line, before claiming it |
+| release window | yes, from 0.71.2 | one fixed-length run of proven-green steps at one sha, in its own worktree. Main never waits on it, and the window is at most 45 minutes. Any red ends the window: the fix lands on main the normal way and the next cut starts over, with no fix loop inside the window. A step too long for the window runs beforehand on the candidate sha (nightly) and the window only checks its receipt, otherwise it is LAB |
+
+### §14.3 Falsifiers
+
+| # | Assertion | Mutation |
+|---|---|---|
+| FX-R1 | a green run on a released branch cuts nothing | drop the final-tag check in `rc_cut.sh` → its self-test row "green run on a released branch cuts nothing" goes RED |
+| FX-R2 | a re-run on an already-tagged tip cuts nothing | drop the "rc tag already points at head_sha" check → the re-run self-test row goes RED |
