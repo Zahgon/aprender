@@ -254,52 +254,38 @@ fn a_non_string_proved_type_is_named_where_a_bound_fn_reaches_it() {
     assert_eq!(run.code, 1, "{}", run.stderr);
 }
 
-fn planted_contract(name: &str, planted: &str) -> Run {
-    let root = tempfile::tempdir().expect("tempdir");
-    std::fs::create_dir(root.path().join("contracts")).expect("contracts/");
-    std::fs::write(root.path().join("contracts").join(name), planted).expect("contract");
-    obligations(root.path(), true)
-}
-
-fn unused_type_fixture() -> String {
-    std::fs::read_to_string(fixtures().join("edge/contracts/g-unused-type-v1.yaml"))
-        .expect("g-unused-type-v1.yaml")
-}
-
-/// A document serde-saphyr refuses and PyYAML reads (a duplicate key) cannot be checked for 2
-/// and 3 here. Check 1 (`pv validate`, the same parser) fails on it on both sides, and pv adds
-/// no parse line of its own, so the report is the script's.
+/// A document `serde_yaml` refuses and PyYAML reads (a duplicate key, an integer beyond 64
+/// bits) cannot be checked for 2 and 3 here. Check 1 (`pv validate`, the same parser) fails
+/// on it on both sides, and pv adds no parse line of its own, so the report is the script's.
 #[test]
-fn a_document_the_parser_refuses_fails_validate_so_the_verdict_agrees() {
-    let valid = unused_type_fixture();
-    let planted = format!("{valid}proof_obligations: []\n");
-    let run = planted_contract("dup-v1.yaml", &planted);
-    // What the script prints for it (measured): the validate line and nothing else.
-    assert_eq!(
-        run.stdout,
-        "::error::contracts/dup-v1.yaml: pv validate failed\n\
-         pv obligation gate: 1 problem(s) over 1 contracts\n"
-    );
-    assert_eq!(run.code, 1, "{}", run.stderr);
-}
-
-/// An integer beyond 64 bits: serde_yaml refused it, serde-saphyr reads it as PyYAML does
-/// (#5209), so `pv validate` passes and the document is checked like any other. Its
-/// `proved_type` is not a string but no bound fn reaches it, so the script is silent
-/// (measured: `0 problem(s) over 1 contracts`, exit 0).
-#[test]
-fn an_integer_beyond_64_bits_is_read_and_checked_as_the_script_does() {
-    let valid = unused_type_fixture();
-    let planted = valid.replacen(
-        "  proved_type: 7",
-        "  proved_type: 184467440737095516160",
-        1,
-    );
-    assert_ne!(planted, valid, "the plant took");
-    let run = planted_contract("bigint-v1.yaml", &planted);
-    assert_eq!(
-        run.stdout,
-        "pv obligation gate: 0 problem(s) over 1 contracts\n"
-    );
-    assert_eq!(run.code, 0, "{}", run.stderr);
+fn a_document_serde_yaml_refuses_fails_validate_so_the_verdict_agrees() {
+    let valid = std::fs::read_to_string(fixtures().join("edge/contracts/g-unused-type-v1.yaml"))
+        .expect("g-unused-type-v1.yaml");
+    for (name, planted) in [
+        ("dup-v1.yaml", format!("{valid}proof_obligations: []\n")),
+        (
+            "bigint-v1.yaml",
+            valid.replacen(
+                "  proved_type: 7",
+                "  proved_type: 184467440737095516160",
+                1,
+            ),
+        ),
+    ] {
+        assert_ne!(planted, valid, "{name}: the plant took");
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(root.path().join("contracts")).expect("contracts/");
+        std::fs::write(root.path().join("contracts").join(name), planted).expect("contract");
+        let run = obligations(root.path(), true);
+        // What the script prints for it (measured): the validate line and nothing else.
+        assert_eq!(
+            run.stdout,
+            format!(
+                "::error::contracts/{name}: pv validate failed\n\
+                 pv obligation gate: 1 problem(s) over 1 contracts\n"
+            ),
+            "{name}"
+        );
+        assert_eq!(run.code, 1, "{name}: {}", run.stderr);
+    }
 }
