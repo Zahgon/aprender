@@ -1,0 +1,18 @@
+- id: PMAT-5283
+  github_issue: 5283
+  item_type: task
+  title: 'apr code eval E2: task-suite schema + loader'
+  status: planned
+  priority: high
+  assigned_to: null
+  created: 2026-10-14T11:07:18Z
+  updated: 2026-10-14T11:07:18Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 5281

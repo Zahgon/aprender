@@ -90,36 +90,36 @@ falsification_tests:
   - id: FALSIFY-ACE-TASK-001
     name: empty_set_refused
     prediction: "load() of a manifest with zero tasks returns Err, and so does one with two tasks sharing an id."
-    test_harness: "PLANNED (#5283, crate not yet built): unit test falsify_ace_task_001_empty_and_duplicate_refused in the task module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_task_001_empty_and_duplicate_refused"
     expected_output: "test result: ok"
     if_fails: "The loader accepts a set that can only produce 0/0 or double-counts a task."
   - id: FALSIFY-ACE-TASK-002
     name: no_f2p_refused
     prediction: "A task record with fail_to_pass: [] is rejected at load."
-    test_harness: "PLANNED (#5283, crate not yet built): unit test falsify_ace_task_002_empty_f2p_refused in the task module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_task_002_empty_f2p_refused"
     expected_output: "test result: ok"
     if_fails: "A task that cannot fail is in the suite; it inflates every score."
   - id: FALSIFY-ACE-TASK-003
     name: null_patch_resolves_is_invalid
     prediction: "A planted task whose F2P test already passes on the untouched snapshot fails validation (null edit resolves it)."
-    test_harness: "PLANNED (#5283, crate not yet built): unit test falsify_ace_task_003_null_patch_task_rejected in the task module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_task_003_null_patch_task_rejected"
     expected_output: "test result: ok"
     if_fails: "Validation skips the null-edit run; do-nothing answers would score."
   - id: FALSIFY-ACE-TASK-004
     name: hidden_test_leak_detected
     prediction: "A planted task whose snapshot contains the hidden test file is rejected, naming the path."
-    test_harness: "PLANNED (#5283, crate not yet built): unit test falsify_ace_task_004_hidden_test_in_snapshot_rejected in the task module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_task_004_hidden_test_in_snapshot_rejected"
     expected_output: "test result: ok"
     if_fails: "The agent can read the answer key."
   - id: FALSIFY-ACE-TASK-005
     name: digest_order_independent_and_sensitive
     prediction: "Shuffling the manifest keeps the digest; flipping one byte in one task changes it (proptest)."
-    test_harness: "PLANNED (#5283, crate not yet built): unit test prop_ace_task_005_digest in the task module"
+    test_harness: "cargo test -p aprender-code-eval --lib prop_ace_task_005_digest"
     expected_output: "test result: ok"
     if_fails: "Two receipts with the same digest may have run different tasks."
   - id: FALSIFY-ACE-TASK-006
     name: undated_task_refused
     prediction: "A task record without release_date is rejected at load."
-    test_harness: "PLANNED (#5283, crate not yet built): unit test falsify_ace_task_006_undated_refused in the task module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_task_006_undated_refused"
     expected_output: "test result: ok"
     if_fails: "The post-cutoff (contamination-free) score cannot be computed."
