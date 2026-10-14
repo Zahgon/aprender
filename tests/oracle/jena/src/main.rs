@@ -1824,10 +1824,14 @@ impl Run<'_> {
     fn pv_report(&self, shapes: &Path, data: &Path) -> Result<Result<Report, String>, String> {
         Ok(match pv::validate(self.pv, shapes, data)? {
             pv::Validated::Report(t) => report_of(&t).map_err(|e| format!("pv's report: {e}")),
-            // pv names the file it refused by the absolute path it was given; the receipt keeps it repo-relative.
+            // pv names a refused file by its absolute path, whatever form the repo was given in (`.` too); the
+            // receipt keeps it repo-relative.
             pv::Validated::Refused(why) => Err(format!(
                 "pv refused: {}",
-                why.replace(&format!("{}/", self.repo.display()), "")
+                match std::fs::canonicalize(self.repo) {
+                    Ok(root) => why.replace(&format!("{}/", root.display()), ""),
+                    Err(_) => why,
+                }
             )),
             pv::Validated::Broken(why) => Err(why),
         })
