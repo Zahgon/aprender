@@ -566,7 +566,7 @@ fn validate_top_level_keys(contract: &Contract, violations: &mut Vec<Violation>)
             rule: "SCHEMA-020".to_string(),
             message: format!(
                 "the contract schema accepted this document but a strict YAML reader \
-                 rejects it ({err}) — `yq`, PyYAML and any `serde_yaml::Value` consumer \
+                 rejects it ({err}) — `yq`, PyYAML and any `serde_json::Value` consumer \
                  will drop content here. A duplicate mapping key is the usual cause: \
                  merge the two blocks into one"
             ),

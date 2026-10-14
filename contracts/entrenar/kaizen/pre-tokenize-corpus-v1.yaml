@@ -9,7 +9,7 @@ metadata:
 contract: pre-tokenize-corpus-v1
 version: 1.0.0
 status: implemented
-kaizen: 028
+kaizen: "028"
 invariants:
 - id: C-PRETOK-001
   description: Token IDs computed once at dataset construction, reused across all epochs

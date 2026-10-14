@@ -66,13 +66,13 @@ impl Clauses {
     /// # Errors
     ///
     /// Every entry that is not a well-formed clause, and every id used twice in one block.
-    pub fn from_doc(doc: &serde_yaml::Value) -> Result<Self, Vec<String>> {
+    pub fn from_doc(doc: &serde_json::Value) -> Result<Self, Vec<String>> {
         let mut errors = Vec::new();
         let mut read = |block: &str, only_with_status: bool| -> Vec<Clause> {
             let Some(items) = doc.get(block) else {
                 return Vec::new();
             };
-            let Some(items) = items.as_sequence() else {
+            let Some(items) = items.as_array() else {
                 // A legacy `invariants:` mapping (grouped prose, e.g. `invariants: {structure: [...]}`) predates the
                 // clause shape and is not read; `requires`/`ensures` are ONT-4e's own and have no legacy form.
                 if !only_with_status {
@@ -85,7 +85,7 @@ impl Clauses {
                 if only_with_status && item.get("formal_status").is_none() {
                     continue;
                 }
-                match serde_yaml::from_value::<Clause>(item.clone()) {
+                match serde_json::from_value::<Clause>(item.clone()) {
                     Ok(c) => match c.defect() {
                         Some(d) => errors.push(format!("{block}[{i}]: {d}")),
                         None if out.iter().any(|o| o.id == c.id) => {
@@ -198,7 +198,7 @@ pub struct LiskovCorpus {
 /// Read the pairs of `edges`' `refines` role from `docs` (stem → `(file, document)`).
 #[must_use]
 pub fn liskov_corpus(
-    docs: &BTreeMap<String, (PathBuf, serde_yaml::Value)>,
+    docs: &BTreeMap<String, (PathBuf, serde_json::Value)>,
     edges: &BTreeSet<TypedEdge>,
 ) -> LiskovCorpus {
     let mut out = LiskovCorpus::default();

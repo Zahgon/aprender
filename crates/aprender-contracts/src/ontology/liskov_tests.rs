@@ -181,7 +181,7 @@ fn prose_and_legacy_pairs_are_classified_not_checked() {
 
 #[test]
 fn legacy_invariants_are_not_clauses_and_new_shape_ones_are() {
-    let doc: serde_yaml::Value = serde_yaml::from_str(
+    let doc: serde_json::Value = crate::yaml::from_str(
         "invariants:\n  - { id: INV-1, property: legacy, formal: 'x' }\n  - { id: INV-2, statement: s, formal: 'y', formal_status: parsed }\nrequires:\n  - { id: PRE-1, statement: s, formal: 'z', formal_status: parsed }\nensures:\n  - { id: POST-1, statement: s, formal_status: prose }\n",
     )
     .expect("yaml");
@@ -189,8 +189,8 @@ fn legacy_invariants_are_not_clauses_and_new_shape_ones_are() {
     assert_eq!(cs.counts(), (1, 1, 1));
     assert_eq!(cs.invariants[0].id, "INV-2");
     // The corpus's grouped-prose form (`invariants: {structure: [...]}`) is legacy, not a malformed clause list.
-    let grouped: serde_yaml::Value =
-        serde_yaml::from_str("invariants:\n  structure:\n    - prose\n").expect("yaml");
+    let grouped: serde_json::Value =
+        crate::yaml::from_str("invariants:\n  structure:\n    - prose\n").expect("yaml");
     assert!(Clauses::from_doc(&grouped).expect("legacy").is_legacy());
 }
 
@@ -215,7 +215,7 @@ fn a_malformed_clause_is_refused_with_its_place() {
             "requires[0]",
         ),
     ] {
-        let doc: serde_yaml::Value = serde_yaml::from_str(yaml).expect("yaml");
+        let doc: serde_json::Value = crate::yaml::from_str(yaml).expect("yaml");
         let errors = Clauses::from_doc(&doc).expect_err(yaml);
         assert!(errors.iter().any(|e| e.contains(want)), "{yaml}: {errors:?}");
     }
@@ -346,7 +346,7 @@ fn the_digest_is_order_free_and_sensitive_to_every_clause() {
 
 #[test]
 fn the_corpus_reader_pairs_refines_edges_and_reports_malformed_clauses() {
-    let doc = |y: &str| serde_yaml::from_str::<serde_yaml::Value>(y).expect("yaml");
+    let doc = |y: &str| crate::yaml::from_str::<serde_json::Value>(y).expect("yaml");
     let mut docs = BTreeMap::new();
     docs.insert(
         "a".to_string(),

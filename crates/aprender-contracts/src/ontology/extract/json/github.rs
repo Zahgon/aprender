@@ -961,16 +961,16 @@ mod tests {
     fn the_resolves_table_is_what_the_contract_declares() {
         let path =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/github-entities-v1.yaml");
-        let doc: serde_yaml::Value =
-            serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let doc: serde_json::Value =
+            crate::yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
         let by_class: BTreeMap<String, SnapshotType> = control_types()
             .into_iter()
             .map(|t| (t.root_class.clone(), t))
             .collect();
         let mut declared = BTreeSet::new();
-        for shape in doc["shapes"].as_sequence().unwrap() {
+        for shape in doc["shapes"].as_array().unwrap() {
             let t = &by_class[shape["targetClass"].as_str().unwrap()];
-            for p in shape["properties"].as_sequence().unwrap() {
+            for p in shape["properties"].as_array().unwrap() {
                 if let Some(target) = p.get("resolves").and_then(|r| r.as_str()) {
                     let path = p["path"].as_str().unwrap();
                     let key = path.strip_prefix(&format!("{}:", t.prefix)).unwrap();

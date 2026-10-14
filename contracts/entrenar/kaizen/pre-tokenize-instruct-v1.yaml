@@ -9,7 +9,7 @@ metadata:
 contract: pre-tokenize-instruct-v1
 version: 1.0.0
 status: implemented
-kaizen: 029
+kaizen: "029"
 invariants:
 - id: C-PRETOK-INST-001
   description: Token IDs computed once at InstructTrainer construction, reused across all epochs

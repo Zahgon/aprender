@@ -9,7 +9,7 @@ metadata:
 contract: blis-profiling-guard-v1
 version: 1.0.0
 status: implemented
-kaizen: 038
+kaizen: "038"
 invariants:
 - id: C-BLISPROFILE-001
   description: Instant::now() only called when profiler is active

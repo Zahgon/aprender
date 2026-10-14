@@ -45,7 +45,7 @@ fn emit_entrypoints(
     g: &mut Graph,
     s: &str,
     rel: &str,
-    v: &serde_yaml::Value,
+    v: &serde_json::Value,
     ctx: &Ctx<'_>,
     stats: &mut DocStats,
 ) {
@@ -63,7 +63,7 @@ fn emit_contract_count(
     g: &mut Graph,
     s: &str,
     rel: &str,
-    v: &serde_yaml::Value,
+    v: &serde_json::Value,
     ctx: &Ctx<'_>,
     stats: &mut DocStats,
 ) {
@@ -88,12 +88,12 @@ fn emit_frontmatter(
     g: &mut Graph,
     s: &str,
     rel: &str,
-    fm: &serde_yaml::Mapping,
+    fm: &serde_json::Map<String, serde_json::Value>,
     ctx: &Ctx<'_>,
     stats: &mut DocStats,
 ) {
     for (k, v) in fm {
-        let Some(key) = k.as_str() else { continue };
+        let key = k.as_str();
         match key {
             "entrypoints" => emit_entrypoints(g, s, rel, v, ctx, stats),
             "contract_count" => emit_contract_count(g, s, rel, v, ctx, stats),

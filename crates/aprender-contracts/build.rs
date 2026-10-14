@@ -76,7 +76,7 @@ fn emit_binding_env(contracts_dir: &Path) {
 
 fn load_binding_file(binding_path: &Path) -> Option<BindingFile> {
     let yaml = std::fs::read_to_string(binding_path).ok()?;
-    serde_yaml::from_str(&yaml).ok()
+    serde_saphyr::from_str_with_options(&yaml, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false }).ok()
 }
 
 fn emit_binding_vars(bindings: &BindingFile, total: &mut u32, implemented: &mut u32) {
@@ -127,7 +127,10 @@ fn emit_contract_file_pre_post(path: &PathBuf, total_pre: &mut usize, total_post
     let Ok(contents) = std::fs::read_to_string(path) else {
         return;
     };
-    let Ok(parsed) = serde_yaml::from_str::<ContractYaml>(&contents) else {
+    let Ok(parsed) = serde_saphyr::from_str_with_options::<ContractYaml>(
+        &contents,
+        serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false },
+    ) else {
         return;
     };
     for (eq_name, eq) in &parsed.equations {
