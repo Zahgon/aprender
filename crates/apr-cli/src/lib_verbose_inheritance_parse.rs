@@ -270,6 +270,7 @@
             prompt: None,
             fast: false,
             brick: None,
+            no_gpu: false,
             percentiles: vec![50.0, 95.0, 99.0],
         }));
         let result = execute_command(&cli);

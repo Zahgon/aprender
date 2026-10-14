@@ -181,6 +181,7 @@ pub(crate) fn run(
     prompt: Option<&str>,
     fast: bool,
     brick: Option<&str>,
+    no_gpu: bool,
     json: bool,
     percentiles: &[f64],
 ) -> Result<()> {
@@ -233,7 +234,7 @@ pub(crate) fn run(
             println!("{}", "Using realizar inference engine".cyan());
             println!();
         }
-        run_realizar_benchmark(path, &config)?
+        run_realizar_benchmark(path, &config, no_gpu)?
     };
 
     #[cfg(not(feature = "inference"))]
@@ -245,7 +246,7 @@ pub(crate) fn run(
 
     // GH-254: JSON output mode — always exit 0 with results in JSON body
     if json {
-        return print_bench_json(path, &result, percentiles);
+        return print_bench_json(path, &result, percentiles, no_gpu);
     }
 
     // Print results
@@ -280,7 +281,11 @@ pub(crate) fn run(
 ///
 /// Feature gates are read FIRST and are decisive when absent: a build without
 /// the feature cannot take that path, whatever `nvidia-smi` says.
-fn compute_class() -> &'static str {
+fn compute_class(no_gpu: bool) -> &'static str {
+    // #5276: `--no-gpu` keeps every path on the CPU, so a CUDA build says so.
+    if no_gpu {
+        return "cpu";
+    }
     if cfg!(feature = "cuda") {
         // Built for CUDA. It still only counts as `cuda` if the runtime is
         // actually there; otherwise this build silently fell back and the
@@ -323,7 +328,7 @@ fn file_sha256(path: &Path) -> Option<String> {
 /// unpinned llama.cpp). `reported_version` is recorded SEPARATELY from
 /// `build_commit` because #2384 is exactly the case where they disagree:
 /// two binaries both printed 3.32.0 and only the commit differed.
-fn provenance_json() -> serde_json::Value {
+fn provenance_json(no_gpu: bool) -> serde_json::Value {
     let exe = std::env::current_exe().ok();
     let binary_sha256 = exe.as_deref().and_then(file_sha256);
     let mut features: Vec<&'static str> = Vec::new();
@@ -345,7 +350,7 @@ fn provenance_json() -> serde_json::Value {
         "reported_version": env!("CARGO_PKG_VERSION"),
         "build_commit": option_env!("APR_GIT_SHA").unwrap_or("unknown"),
         "resolution": "path",
-        "compute_class": compute_class(),
+        "compute_class": compute_class(no_gpu),
         "feature_set": features,
     })
 }
@@ -353,7 +358,12 @@ fn provenance_json() -> serde_json::Value {
 /// CRUX-E-07: emits `latency_p<N>_ms` key per requested percentile point.
 // serde_json::json!() macro uses infallible unwrap internally
 #[allow(clippy::disallowed_methods)]
-fn print_bench_json(path: &Path, result: &BenchResult, percentiles: &[f64]) -> Result<()> {
+fn print_bench_json(
+    path: &Path,
+    result: &BenchResult,
+    percentiles: &[f64],
+    no_gpu: bool,
+) -> Result<()> {
     let mut output = serde_json::json!({
         "model": path.display().to_string(),
         "tokens_per_second": (result.tokens_per_second * 10.0).round() / 10.0,
@@ -389,7 +399,7 @@ fn print_bench_json(path: &Path, result: &BenchResult, percentiles: &[f64]) -> R
         // token-count inconstancy, so a zero-invariant would contradict the
         // only correct implementation we have.
         obj.insert("runs_discarded".to_string(), serde_json::json!(0));
-        obj.insert("provenance".to_string(), provenance_json());
+        obj.insert("provenance".to_string(), provenance_json(no_gpu));
         obj.insert(
             "model_sha256".to_string(),
             serde_json::json!(file_sha256(path)),
@@ -853,7 +863,7 @@ mod parity_001_receipt_tests {
     /// regression: a CPU-only apr side measured against a CUDA comparator.
     #[test]
     fn compute_class_is_cpu_without_a_gpu_feature() {
-        let class = compute_class();
+        let class = compute_class(false);
         if cfg!(feature = "cuda") || cfg!(feature = "wgpu") {
             // Built with a GPU feature: the class may legitimately be a GPU
             // path, or `cpu` if the runtime turned out to be absent.
@@ -877,16 +887,25 @@ mod parity_001_receipt_tests {
     fn compute_class_is_in_the_schema_vocabulary() {
         const ALLOWED: [&str; 5] = ["cpu", "cuda", "metal", "wgpu", "unknown"];
         assert!(
-            ALLOWED.contains(&compute_class()),
+            ALLOWED.contains(&compute_class(false)),
             "compute_class must be one of {ALLOWED:?}"
         );
+    }
+
+    /// #5276: `--no-gpu` keeps a CUDA build on the CPU, so the receipt must
+    /// say `cpu` whatever features or hardware are present. Otherwise a CPU
+    /// row would be labelled `cuda` and compared against ollama's GPU numbers.
+    #[test]
+    fn no_gpu_receipt_is_cpu_on_every_build() {
+        assert_eq!(compute_class(true), "cpu");
+        assert_eq!(provenance_json(true)["compute_class"], "cpu");
     }
 
     /// The provenance block must carry every field the schema requires, and
     /// must never assert a digest it did not compute.
     #[test]
     fn provenance_carries_the_required_fields() {
-        let p = provenance_json();
+        let p = provenance_json(false);
         for key in [
             "binary_path",
             "binary_sha256",

@@ -1407,6 +1407,7 @@ fn dispatch_profiling_commands(cli: &Cli) -> Option<Result<(), CliError>> {
             prompt,
             fast,
             brick,
+            no_gpu,
             percentiles,
         } => crate::error::resolve_model_path(file).and_then(|r| {
             bench::run(
@@ -1417,6 +1418,7 @@ fn dispatch_profiling_commands(cli: &Cli) -> Option<Result<(), CliError>> {
                 prompt.as_deref(),
                 *fast,
                 brick.as_deref(),
+                *no_gpu,
                 cli.json,
                 percentiles,
             )

@@ -501,6 +501,7 @@
             prompt: None,
             fast: true,
             brick: None,
+            no_gpu: false,
             percentiles: vec![50.0, 95.0, 99.0],
         }));
         let result = dispatch_profiling_commands(&cli);

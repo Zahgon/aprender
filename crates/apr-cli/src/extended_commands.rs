@@ -135,6 +135,10 @@ pub enum ExtendedCommands {
         /// Benchmark specific brick
         #[arg(long)]
         brick: Option<FreeText>,
+        /// Run on the CPU even on a CUDA build with a GPU present (#5276).
+        /// The JSON receipt's `compute_class` then reads `cpu`.
+        #[arg(long)]
+        no_gpu: bool,
         /// Comma-separated latency percentile points for JSON output
         /// (CRUX-E-07). Default: `50,95,99`. Values must be in (0, 100].
         #[arg(

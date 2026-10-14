@@ -282,6 +282,7 @@
             prompt: None,
             fast: false,
             brick: None,
+            no_gpu: false,
             percentiles: vec![50.0, 95.0, 99.0],
         });
         let paths = extract_model_paths(&bench_cmd);

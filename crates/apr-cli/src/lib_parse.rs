@@ -193,6 +193,23 @@
         }
     }
 
+    /// Test parsing 'apr bench --no-gpu' (#5276): off by default, on when passed
+    #[test]
+    fn test_parse_bench_no_gpu() {
+        for (args, want) in [
+            (vec!["apr", "bench", "model.gguf"], false),
+            (vec!["apr", "bench", "model.gguf", "--no-gpu"], true),
+        ] {
+            let cli = parse_cli(args).expect("Failed to parse");
+            match *cli.command {
+                Commands::Extended(ExtendedCommands::Bench { no_gpu, .. }) => {
+                    assert_eq!(no_gpu, want);
+                }
+                _ => panic!("Expected Bench command"),
+            }
+        }
+    }
+
     /// Test parsing 'apr cbtop' with speculative decoding flags
     #[test]
     fn test_parse_cbtop_speculative() {

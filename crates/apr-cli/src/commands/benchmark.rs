@@ -95,9 +95,10 @@ fn print_results(result: &BenchResult) {
 /// Realizar-based benchmark for model inference
 ///
 /// Supports all formats: GGUF, APR, and SafeTensors.
-/// Automatically uses CUDA GPU acceleration when available for GGUF.
+/// Automatically uses CUDA GPU acceleration when available for GGUF, unless
+/// `no_gpu` (#5276) keeps every format on the CPU.
 #[cfg(feature = "inference")]
-fn run_realizar_benchmark(path: &Path, config: &BenchConfig) -> Result<BenchResult> {
+fn run_realizar_benchmark(path: &Path, config: &BenchConfig, no_gpu: bool) -> Result<BenchResult> {
     use realizar::format::{detect_format, ModelFormat};
 
     // Read first 8 bytes for format detection
@@ -112,9 +113,12 @@ fn run_realizar_benchmark(path: &Path, config: &BenchConfig) -> Result<BenchResu
         eprintln!("{} {}", "Format:".cyan().bold(), format.to_string().green());
     }
 
-    // Check CUDA availability (only used for GGUF currently)
+    // Check CUDA availability (only used for GGUF currently). `--no-gpu`
+    // skips the probe, so no CUDA context is created on a CPU run (#5276).
     #[cfg(feature = "cuda")]
-    let (cuda_available, cuda_devices) = {
+    let (cuda_available, cuda_devices) = if no_gpu {
+        (false, 0usize)
+    } else {
         use realizar::cuda::CudaExecutor;
         (CudaExecutor::is_available(), CudaExecutor::num_devices())
     };
@@ -122,7 +126,9 @@ fn run_realizar_benchmark(path: &Path, config: &BenchConfig) -> Result<BenchResu
     let (cuda_available, cuda_devices) = (false, 0usize);
 
     if !config.quiet {
-        if cuda_available && cuda_devices > 0 {
+        if no_gpu {
+            eprintln!("{} {}", "CUDA:".cyan().bold(), "Disabled by --no-gpu (CPU mode)".yellow());
+        } else if cuda_available && cuda_devices > 0 {
             eprintln!(
                 "{} {} GPU(s) detected",
                 "CUDA:".cyan().bold(),

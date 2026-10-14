@@ -20,7 +20,7 @@ fn bench_on_qwen35_times_session_generate() {
         prompt: prompt.to_string(),
         quiet: true,
     };
-    let result = run_realizar_benchmark(Path::new(MODEL), &config).expect("bench runs");
+    let result = run_realizar_benchmark(Path::new(MODEL), &config, false).expect("bench runs");
     let mapped = realizar::gguf::MappedGGUFModel::from_path(MODEL).expect("map");
     let tokens = mapped.model.encode(prompt).expect("tokenizer");
     let generates = realizar::session::entries_for(&tokens)
