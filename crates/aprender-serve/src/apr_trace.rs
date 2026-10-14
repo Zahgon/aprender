@@ -6,7 +6,9 @@
 //! the `apr run` path could not reach it. The record type is
 //! [`renacer_core::apr_trace`], which training can depend on too (TR-09b).
 
-pub use renacer_core::apr_trace::{check, TraceData, TraceOperation, TraceProvenance, Violation};
+pub use renacer_core::apr_trace::{
+    check, check_spans, TraceData, TraceOperation, TraceProvenance, Violation,
+};
 
 /// Build trace data based on X-Trace-Level header
 ///

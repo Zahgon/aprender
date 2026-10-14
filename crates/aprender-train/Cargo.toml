@@ -90,6 +90,7 @@ presentar-core = { workspace = true }
 trueno-db = { workspace = true, optional = true }
 chrono = { version = "0.4", features = ["serde"] }  # Timestamps for metric storage
 renacer = { workspace = true, optional = true }  # Distributed tracing
+renacer-core = { workspace = true }  # apr-trace-v1, the trace record serve writes (TRACE-001 TR-09b)
 wasm-bindgen = { version = "0.2", optional = true }  # WASM bindings
 getrandom = { version = "0.3", features = ["wasm_js"], optional = true }  # WASM random
 js-sys = { version = "0.3", optional = true }  # JavaScript types for WASM

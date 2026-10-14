@@ -71,6 +71,9 @@ pub enum Violation {
     /// `wall_clock_total` claims only the total, so it is exactly one row equal
     /// to it. More rows, or a row that differs, is a split nobody measured.
     WallClockIsNotOneTotalRow,
+    /// The breakdown is not the span set its writer always emits: a span was
+    /// dropped, added or renamed. Only [`check_spans`] reports it.
+    SpansDiffer { want: Vec<String>, got: Vec<String> },
 }
 
 impl std::fmt::Display for Violation {
@@ -93,6 +96,9 @@ impl std::fmt::Display for Violation {
                 f,
                 "provenance wall_clock_total with a breakdown other than one row equal to the total"
             ),
+            Self::SpansDiffer { want, got } => {
+                write!(f, "breakdown spans {got:?}, its writer emits {want:?}")
+            }
         }
     }
 }
@@ -122,6 +128,22 @@ pub fn check(t: &TraceData) -> Result<(), Violation> {
             Err(Violation::WallClockIsNotOneTotalRow)
         }
         _ => Ok(()),
+    }
+}
+
+/// [`check`], then that the breakdown is exactly `spans`, in order. For a reader
+/// that knows the writer's span set (an `apr train` step, an `apr serve` step):
+/// a dropped span leaves a record [`check`] alone cannot tell from an honest one.
+pub fn check_spans(t: &TraceData, spans: &[&str]) -> Result<(), Violation> {
+    check(t)?;
+    let got: Vec<&str> = t.breakdown.iter().map(|op| op.name.as_str()).collect();
+    if got == spans {
+        Ok(())
+    } else {
+        Err(Violation::SpansDiffer {
+            want: spans.iter().map(ToString::to_string).collect(),
+            got: got.into_iter().map(ToString::to_string).collect(),
+        })
     }
 }
 
@@ -196,6 +218,44 @@ mod tests {
         let mut t = measured();
         t.level = "basic".to_string();
         assert_eq!(check(&t), Err(Violation::UnknownLevel("basic".to_string())));
+    }
+
+    /// A breakdown that passes [`check`] but is not the writer's span set is
+    /// rejected by [`check_spans`]: dropped, renamed and reordered spans.
+    #[test]
+    fn check_spans_rejects_a_breakdown_that_is_not_the_writers() {
+        const SPANS: [&str; 3] = ["prefill", "decode", "emit"];
+        assert_eq!(check_spans(&measured(), &SPANS), Ok(()));
+
+        let mut t = measured();
+        t.breakdown.pop();
+        assert!(check(&t).is_ok());
+        assert!(matches!(
+            check_spans(&t, &SPANS),
+            Err(Violation::SpansDiffer { .. })
+        ));
+
+        let mut t = measured();
+        t.breakdown[0].name = "prompt".to_string();
+        assert!(matches!(
+            check_spans(&t, &SPANS),
+            Err(Violation::SpansDiffer { .. })
+        ));
+
+        let mut t = measured();
+        t.breakdown.swap(0, 1);
+        assert!(matches!(
+            check_spans(&t, &SPANS),
+            Err(Violation::SpansDiffer { .. })
+        ));
+
+        // check's own violations come first.
+        let mut t = measured();
+        t.breakdown[1].time_us = 600;
+        assert!(matches!(
+            check_spans(&t, &SPANS),
+            Err(Violation::PartsExceedTotal { .. })
+        ));
     }
 
     /// The wire form is the one serve has always sent: snake_case provenance,

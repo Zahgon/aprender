@@ -11,6 +11,9 @@ use std::path::Path;
 
 use super::batch::LMBatch;
 use super::config::TransformerTrainConfig;
+use super::step_trace::{us_since, StepSpans};
+use renacer_core::apr_trace::TraceData;
+use std::time::Instant;
 
 /// Transformer training state
 pub struct TransformerTrainer {
@@ -35,6 +38,10 @@ pub struct TransformerTrainer {
     /// LoRA layers (ENT-LoRA-001): [Q_0, V_0, Q_1, V_1, ...] per transformer layer
     /// None = full fine-tuning, Some = LoRA fine-tuning
     lora_layers: Option<Vec<LoRALayer>>,
+    /// TR-09b: spans of the optimizer step in progress
+    step_spans: StepSpans,
+    /// TR-09b: the `apr-trace-v1` record of the last completed optimizer step
+    last_step_trace: Option<TraceData>,
 }
 
 impl TransformerTrainer {
@@ -175,6 +182,8 @@ impl TransformerTrainer {
             accumulated_loss: 0.0,
             accumulated_batches: 0,
             lora_layers,
+            step_spans: StepSpans::default(),
+            last_step_trace: None,
         }
     }
 
@@ -203,8 +212,10 @@ impl TransformerTrainer {
     }
 
     /// Compute forward + backward for all items in a batch, returning average loss.
-    fn compute_batch_gradients(&self, batch: &LMBatch) -> f32 {
+    /// Returns `(avg_loss, forward_us, backward_us)`.
+    fn compute_batch_gradients(&self, batch: &LMBatch) -> (f32, u64, u64) {
         let mut total_loss = 0.0;
+        let (mut forward_us, mut backward_us) = (0u64, 0u64);
 
         for i in 0..batch.batch_size {
             let Some(input_ids) = batch.get_input(i) else {
@@ -214,20 +225,25 @@ impl TransformerTrainer {
                 continue;
             };
 
+            let t = Instant::now();
             let (loss_val, loss, _logits) = self.forward_single(input_ids, target_ids);
+            forward_us = forward_us.saturating_add(us_since(t));
 
+            let t = Instant::now();
             if let Some(backward_op) = loss.backward_op() {
                 backward_op.backward();
             }
+            backward_us = backward_us.saturating_add(us_since(t));
 
             total_loss += loss_val / self.config.accumulation_steps as f32;
         }
 
-        total_loss / batch.batch_size as f32
+        (total_loss / batch.batch_size as f32, forward_us, backward_us)
     }
 
     /// Apply gradient clipping and run the optimizer step, then reset accumulation.
     fn clip_and_step(&mut self) {
+        let optimizer_start = Instant::now();
         // ENT-LoRA-002: Only update trainable params (LoRA A/B + norms when active)
         if let Some(ref mut lora) = self.lora_layers {
             // ENT-LoRA-006: LoRA+ gradient scaling for B matrices
@@ -263,6 +279,7 @@ impl TransformerTrainer {
             self.optimizer.step_refs(&mut params);
         }
 
+        self.last_step_trace = self.step_spans.finish(us_since(optimizer_start));
         self.step += 1;
         self.metrics.losses.push(self.accumulated_loss);
         self.metrics.increment_step();
@@ -280,6 +297,8 @@ impl TransformerTrainer {
         }
 
         if self.accumulated_batches == 0 {
+            self.step_spans.begin();
+            let zero_grad_start = Instant::now();
             // ENT-LoRA-002: Zero grad only on trainable params (LoRA A/B + norms)
             if let Some(ref mut lora) = self.lora_layers {
                 let mut params: Vec<&mut Tensor> =
@@ -294,9 +313,12 @@ impl TransformerTrainer {
                 let mut params = self.model.parameters_mut();
                 self.optimizer.zero_grad_refs(&mut params);
             }
+            self.step_spans.add_zero_grad(us_since(zero_grad_start));
         }
 
-        let avg_loss = self.compute_batch_gradients(batch);
+        let (avg_loss, forward_us, backward_us) = self.compute_batch_gradients(batch);
+        self.step_spans.add_forward(forward_us);
+        self.step_spans.add_backward(backward_us);
 
         self.accumulated_loss += avg_loss;
         self.accumulated_batches += 1;
@@ -356,6 +378,12 @@ impl TransformerTrainer {
     /// Get current step count
     pub fn step(&self) -> usize {
         self.step
+    }
+
+    /// TR-09b: the `apr-trace-v1` record of the last completed optimizer step
+    /// (`None` before the first). Spans are [`super::step_trace::STEP_SPANS`].
+    pub fn last_step_trace(&self) -> Option<&TraceData> {
+        self.last_step_trace.as_ref()
     }
 
     /// Get reference to model

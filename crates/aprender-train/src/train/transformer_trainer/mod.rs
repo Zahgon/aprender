@@ -3,6 +3,7 @@
 //! Provides specialized training components for transformer language models,
 //! including tokenized batch creation and language modeling training loops.
 
+pub mod apr_trace_log;
 mod batch;
 mod config;
 mod cuda_trainer;
@@ -14,6 +15,7 @@ pub mod grad_accumulator;
 pub mod pipeline;
 pub mod sequence_parallel;
 pub mod step_profiler;
+pub mod step_trace;
 pub mod tensor_parallel;
 mod trainer;
 mod utils;

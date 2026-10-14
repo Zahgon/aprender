@@ -1,5 +1,5 @@
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   created: "2026-09-26"
   author: PAIML Engineering
   registry: true
@@ -12,8 +12,8 @@ metadata:
     inference tracer ran over that request, and its parts never sum past the
     request's own wall clock.
 name: apr-trace
-version: "1.1.0"
-scope: "crates/aprender-serve/src/api/serve_trace.rs, crates/aprender-serve/src/apr_trace.rs, crates/aprender-profile-core/src/apr_trace.rs"
+version: "1.2.0"
+scope: "crates/aprender-serve/src/api/serve_trace.rs, crates/aprender-serve/src/apr_trace.rs, crates/aprender-profile-core/src/apr_trace.rs, crates/aprender-train/src/train/transformer_trainer/step_trace.rs, crates/aprender-train/src/train/transformer_trainer/apr_trace_log.rs"
 description: |
   APR-OBS-001 OBS-09 (#4496). Before this contract every serve backend answered a
   trace header from `build_trace_data`: one wall-clock row, `wall_clock_total`, and a
@@ -35,6 +35,14 @@ description: |
   `build_trace_data` lives in `realizar::apr_trace`, and `apr run
   --trace-level brick|step|layer --trace-output FILE` writes the record serve sends
   for the same facts. The wire form is unchanged.
+
+  1.2.0 (TRACE-001 TR-09b, #5314): `apr train` emits it. Each optimizer step of the
+  transformer trainer yields one `level: step`, `provenance: measured` record whose
+  breakdown is exactly `zero_grad, forward, backward, optimizer`, each span timed
+  around the call it names, and whose total is the step's own wall clock.
+  `AprTraceLog` writes one record per step to `<output_dir>/apr_trace.jsonl`; the
+  CPU train loop's call to it is TR-09c.
+  `check_spans` is `check` plus the writer's span set, so a dropped span fails.
 equations:
   C-TRACE-001:
     description: "A trace claims a measurement only when the tracer produced one for this request."
@@ -48,6 +56,9 @@ equations:
   C-TRACE-004:
     description: "check rejects a record that claims more than it measured: an unknown level, parts past the total, measured with nothing measured, or a wall_clock_total split into rows."
     formula: "check(t) = Ok ⟹ level(t) ∈ LEVELS ∧ Σ breakdown.time_us ≤ total(t) ∧ (measured ⟹ ops > 0 ∧ |breakdown| > 0) ∧ (wall_clock_total ⟹ breakdown = [total])"
+  C-TRACE-005:
+    description: "The trainer yields, and AprTraceLog writes, one apr-trace-v1 step record per optimizer step, with exactly the trainer's spans, and it passes check."
+    formula: "∀ step: check_spans(record(step), [zero_grad, forward, backward, optimizer]) = Ok ∧ Σ spans ≤ wall_us(step)"
 proof_obligations:
   - id: PO-TRACE-001
     kind: correctness
@@ -65,6 +76,10 @@ proof_obligations:
     kind: correctness
     statement: "check returns a Violation for each mutation of an honest record."
     discharged_by: FALSIFY-OBS-TRACE-004
+  - id: PO-TRACE-005
+    kind: correctness
+    statement: "A real training step of the tiny transformer yields a measured step record that passes check_spans; accumulated micro-batches yield one record per optimizer step; AprTraceLog writes one line per step; and check_spans rejects the record with a span dropped, its parts past the total, or its breakdown cleared."
+    discharged_by: FALSIFY-OBS-TRACE-005
 falsification:
   - id: FALSIFY-OBS-TRACE-001
     description: "A trace returned with provenance measured when the tracer did not run. Discharges C-TRACE-001 and PO-TRACE-001."
@@ -78,3 +93,6 @@ falsification:
   - id: FALSIFY-OBS-TRACE-004
     description: "A mutated record (parts past the total, measured with nothing measured, a split wall_clock_total, an unknown level) passes check. Discharges C-TRACE-004 and PO-TRACE-004."
     test: "cargo test -p aprender-profile-core --lib apr_trace::tests::falsify_obs_trace_004"
+  - id: FALSIFY-OBS-TRACE-005
+    description: "apr train emits a step record that fails check, lacks one of its spans, or one per micro-batch rather than per optimizer step; or a mutated step record passes check_spans. Discharges C-TRACE-005 and PO-TRACE-005."
+    test: "cargo test -p aprender-train --lib -- transformer_trainer::step_trace::tests transformer_trainer::apr_trace_log::tests"
