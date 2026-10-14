@@ -1,0 +1,18 @@
+- id: PMAT-5286
+  github_issue: 5286
+  item_type: task
+  title: 'apr code eval E5: driver, edit adapters, CLI verb'
+  status: planned
+  priority: high
+  assigned_to: null
+  created: 2026-10-14T11:31:30Z
+  updated: 2026-10-14T11:31:30Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 5281

@@ -5,7 +5,9 @@
 //! - [`metric`]: labels → pass@1, pass@k, Wilson interval and a complete receipt (ACE-MET).
 //! - [`task`]: a JSON Lines manifest → a checked task set → a validated suite (ACE-TASK).
 //! - [`sandbox`]: one hermetic, limited, offline container run → one sandbox report (ACE-SBX).
+//! - [`edit`]: a model output in one edit format → edits applied all or nothing (ACE-EDIT).
 
+pub mod edit;
 pub mod metric;
 pub mod sandbox;
 pub mod task;

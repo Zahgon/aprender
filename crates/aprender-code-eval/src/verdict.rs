@@ -50,7 +50,7 @@ impl Verdict {
     ];
 }
 
-/// What the edit adapter (#5287) found in the model's output: the pre(t, out) parts of
+/// What the edit adapter (#5286) found in the model's output: the pre(t, out) parts of
 /// the verdict contract, already decided.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

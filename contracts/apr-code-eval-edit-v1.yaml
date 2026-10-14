@@ -1,0 +1,142 @@
+# apr-code-eval-edit-v1 — the EDIT node of the apr code eval ontology (APR-CODE-EVAL-001).
+#
+# The edit adapter turns a model's text into a change to the task snapshot. Every
+# leaderboard that scores code edits depends on this step, and every one that repairs
+# near-misses (whitespace-fuzzy search, "closest hunk") scores the adapter as well as the
+# model. Aider's benchmarks report the share of malformed edits separately for this
+# reason. Here nothing is repaired: an edit applies exactly or is a format error.
+metadata:
+  version: "1.0.0"
+  created: "2026-10-14"
+  author: PAIML Engineering
+  kind: kernel
+  registry: true
+  description: |
+    Edit-format adapters for the `apr code` eval (epic #5281, ticket #5286): parse a model
+    output under one of four closed formats and apply it to the snapshot all or nothing.
+    Each property is an equation with a planted-failure test.
+  references:
+    - "docs/specifications/apr-code-eval-v1.md §8 (driver and edit formats)"
+    - "Aider (2023-2025) — edit formats whole, diff (SEARCH/REPLACE), udiff; malformed-edit rate reported per model"
+    - "GNU diffutils — unified format; hunk headers and the /dev/null convention for created and deleted files"
+    - "SWE-bench (2024) — the patch is applied to the repo snapshot, then the hidden tests are copied in"
+name: apr-code-eval-edit
+version: "1.0.0"
+status: PROPOSED
+scope: "edit-format adapter of the apr code eval harness (ticket #5286)"
+description: |
+  adapt(f, out, snap) parses model output `out` under format f ∈ F and applies the edits to
+  snapshot `snap`. It returns Adapted { outcome, files, error } where outcome is the
+  verdict's edit outcome (contracts/apr-code-eval-verdict-v1.yaml) and files is the edited
+  tree only when outcome = applied. The tests then run on overlay(files, hidden(t)).
+
+equations:
+  ACE-EDIT-001:
+    description: "Closed formats; parsing is total and deterministic"
+    formula: "F = {whole, search_replace, udiff, agentic}  ∧  ∀ f ∈ F, out. parse(f, out) ∈ Edits ⊎ ParseError  ∧  parse(f, out) = parse(f, out)"
+  ACE-EDIT-002:
+    description: "A search applies only on an exact whole-line match, exactly once; nothing is repaired"
+    formula: "apply(Replace(p, s, r), x) = Ok  ⇔  |{i : x[i..i+|s|] = s ∧ line_boundary(i) ∧ line_boundary(i+|s|)}| = 1"
+    note: "Zero matches is NoMatch, more than one is Ambiguous; both are not-applied, never the first match or a fuzzy one."
+  ACE-EDIT-003:
+    description: "Unified-diff hunks apply by content, in order; line numbers are ignored"
+    formula: "udiff(h₁..hₙ) = Replace(p, old(h₁), new(h₁)) ; … ; Replace(p, old(hₙ), new(hₙ)),  old(h) = context ∪ '-' lines,  new(h) = context ∪ '+' lines"
+  ACE-EDIT-004:
+    description: "Apply is atomic"
+    formula: "apply(snap, e₁..eₙ) = Err  ⇒  no partial tree is returned  ∧  snap unchanged"
+  ACE-EDIT-005:
+    description: "Edits stay inside the work tree"
+    formula: "∀ e. path(e) relative ∧ normalized ∧ '..' ∉ components ∧ '.git' ∉ components, else BadPath"
+  ACE-EDIT-006:
+    description: "Hidden tests are laid over the edited tree last"
+    formula: "run_tree(t, out) = (snap(t) ⊕ edits(out)) ⊕ hidden(t)  ⇒  ∀ p ∈ dom hidden(t). run_tree(p) = hidden(t)(p)"
+  ACE-EDIT-007:
+    description: "The adapter's outcome is the verdict's edit outcome"
+    formula: "adapt(f, out, snap).outcome = classify_edit(out, |parse(f, out)| or ⊥, apply ok)  ∧  (outcome = applied ⇔ files ≠ ⊥)"
+  ACE-EDIT-008:
+    description: "Round trip: a rendered change applies to exactly the intended file"
+    formula: "∀ a, b, f ∈ F. apply(a, parse(f, render_f(a → b))) = b"
+
+proof_obligations:
+  - id: ACE-EDIT-PO-001
+    type: invariant
+    property: "Every format parses arbitrary text without panicking, and twice gives the same result (ACE-EDIT-001)"
+    formal: "∀ f, out. parse(f, out) terminates ∧ parse(f, out) = parse(f, out)"
+  - id: ACE-EDIT-PO-002
+    type: invariant
+    property: "A search with changed whitespace, a partial line, or two matches is not applied (ACE-EDIT-002)"
+    formal: "matches(s, x) ≠ 1 ⇒ apply = Err"
+  - id: ACE-EDIT-PO-003
+    type: invariant
+    property: "A hunk whose context does not match the file is refused; wrong line numbers are not (ACE-EDIT-003)"
+    formal: "old(h) ∉ x ⇒ apply = Err  ∧  header(h) does not affect apply"
+  - id: ACE-EDIT-PO-004
+    type: invariant
+    property: "A failing later edit leaves no partial result and the snapshot unchanged (ACE-EDIT-004)"
+    formal: "apply(snap, e) = Err ⇒ snap' = snap"
+  - id: ACE-EDIT-PO-005
+    type: precondition
+    property: "Absolute, '..', '.git', empty-component and control-character paths are refused (ACE-EDIT-005)"
+    formal: "¬confined(path(e)) ⇒ apply = Err(BadPath)"
+  - id: ACE-EDIT-PO-006
+    type: invariant
+    property: "An edit that writes a hidden test path does not change what runs (ACE-EDIT-006)"
+    formal: "∀ p ∈ dom(hidden). overlay(edited, hidden)(p) = hidden(p)"
+  - id: ACE-EDIT-PO-007
+    type: invariant
+    property: "Blank or block-free output is EMPTY; non-empty unparsable output is a format error, never EMPTY (ACE-EDIT-007)"
+    formal: "∀ out. outcome(adapt(f, out, snap)) = classify_edit(out, parsed, applied) ∧ (outcome = applied ⇒ files ≠ ⊥)"
+  - id: ACE-EDIT-PO-008
+    type: invariant
+    property: "For random files and changes, each format's rendering applies to the intended file (ACE-EDIT-008)"
+    formal: "apply(a, parse(f, render_f(a → b))) = b"
+
+falsification_tests:
+  - id: FALSIFY-ACE-EDIT-001
+    name: parse_total_and_deterministic
+    prediction: "Random marker-heavy text parses under every format to edits or an error, the same each time, and files is set only when applied."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_edit_001"
+    expected_output: "test result: ok"
+    if_fails: "A crafted output crashes the driver or scores differently on a rerun."
+  - id: FALSIFY-ACE-EDIT-002
+    name: exact_match_no_repair
+    prediction: "Indented-differently, trailing-space, tab and partial-line searches give NoMatch; a twice-present line gives Ambiguous(2)."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_edit_002"
+    expected_output: "test result: ok"
+    if_fails: "The adapter repairs near-misses and the score measures the adapter, not the model."
+  - id: FALSIFY-ACE-EDIT-003
+    name: udiff_by_content
+    prediction: "A two-hunk diff applies; wrong line numbers still apply; a wrong context line gives NoMatch; /dev/null creates and deletes."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_edit_003"
+    expected_output: "test result: ok"
+    if_fails: "Hunks apply at stated line numbers or with mismatched context."
+  - id: FALSIFY-ACE-EDIT-004
+    name: atomic_apply
+    prediction: "A good edit followed by a bad one returns an error, the snapshot is unchanged, and adapt reports not_applied."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_edit_004"
+    expected_output: "test result: ok"
+    if_fails: "Half an edit reaches the tests."
+  - id: FALSIFY-ACE-EDIT-005
+    name: path_confined
+    prediction: "Eleven escaping paths, including /etc/passwd, ../outside and vendor/.git/hooks, are refused; four legal paths pass."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_edit_005"
+    expected_output: "test result: ok"
+    if_fails: "A model output writes outside the work tree or into git hooks."
+  - id: FALSIFY-ACE-EDIT-006
+    name: hidden_tests_win
+    prediction: "An output that overwrites tests/hidden.rs runs against the original hidden file."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_edit_006"
+    expected_output: "test result: ok"
+    if_fails: "A model can pass by rewriting the tests."
+  - id: FALSIFY-ACE-EDIT-007
+    name: outcome_matches_verdict
+    prediction: "A twelve-row table of outputs gives the expected outcome, equal to classify_edit for each."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_edit_007"
+    expected_output: "test result: ok"
+    if_fails: "Garbled output is counted as EMPTY, or the adapter and the verdict disagree."
+  - id: FALSIFY-ACE-EDIT-008
+    name: round_trip
+    prediction: "For random files and spans, the whole, search_replace, udiff and agentic renderings of a change all apply to the intended file."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_edit_008"
+    expected_output: "test result: ok"
+    if_fails: "A correct edit in some format is scored as a failure."

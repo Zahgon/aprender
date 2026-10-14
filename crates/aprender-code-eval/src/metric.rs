@@ -207,7 +207,7 @@ pub fn compute(
 }
 
 /// The provenance a receipt must carry beside its numbers (ACE-MET-007). Built by the
-/// driver (#5287); an empty string or list counts as missing.
+/// driver (#5286); an empty string or list counts as missing.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Provenance {
     /// sha256 of the canonical task set.

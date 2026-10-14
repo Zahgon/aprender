@@ -25110,3 +25110,75 @@ Not done, pending the ruling: moving the 31 fixture files to an obviously synthe
   - kind:docs
   notes: null
   epic: 5281
+- id: PMAT-5283
+  github_issue: 5283
+  item_type: task
+  title: 'apr code eval E2: task-suite schema + loader'
+  status: planned
+  priority: high
+  assigned_to: null
+  created: 2026-10-14T11:07:18Z
+  updated: 2026-10-14T11:07:18Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 5281
+- id: PMAT-5284
+  github_issue: 5284
+  item_type: task
+  title: 'apr code eval E3: hermetic sandbox runner'
+  status: planned
+  priority: high
+  assigned_to: null
+  created: 2026-10-14T11:19:38Z
+  updated: 2026-10-14T11:19:38Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 5281
+- id: PMAT-5285
+  github_issue: 5285
+  item_type: task
+  title: 'apr code eval E4: verdict + metric engine'
+  status: planned
+  priority: high
+  assigned_to: null
+  created: 2026-10-14T11:07:21Z
+  updated: 2026-10-14T11:07:21Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 5281
+- id: PMAT-5286
+  github_issue: 5286
+  item_type: task
+  title: 'apr code eval E5: driver, edit adapters, CLI verb'
+  status: planned
+  priority: high
+  assigned_to: null
+  created: 2026-10-14T11:31:30Z
+  updated: 2026-10-14T11:31:30Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 5281
