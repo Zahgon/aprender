@@ -67,18 +67,24 @@ pub(crate) fn refuse_unmodelled_apr(path: &Path) -> Result<()> {
     })
 }
 
-/// #4552: the refusal for any local model path a training verb is handed: an
-/// `.apr` header, a file's sibling `config.json` / `<stem>.config.json`, or a
-/// model directory's `config.json`. A path that does not exist (a remote id)
-/// passes; the verb reports it.
+/// #4552: the refusal for any model a training verb is handed: an `.apr`
+/// header, a GGUF `general.architecture` (bounded prefix read), a file's
+/// sibling `config.json` / `<stem>.config.json`, or a model directory's
+/// `config.json`. A path that does not exist is a remote id (`Qwen/Qwen3.5-9B`,
+/// `hf://…`); its last segment is the only claim there is, so it is checked.
 pub(crate) fn refuse_unmodelled_model_path(path: &Path) -> Result<()> {
     if path.is_file() {
         refuse_unmodelled_apr(path)?;
+        let gguf_arch = super::run::declared_architecture(&path.to_string_lossy());
+        refuse_unmodelled_arch(gguf_arch.as_deref())?;
         for candidate in sibling_config_candidates(path) {
             refuse_unmodelled_hf_config(&candidate)?;
         }
     } else if path.is_dir() {
         refuse_unmodelled_hf_config(&path.join("config.json"))?;
+    } else {
+        let id = path.to_string_lossy();
+        refuse_unmodelled_arch(id.rsplit('/').next())?;
     }
     Ok(())
 }
@@ -590,6 +596,56 @@ mod arch_resolution_tests {
         assert!(refuse_unmodelled_model_path(&weights).is_ok());
         assert!(refuse_unmodelled_model_path(dir.path()).is_ok());
         assert!(refuse_unmodelled_model_path(&dir.path().join("absent")).is_ok());
+    }
+
+    /// FALSIFY-TAH-001 (#4552 r2): a GGUF's `general.architecture` and a
+    /// remote id's last segment are claims too; dense neighbours pass.
+    #[test]
+    fn falsify_tah_001_gguf_arch_and_remote_id_are_refused() {
+        use aprender::format::gguf::{export_tensors_to_gguf, GgmlType, GgufTensor, GgufValue};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let write_gguf = |name: &str, arch: &str| {
+            let tensor = GgufTensor {
+                name: "model.weight".to_string(),
+                shape: vec![2, 2],
+                dtype: GgmlType::F32,
+                data: [1.0f32, 2.0, 3.0, 4.0]
+                    .iter()
+                    .flat_map(|f| f.to_le_bytes())
+                    .collect(),
+            };
+            let meta = vec![(
+                "general.architecture".to_string(),
+                GgufValue::String(arch.to_string()),
+            )];
+            let mut bytes = Vec::new();
+            export_tensors_to_gguf(&mut bytes, &[tensor], &meta).expect("export GGUF");
+            let path = dir.path().join(name);
+            std::fs::write(&path, bytes).expect("write GGUF");
+            path
+        };
+        let hybrid = write_gguf("hybrid.gguf", "qwen35");
+        let msg = refuse_unmodelled_model_path(&hybrid)
+            .expect_err("gguf qwen35")
+            .to_string();
+        assert!(msg.contains("UnsupportedArch"), "{msg}");
+        assert!(refuse_unmodelled_model_path(&write_gguf("dense.gguf", "qwen2")).is_ok());
+
+        for id in [
+            "Qwen/Qwen3.5-9B",
+            "hf://Qwen/Qwen3.5-27B",
+            "Qwen/Qwen3-Next-80B-A3B-Instruct",
+        ] {
+            assert!(refuse_unmodelled_model_path(Path::new(id)).is_err(), "{id}");
+        }
+        for id in [
+            "Qwen/Qwen2.5-0.5B",
+            "Qwen/Qwen3-8B",
+            "meta-llama/Llama-3.2-1B",
+        ] {
+            assert!(refuse_unmodelled_model_path(Path::new(id)).is_ok(), "{id}");
+        }
     }
 }
 

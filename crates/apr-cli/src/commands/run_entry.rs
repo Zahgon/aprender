@@ -262,7 +262,7 @@ pub(crate) fn forced_accelerator_refusal(
 /// because a 579-tensor MoE has a larger info table than a 1.5B dense model, and
 /// stops at 64 MiB: past that we are reading weights, and an unread architecture
 /// is answered `None` — no refusal — rather than by paying for the whole file.
-fn declared_architecture(source: &str) -> Option<String> {
+pub(crate) fn declared_architecture(source: &str) -> Option<String> {
     use std::io::Read;
 
     let path = Path::new(source);

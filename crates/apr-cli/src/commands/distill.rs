@@ -520,9 +520,9 @@ pub(crate) fn run(
     }
     // #4552 train-arch-honesty-v1: every backend and --plan refuse an unmodelled
     // teacher/student architecture by name, from the header only.
-    super::model_config::refuse_unmodelled_apr(teacher_path)?;
+    super::model_config::refuse_unmodelled_model_path(teacher_path)?;
     if let Some(student) = student_path {
-        super::model_config::refuse_unmodelled_apr(student)?;
+        super::model_config::refuse_unmodelled_model_path(student)?;
     }
 
     let distill_strategy: DistillStrategy = strategy.parse().map_err(CliError::ValidationFailed)?;
@@ -2392,10 +2392,9 @@ fn load_resume_state(output_path: &Path) -> Result<ResumeState> {
     Ok(state)
 }
 
-/// POST to /generate with retry (up to 3 attempts). Returns None if all retries exhausted.
-/// The "Resuming" line, printed only when earlier records exist.
-fn print_resume_note(resume: &ResumeState) {
-    if !resume.existing_prompts.is_empty() {
+/// The "Resuming" line, printed only when earlier records exist and not in JSON mode.
+fn print_resume_note(resume: &ResumeState, json_output: bool) {
+    if !json_output && !resume.existing_prompts.is_empty() {
         println!(
             "  Resuming: {} existing records, {} tokens",
             resume.existing_prompts.len(),
@@ -2489,6 +2488,7 @@ fn print_generate_progress(
     );
 }
 
+/// POST to /generate with retry (up to 3 attempts). Returns None if all retries exhausted.
 fn send_generate_request(
     url: &str,
     request_body: &str,
@@ -2603,15 +2603,15 @@ fn run_text_generate(
     let prompts_path = std::path::Path::new(&config.synthetic_data.prompts);
     let prompts = read_prompts_jsonl(prompts_path)?;
 
-    let output_path = std::path::Path::new(&config.synthetic_data.output);
-    let mut resume = load_resume_state(output_path)?;
-    let mut skipped_count = 0u64;
-
     if !json_output {
         output::pipeline_stage("Generating completions", output::StageStatus::Running);
         output::kv("  Loaded prompts", prompts.len().to_string());
-        print_resume_note(&resume);
     }
+
+    let output_path = std::path::Path::new(&config.synthetic_data.output);
+    let mut resume = load_resume_state(output_path)?;
+    let mut skipped_count = 0u64;
+    print_resume_note(&resume, json_output);
 
     let output_file = std::fs::OpenOptions::new()
         .create(true)
