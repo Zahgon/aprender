@@ -144,3 +144,20 @@ toyota_way_principles:
     `apr backup --to <dir>` and persistent-HNSW snapshot are
     natural-extension follow-ups that compose this method without
     rewriting it.
+
+falsification_tests:
+  - id: FALSIFY-SNAPSHOT-001-T
+    rule: "A snapshot of a populated registry opens with the same counts and row contents as the source at snapshot time"
+    prediction: "The test populates a registry, snapshots it, opens the target and asserts counts and (id, name, version) rows are equal"
+    test: "cargo test -p aprender-registry --test falsify_snapshot_001 snapshot_yields_bit_identical_query_results"
+    if_fails: "A snapshot loses or alters rows"
+  - id: FALSIFY-SNAPSHOT-002-T
+    rule: "Taking a snapshot does not block a concurrent writer"
+    prediction: "The test runs a writer thread during snapshot() and asserts snapshot returns within its 1 s budget with neither side erroring"
+    test: "cargo test -p aprender-registry --test falsify_snapshot_002 snapshot_does_not_block_concurrent_writers"
+    if_fails: "snapshot() holds a lock that stalls writers"
+  - id: FALSIFY-SNAPSHOT-003-T
+    rule: "A snapshot to an existing path returns an error instead of overwriting"
+    prediction: "The test snapshots to an existing file and asserts an error and that the existing file bytes are unchanged"
+    test: "cargo test -p aprender-registry --test falsify_snapshot_003 snapshot_refuses_to_overwrite_existing_file"
+    if_fails: "snapshot() silently overwrites an existing file"

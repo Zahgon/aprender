@@ -145,3 +145,20 @@ toyota_way_principles:
     contract. Multi-key, OAuth, and role-based access can extend this
     contract without breaking the v1 acceptance gate (each adds new
     gates rather than reinterpreting the existing ones).
+
+falsification_tests:
+  - id: FALSIFY-AUTH-001-T
+    rule: "Every protected route on every router returns 401 with error unauthorized when no bearer token is sent"
+    prediction: "The test calls each route without Authorization and asserts 401 and the JSON error field. CI runs it (explicit command 260)"
+    test: "cargo test -p apr-cli --test falsify_auth_001 missing_bearer_returns_401_on_every_route"
+    if_fails: "A route is reachable without a key"
+  - id: FALSIFY-AUTH-002-T
+    rule: "A bearer whose SHA-256 equals the configured hash is accepted on every protected route"
+    prediction: "The test sends a valid bearer to each route and asserts it is not rejected. CI runs it (explicit command 260)"
+    test: "cargo test -p apr-cli --test falsify_auth_002 valid_bearer_passes_on_every_route"
+    if_fails: "A valid key is refused, or plaintext is compared to the hash"
+  - id: FALSIFY-AUTH-003-T
+    rule: "Key hash comparison uses subtle::ConstantTimeEq, never == on digests"
+    prediction: "The test asserts the auth module imports subtle::ConstantTimeEq and holds no == between digest arrays. CI runs it (explicit command 260)"
+    test: "cargo test -p apr-cli --test falsify_auth_003 auth_module_imports_subtle_constanttimeeq"
+    if_fails: "Hash comparison becomes timing-dependent"

@@ -188,3 +188,25 @@ toyota_way_principles:
     pre-authored gates 002/003/004 from §2.1 are discharged. Each
     phase = one PR ≈ one falsifier, per the project's
     falsifier-first cascade convention.
+
+falsification_tests:
+  - id: FALSIFY-HNSW-PERSIST-001-T
+    rule: "A flushed and reopened PersistentHnsw answers top-k exactly as the in-memory HNSWIndex does"
+    prediction: "The test flushes, drops, reopens and asserts the reopened top-k Vec<(id, score)> equals the in-memory baseline exactly"
+    test: "cargo test -p aprender-core --test falsify_hnsw_persist_001 reopen_top_k_matches_in_memory"
+    if_fails: "Save and load lose or reorder graph state, so a reopened index answers differently"
+  - id: FALSIFY-HNSW-PERSIST-002-T
+    rule: "flush() is atomic: a write cut short leaves the previous good snapshot, never a truncated payload that loads"
+    prediction: "The test writes a truncated payload to the index path and asserts open() returns a Decode error, never an index"
+    test: "cargo test -p aprender-core --test falsify_hnsw_persist_002 partial_write_does_not_silently_corrupt"
+    if_fails: "A crash mid-flush leaves a truncated file that loads as a wrong index"
+  - id: FALSIFY-HNSW-PERSIST-003-T
+    rule: "PersistentHnsw search keeps recall@10 >= 0.90 against exact cosine on the fixture corpus"
+    prediction: "The test computes recall@10 against a brute-force exact-cosine baseline and asserts it is >= 0.90"
+    test: "cargo test -p aprender-core --test falsify_hnsw_persist_003 recall_at_10_meets_threshold"
+    if_fails: "Persistence or search parameters degrade recall below the contract floor"
+  - id: FALSIFY-HNSW-PERSIST-004-T
+    rule: "Cold open plus first query on the 200 x 32 fixture stays under the 500 ms budget"
+    prediction: "The test times open() plus the first search and asserts it is under APR_HNSW_OPEN_BUDGET_MS (default 500)"
+    test: "cargo test -p aprender-core --test falsify_hnsw_persist_004 cold_open_first_query_within_budget"
+    if_fails: "open() rebuilds the graph instead of loading it, so cold start blows the budget"

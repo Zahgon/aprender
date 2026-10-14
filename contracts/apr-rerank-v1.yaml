@@ -228,3 +228,35 @@ toyota_way_principles:
     upstream dependencies (HELIX-IDEA-005, `aprender-serve`
     cross-encoder routing) land. Each phase = one PR ≈ one or two
     falsifiers, per the project's falsifier-first cascade.
+
+falsification_tests:
+  - id: FALSIFY-RERANK-RRF-001-T
+    rule: "RRF fusion of the dense and sparse legs improves nDCG@k by at least 3 points over either leg alone"
+    prediction: "The test computes nDCG@k for each leg and for RRF and asserts RRF >= max(leg) + 0.03"
+    test: "cargo test -p aprender-rag --test falsify_rerank_rrf_001 rrf_beats_single_retriever_ndcg10"
+    if_fails: "RRF fusion ranks no better than a single retriever"
+  - id: FALSIFY-RERANK-RRF-002-T
+    rule: "RRF fuse(a, b) equals fuse(b, a) on a tie-free fixture"
+    prediction: "The test fuses the rotational pair both ways and asserts the outputs are identical"
+    test: "cargo test -p aprender-rag --test falsify_rerank_rrf_002 rrf_is_input_order_invariant"
+    if_fails: "RRF depends on argument order, so callers get different rankings for the same inputs"
+  - id: FALSIFY-RERANK-MMR-001-T
+    rule: "MMR at λ=0.5 raises top-k diversity by at least 10% over λ=1 while recall@k stays within 1 point"
+    prediction: "The test measures mean pairwise distance and recall@k for both settings and asserts both bounds"
+    test: "cargo test -p aprender-rag --test falsify_rerank_mmr_001 mmr_increases_diversity_within_recall_budget"
+    if_fails: "MMR does not diversify, or diversifies at the cost of recall"
+  - id: FALSIFY-RERANK-MMR-002-T
+    rule: "MMR at λ=1 returns the candidates sorted by relevance with scores unchanged"
+    prediction: "The test asserts the λ=1 output order and scores equal the relevance-sorted input top-k"
+    test: "cargo test -p aprender-rag --test falsify_rerank_mmr_002 mmr_lambda_one_is_identity"
+    if_fails: "The diversity term leaks in at λ=1 and reorders or rescales results"
+  - id: FALSIFY-RERANK-XENC-001-T
+    rule: "Reranking 100 candidates with a shipped reranker completes within its tunable latency budget"
+    prediction: "The test times rerank(query, candidates, 100) and asserts it is under APR_RERANK_BUDGET_MS (default 1000)"
+    test: "cargo test -p aprender-rag --test falsify_rerank_xenc_001 rerank_top_100_within_budget"
+    if_fails: "The reranker misses its latency budget on top-100"
+  - id: FALSIFY-RERANK-XENC-002-T
+    rule: "The rerank module imports no inference crate and inlines no model loading or forward pass"
+    prediction: "The test scans the rerank sources and asserts none of the listed inference crates or forward-pass patterns appear"
+    test: "cargo test -p aprender-rag --test falsify_rerank_xenc_002 rerank_module_does_not_fork_inference_stack"
+    if_fails: "rerank grows a second inference stack beside realizar"

@@ -194,3 +194,25 @@ toyota_way_principles:
     fixture/refactoring/perf prerequisites for gates 001/003/004
     land. Each phase = one PR ≈ one falsifier, per the project's
     falsifier-first cascade.
+
+falsification_tests:
+  - id: FALSIFY-HYBRID-001-T
+    rule: "Hybrid recall@k beats the better of the dense and sparse legs by at least 5 points on the disjoint-coverage fixture"
+    prediction: "The test computes recall@k for dense, sparse and hybrid and asserts hybrid >= max(dense, sparse) + 0.05"
+    test: "cargo test -p aprender-rag --test falsify_hybrid_001 hybrid_beats_max_of_legs_by_5pts"
+    if_fails: "Fusion drops one leg's hits, so hybrid is no better than a single retriever"
+  - id: FALSIFY-HYBRID-002-T
+    rule: "HybridRetriever::retrieve equals calling both stores and fusing them by hand with the same strategy, candidates and k"
+    prediction: "The test compares (chunk.id, fused_score) pairs from retrieve() with the explicit combine and asserts they match"
+    test: "cargo test -p aprender-rag --test falsify_hybrid_002 trait_method_matches_explicit_combine"
+    if_fails: "The trait method fuses differently from the documented composition"
+  - id: FALSIFY-HYBRID-003-T
+    rule: "BM25Index uses an injected Tokenizer for both indexing and search"
+    prediction: "The test injects a marker tokenizer and asserts the index reports the override and indexes the marker tokenizer terms, not the built-in ones"
+    test: "cargo test -p aprender-rag --test falsify_hybrid_003 bm25_uses_injected_tokenizer"
+    if_fails: "BM25 ignores the injected tokenizer and silently uses a built-in one"
+  - id: FALSIFY-HYBRID-004-T
+    rule: "BM25Index::add_batch over the seeded 5k-doc fixture completes within 10 s"
+    prediction: "The test times add_batch and asserts it is under the 10 s budget"
+    test: "cargo test -p aprender-rag --test falsify_hybrid_004 bm25_batch_index_within_budget"
+    if_fails: "Batch indexing is super-linear and misses its budget"
