@@ -271,6 +271,9 @@ pub struct Qwen35CudaModel<'a> {
     /// copied in, every layer updates it in place. `None` only while a forward
     /// has it out.
     hidden_buf: Option<GpuBuffer<f32>>,
+    /// Host `[hidden_dim]` the embedding row is dequantized into (#4991), reused so
+    /// a decode token allocates nothing on the host.
+    embed_row: Vec<f32>,
     dims: Qwen35CudaDims,
     /// Positions the device KV caches hold.
     max_seq_len: usize,
@@ -287,6 +290,12 @@ pub struct Qwen35CudaModel<'a> {
     /// #4233: route [`Self::forward_single`] through the captured graph.
     /// Starts from `QWEN35_CUDA_GRAPH=1`; [`Self::set_decode_graph`] overrides.
     use_decode_graph: bool,
+    /// APR-OBS-001 OBS-09: per-layer decode time, `Some` while a traced request
+    /// asked for it. Timing syncs the stream after every layer, so a timed
+    /// forward runs eager, never through the captured graph.
+    layer_timings: Option<Vec<crate::session::LayerTiming>>,
+    /// Whether [`Self::layer_timings`] is being filled right now.
+    timing_on: bool,
 }
 
 /// Why a projection cannot go on the GPU, stated so the user can act on it
@@ -667,12 +676,15 @@ impl<'a> Qwen35CudaModel<'a> {
             out_normed,
             logits_buf,
             hidden_buf,
+            embed_row: vec![0.0; dims.hidden_dim as usize],
             dims,
             max_seq_len,
             prefill_rows: prefill::PREFILL_MAX_CHUNK_ROWS,
             prefill_attention,
             decode_graph: None,
             use_decode_graph: graph::graph_enabled(),
+            layer_timings: None,
+            timing_on: false,
         };
         m.warm_prefill_weights();
         Ok(m)
@@ -1657,6 +1669,40 @@ impl<'a> Qwen35CudaModel<'a> {
         Ok(())
     }
 
+    /// APR-OBS-001 OBS-09: time every layer of the single-token forwards that
+    /// follow, or stop. Turning it on starts an empty tally; turning it off
+    /// keeps what was measured for [`Self::take_layer_timings`].
+    pub fn set_layer_timing(&mut self, on: bool) {
+        if on {
+            let tally = self
+                .layers
+                .iter()
+                .map(|l| crate::session::LayerTiming {
+                    total_us: 0,
+                    calls: 0,
+                    kind: match l {
+                        CudaLayer::DeltaNet(_) => "deltanet",
+                        CudaLayer::Attention(_) => "attention",
+                    },
+                })
+                .collect();
+            self.layer_timings = Some(tally);
+            self.timing_on = true;
+        } else {
+            self.timing_on = false;
+        }
+    }
+
+    /// The per-layer tally since timing went on, or `None` when no layer was
+    /// timed (no single-token forward ran, or timing was never on). Taking it
+    /// clears it.
+    pub fn take_layer_timings(&mut self) -> Option<Vec<crate::session::LayerTiming>> {
+        self.timing_on = false;
+        self.layer_timings
+            .take()
+            .filter(|t| t.iter().any(|l| l.calls > 0))
+    }
+
     /// #4233: turn the captured-graph decode step on or off. Turning it off
     /// drops the captured graph and its IO buffers.
     pub fn set_decode_graph(&mut self, on: bool) {
@@ -1683,7 +1729,7 @@ impl<'a> Qwen35CudaModel<'a> {
         state: &mut Qwen35CudaState,
         position: usize,
     ) -> Result<Vec<f32>> {
-        if self.use_decode_graph {
+        if self.use_decode_graph && !self.timing_on {
             return self.forward_single_graphed(token, state, position);
         }
         self.forward_to_logits(token, state, position)?;
@@ -1700,21 +1746,20 @@ impl<'a> Qwen35CudaModel<'a> {
         Ok(logits)
     }
 
-    /// `token`'s embedding row, after checking the token and the position.
+    /// `token`'s embedding row, dequantized into the reused `embed_row` (#4991),
+    /// after checking the token and the position. The caller hands the buffer
+    /// back with `self.embed_row = row` once the row is uploaded.
     fn embedding_row(
-        &self,
+        &mut self,
         token: u32,
         state: &Qwen35CudaState,
         position: usize,
-    ) -> Result<&'a [f32]> {
-        let hidden_dim = self.dims.hidden_dim as usize;
-        let embedding = self.model.base.token_embedding();
-        let start = (token as usize) * hidden_dim;
-        if start + hidden_dim > embedding.len() {
+    ) -> Result<Vec<f32>> {
+        let rows = self.model.embedding.rows();
+        if token as usize >= rows {
             return Err(RealizarError::InvalidShape {
                 reason: format!(
-                    "qwen35_cuda: token {token} is outside the {}-row embedding table",
-                    embedding.len() / hidden_dim
+                    "qwen35_cuda: token {token} is outside the {rows}-row embedding table"
                 ),
             });
         }
@@ -1727,7 +1772,10 @@ impl<'a> Qwen35CudaModel<'a> {
             });
         }
 
-        Ok(&embedding[start..start + hidden_dim])
+        let mut row = std::mem::take(&mut self.embed_row);
+        row.resize(self.model.embedding.row_len(), 0.0);
+        self.model.embedding.row_into(token as usize, &mut row)?;
+        Ok(row)
     }
 
     /// The token temperature 0 picks after `token` at `position` (#4215): the
@@ -1773,8 +1821,9 @@ impl<'a> Qwen35CudaModel<'a> {
             .ok_or_else(|| RealizarError::InvalidShape {
                 reason: "qwen35_cuda: the hidden buffer is already in use".to_string(),
             })?;
-        let run = self.run_layers_and_head(&mut dev, row, state, position);
+        let run = self.run_layers_and_head(&mut dev, &row, state, position);
         self.hidden_buf = Some(dev);
+        self.embed_row = row;
         run
     }
 
@@ -1787,14 +1836,37 @@ impl<'a> Qwen35CudaModel<'a> {
     ) -> Result<()> {
         dev.copy_from_host(embedding_row)
             .map_err(|e| gpu_err("qwen35_cuda_forward", &e))?;
+        if self.timing_on {
+            // Nothing queued before the first layer may be billed to it.
+            self.executor
+                .sync_stream()
+                .map_err(|e| gpu_err("qwen35_cuda_layer_timing", &e))?;
+        }
         for il in 0..self.layers.len() {
+            let clock = self.timing_on.then(std::time::Instant::now);
             match self.layers[il] {
                 CudaLayer::DeltaNet(_) => self.deltanet_layer(state, il, dev)?,
                 CudaLayer::Attention(_) => self.attention_layer(state, il, dev, position)?,
             }
+            if let Some(clock) = clock {
+                self.tally_layer(il, clock)?;
+            }
         }
         self.lm_head_tail(dev)
             .map_err(|e| gpu_err("qwen35_cuda_lm_head", &e))
+    }
+
+    /// Wait for layer `il` to finish and add its time to the tally.
+    fn tally_layer(&mut self, il: usize, clock: std::time::Instant) -> Result<()> {
+        self.executor
+            .sync_stream()
+            .map_err(|e| gpu_err("qwen35_cuda_layer_timing", &e))?;
+        let us = u64::try_from(clock.elapsed().as_micros()).unwrap_or(u64::MAX);
+        if let Some(slot) = self.layer_timings.as_mut().and_then(|t| t.get_mut(il)) {
+            slot.total_us = slot.total_us.saturating_add(us);
+            slot.calls = slot.calls.saturating_add(1);
+        }
+        Ok(())
     }
 
     /// The output norm and the `lm_head` GEMV into `logits_buf`, enqueued on

@@ -53,7 +53,7 @@ jobs:
   # refactor preserves the same execution semantics (same image, same volume
   # mounts, same env) but moves the pull into a step the workflow controls,
   # giving us up to ~13 minutes of retry headroom before declaring the
-  # registry unreachable. Mirrored in the `mutants` job below.
+  # registry unreachable.
   # PACK-001 (2026-09-18): the 13-minute nextest run and the 10-minute explicit
   # integration list were ONE serial job, so five gx10 + three yoga clean-room
   # runners sat idle while a merge-queue entry waited on a single box (measured
@@ -370,8 +370,8 @@ jobs:
           # warning below says so instead of the run silently paying the hour.
           case "${GITHUB_EVENT_NAME}" in
             merge_group|push)
-              git fetch --no-tags --depth=2 origin "${GITHUB_SHA}" 2>/dev/null \
-                || git fetch --no-tags --deepen=1 origin 2>/dev/null \
+              bash scripts/ci/fetch_p6.sh --no-tags --depth=2 origin "${GITHUB_SHA}" 2>/dev/null \
+                || bash scripts/ci/fetch_p6.sh --no-tags --deepen=1 origin 2>/dev/null \
                 || true
               if git rev-parse -q --verify 'HEAD^1' >/dev/null 2>&1; then
                 printf 'first parent available: %s\n' "$(git rev-parse HEAD^1)"
@@ -382,7 +382,7 @@ jobs:
           esac
           case "${GITHUB_EVENT_NAME}" in
             pull_request)
-              git fetch --no-tags --depth=1 origin "+refs/heads/${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}"
+              bash scripts/ci/fetch_p6.sh --no-tags --depth=1 origin "+refs/heads/${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}"
               # --no-renames (#3664): a rename must list BOTH paths, or a source
               # moved into docs/ reads as docs-only and runs zero tests.
               git diff --no-renames --name-only "origin/${GITHUB_BASE_REF}" HEAD > "$RUNNER_TEMP/touched.txt"
@@ -393,7 +393,7 @@ jobs:
               pr=$(printf '%s' "${GITHUB_REF_NAME}" | sed -n 's|^gh-readonly-queue/[^/]*/pr-\([0-9]*\)-.*|\1|p')
               if [ -n "$pr" ]; then
                 head=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr}" --jq .head.sha)
-                git fetch --no-tags --depth=1 origin "$head"
+                bash scripts/ci/fetch_p6.sh --no-tags --depth=1 origin "$head"
                 concl=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${head}/check-runs?check_name=workspace-test&per_page=20" --jq '[.check_runs[]|select(.status=="completed")]|sort_by(.completed_at)|last|.conclusion // "none"')
                 args+=(--pr-head "$head" --pr-head-conclusion "${concl:-none}")
               fi
@@ -421,7 +421,8 @@ jobs:
       # workflow_dispatch / merge_group / push shard had no base and the test panicked
       # "the refinement gate declined". Operator ruling (2026-09-28 09:41): compare HEAD
       # with the EVENT's base commit -- pull_request.base.sha, merge_group.base_sha,
-      # push's `before` -- and fall back to the origin/main tip only for
+      # push's `before` (a tag push: the tagged commit's first parent, #5172) -- and
+      # fall back to the origin/main tip only for
       # workflow_dispatch. That commit is pinned as refs/remotes/origin/main, so at
       # depth 1 (no merge-base) the gate's tip fallback compares against exactly it.
       # AFTER the tier step: its pull_request arm fetches main's CURRENT tip into
@@ -437,9 +438,25 @@ jobs:
           case "${GITHUB_EVENT_NAME}" in
             pull_request) base="${PR_BASE_SHA:-}" ;;
             merge_group) base="${MG_BASE_SHA:-}" ;;
-            push) base="${PUSH_BEFORE:-}" ;;
+            push)
+              base="${PUSH_BEFORE:-}"
+              # #5172: a push that CREATES a ref carries before=0000..., and a release tag
+              # push always does, so v0.71.0's tag run failed here. A tag push's base is
+              # ALWAYS the tagged commit's first parent, never `before` (on a moved tag that
+              # is the old target, not this commit's base). The tier step's merge_group|push
+              # arm deepened to depth 2, best effort; if that missed, fetch it here. A
+              # branch push with a zero `before` still fails below.
+              case "${GITHUB_REF:-}" in
+                refs/tags/*)
+                  git rev-parse -q --verify 'HEAD^1' >/dev/null 2>&1 \
+                    || bash scripts/ci/fetch_p6.sh --no-tags --depth=2 origin "${GITHUB_SHA}"
+                  base="$(git rev-parse -q --verify 'HEAD^1^{commit}' || true)"
+                  printf 'refinement base: tag push %s (before %s); using its first parent %s\n' "${GITHUB_REF#refs/tags/}" "${PUSH_BEFORE:-<none>}" "${base:-<none>}"
+                  ;;
+              esac
+              ;;
             workflow_dispatch)
-              git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
+              bash scripts/ci/fetch_p6.sh --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
               printf 'refinement base: origin/main tip %s (workflow_dispatch has no event base)\n' "$(git rev-parse origin/main)"
               exit 0
               ;;
@@ -449,7 +466,7 @@ jobs:
             printf '::error::refinement base: %s event carries no base sha (got "%s")\n' "${GITHUB_EVENT_NAME}" "$base"
             exit 1
           fi
-          git fetch --no-tags --depth=1 origin "$base"
+          bash scripts/ci/fetch_p6.sh --no-tags --depth=1 origin "$base"
           git update-ref refs/remotes/origin/main "$base"
           printf 'refinement base: %s base %s pinned as origin/main\n' "${GITHUB_EVENT_NAME}" "$(git rev-parse 'origin/main^{commit}')"
       - name: Workspace lib tests (25,300+)
@@ -554,6 +571,9 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/sigma"
           cp "/mnt/nvme-raid0/targets/aprender-ci/${PR_OR_REF}/run-${GITHUB_RUN_ID}/nextest/ci/junit.xml" "$RUNNER_TEMP/sigma/gpu.junit.xml"
+      # #5048: the pass rule needs at least one passing test. A run of 0 tests prints "test result: ok. 0 passed",
+      # which the old rule accepted. cargo's status stays unread on purpose: the step name says why (SIGSEGV at harness exit).
+      # Case table: scripts/tests/compute_row_zero_tests_test.sh.
       - name: Compute tests (tolerate SIGSEGV at exit — all tests pass but harness crashes on cleanup)
         if: steps.tier.outputs.tier == 'full' && matrix.shard == 1
         run: |
@@ -571,7 +591,7 @@ jobs:
             -e CARGO_INCREMENTAL=0 \
             -e CARGO_BUILD_JOBS=8 \
             "$IMAGE" \
-            bash -c 'cargo test -p aprender-compute --lib 2>&1 | tee /tmp/compute-test.log; grep -q "test result: ok\." /tmp/compute-test.log && ! grep -q "test result: FAILED" /tmp/compute-test.log'
+            bash -c 'cargo test -p aprender-compute --lib 2>&1 | tee /tmp/compute-test.log; grep -Eq "test result: ok\. [1-9][0-9]* passed" /tmp/compute-test.log && ! grep -q "test result: FAILED" /tmp/compute-test.log'
       - name: Integration tests
         if: steps.tier.outputs.tier == 'full'
         # #2465: the four FALSIFY-AUTH targets were appended here because they
@@ -749,6 +769,17 @@ jobs:
       # BSE-17 quick tier, part 1: the selected crates' unit and integration
       # targets (default features) under the same image and mounts as the full
       # tier. Empty selection (a scripts/docs PR) skips this step; part 2 still runs.
+      #
+      # #5210 — "default features" was not true. Cargo unifies features across
+      # every -p of one call, and this step ran the whole selection as one call:
+      # on #5188 aprender-test-cli (default = ["browser"]) switched on
+      # aprender-test-lib's `browser`, which compiled its two chromium falsifiers,
+      # and 11 tests failed "Browser not found" on a host with no Chromium (run
+      # 38241534849). scripts/ci/quick_tier_groups.sh now splits the selection into
+      # as few calls as keep every crate away from one that raises its features
+      # (its own --self-test is the case table). Nothing is filtered: every
+      # selected crate still runs, each call writes its own junit, and the
+      # Σ-executed step below re-derives the same split from CRATES.
       - name: "Quick tier: lib + integration tests of the selected crates (BSE-17)"
         if: steps.tier.outputs.tier == 'quick' && matrix.shard == 1 && steps.tier.outputs.crates != ''
         # 20, not 60 (PMAT-1098, #3084). A quick tier that is ALLOWED an hour is
@@ -768,8 +799,23 @@ jobs:
         run: |
           set -euo pipefail
           read -ra crates <<< "$CRATES"
-          pkgs=""; for c in "${crates[@]}"; do pkgs="$pkgs -p $c"; done
           printf 'quick tier crates: %s\n' "$CRATES"
+          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" \
+            -v "/mnt/nvme-raid0/cargo-ci/registry/${PR_OR_REF}:/usr/local/cargo/registry" \
+            -w /workspace "$IMAGE" cargo metadata --no-deps --format-version 1 > "$RUNNER_TEMP/quick-meta.json"
+          bash scripts/ci/quick_tier_groups.sh --metadata "$RUNNER_TEMP/quick-meta.json" "${crates[@]}" > "$RUNNER_TEMP/quick-calls.txt"
+          mapfile -t calls < "$RUNNER_TEMP/quick-calls.txt"
+          printf 'nextest calls: %s\n' "${#calls[@]}"
+          # CRATES is set here (the step's if:), so zero calls would run zero tests green
+          [ "${#calls[@]}" -gt 0 ] || { echo "::error::quick tier: crates selected but the split printed no nextest call"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/quick-sel"
+          tgt="/mnt/nvme-raid0/targets/aprender-ci/${PR_OR_REF}/run-${GITHUB_RUN_ID}"
+          rc=0
+          for i in "${!calls[@]}"; do
+          read -ra group <<< "${calls[$i]}"
+          pkgs=""; for c in "${group[@]}"; do pkgs="$pkgs -p $c"; done
+          printf 'call %s:%s\n' "$i" "$pkgs"
+          touch "$RUNNER_TEMP/quick-sel/stamp"
           docker run --rm \
           -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/workspace \
           -e CI -e GITHUB_ACTIONS -e GITHUB_REF -e GITHUB_SHA -e GITHUB_REPOSITORY -e GITHUB_RUN_ID -e GITHUB_EVENT_NAME -e GITHUB_WORKFLOW \
@@ -788,7 +834,14 @@ jobs:
             -e CARGO_PROFILE_DEV_DEBUG=line-tables-only \
             -e CARGO_TERM_COLOR=never \
             "$IMAGE" \
-            bash -c "cargo nextest run --profile ci --lib --tests$pkgs"
+            bash -c "cargo nextest run --profile ci --lib --tests$pkgs" || rc=1
+          # each call overwrites nextest/ci/junit.xml; keep this one under its index, and
+          # only if this call wrote it (a stale file from the call before is not this one)
+          if [ "${tgt}/nextest/ci/junit.xml" -nt "$RUNNER_TEMP/quick-sel/stamp" ]; then
+            cp "${tgt}/nextest/ci/junit.xml" "$RUNNER_TEMP/quick-sel/$i.junit.xml"
+          else printf '::error::call %s left no junit of its own\n' "$i"; rc=1; fi
+          done
+          exit "$rc"
       # BSE-17 quick tier, part 2: every test target that reads the tree, from
       # scripts/tree_reader_tests.txt (derived; the guard has already proved the
       # registry equals the sources in this run).
@@ -824,8 +877,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/sigma"
-          cp "/mnt/nvme-raid0/targets/aprender-ci/${PR_OR_REF}/run-${GITHUB_RUN_ID}/nextest/ci/junit.xml" "$RUNNER_TEMP/sigma/quick-sel.junit.xml"
+          mkdir -p "$RUNNER_TEMP/sigma/quick-sel"
+          cp "$RUNNER_TEMP"/quick-sel/*.junit.xml "$RUNNER_TEMP/sigma/quick-sel/"
       - name: "Quick tier: every test target that reads the tree (BSE-17)"
         if: steps.tier.outputs.tier == 'quick' && matrix.shard == 1
         # 45, not 20. Measured 2026-09-11 under train load, this PR's own runs never fit 20: run 34542045481 on
@@ -913,7 +966,16 @@ jobs:
           mkdir -p "$sig"
           python3 scripts/ci/sigma_executed.py --self-test
           read -ra crates <<< "$CRATES"
-          sel=""; for c in "${crates[@]}"; do sel="$sel -p $c"; done
+          # #5210: the same split as the run step, derived again here from CRATES
+          # (one list per call, so each call's junit is held to its own universe).
+          mkdir -p "$sig/quick-sel"
+          : > "$sig/quick-sel.calls"
+          if [ -n "$CRATES" ]; then
+            docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" \
+              -v "/mnt/nvme-raid0/cargo-ci/registry/${PR_OR_REF}:/usr/local/cargo/registry" \
+              -w /workspace "$IMAGE" cargo metadata --no-deps --format-version 1 > "$sig/quick-meta.json"
+            bash scripts/ci/quick_tier_groups.sh --metadata "$sig/quick-meta.json" "${crates[@]}" > "$sig/quick-sel.calls"
+          fi
           read -ra targets <<< "$TARGETS"
           tree="$(printf '%s\n' "${targets[@]}" | cut -d: -f1 | sort -u \
                   | grep -vxE 'aprender-(gpu|cuda-edge|compute)' | sed 's/^/-p /' | tr '\n' ' ')"
@@ -932,14 +994,20 @@ jobs:
             -e CARGO_BUILD_JOBS=8 \
             -e CARGO_PROFILE_TEST_DEBUG=line-tables-only \
             -e CARGO_PROFILE_DEV_DEBUG=line-tables-only \
-            -e SEL="$sel" -e TREE="$tree" -e EXPR="$EXPR" \
+            -e TREE="$tree" -e EXPR="$EXPR" \
             "$IMAGE" \
             bash -c 'set -euo pipefail
-              if [ -n "$SEL" ]; then cargo nextest list --profile ci --lib --tests $SEL --message-format json > /sigma/quick-sel.list.json; fi
+              i=0; while read -r g; do p=""; for c in $g; do p="$p -p $c"; done
+                cargo nextest list --profile ci --lib --tests $p --message-format json > "/sigma/quick-sel/$i.list.json"; i=$((i + 1))
+              done < /sigma/quick-sel.calls
               cargo nextest list --profile ci $TREE --lib --tests -E "$EXPR" --message-format json > /sigma/quick-tree.list.json'
           rc=0
           if [ -n "$CRATES" ]; then
-            python3 scripts/ci/sigma_executed.py nextest --kind "quick selected crates" --junit "$sig/quick-sel.junit.xml" --list-json "$sig/quick-sel.list.json" || rc=1
+            n="$(wc -l < "$sig/quick-sel.calls")"
+            [ "$n" -gt 0 ] || { echo "::error::quick tier: crates selected but the split printed no nextest call"; rc=1; }
+            for ((i = 0; i < n; i++)); do
+              python3 scripts/ci/sigma_executed.py nextest --kind "quick selected crates, call $i" --junit "$sig/quick-sel/$i.junit.xml" --list-json "$sig/quick-sel/$i.list.json" || rc=1
+            done
           fi
           python3 scripts/ci/sigma_executed.py nextest --kind "quick tree readers" --junit "$sig/quick-tree.junit.xml" --list-json "$sig/quick-tree.list.json" || rc=1
           exit "$rc"
@@ -1147,18 +1215,34 @@ jobs:
       # never as "no growth", so the mistake would have been loud rather than
       # silent. It is still a mistake. One fetch, before all of them.
       #
-      # fetch-depth is 1 here, so the merge-base is usually unavailable and the
-      # ratchets fall back to the origin/main TIP. That is the STRICTER
-      # comparand, and it means the CI path is the tip path: a local run that
-      # passes on the merge-base can still red here, and CI is authoritative.
+      # #4861 + #4983: origin/main is pinned to the commit this tree was BUILT
+      # on, not fetched at its tip. fetch-depth is 1 here, so the merge-base is
+      # usually unavailable and the ratchets read origin/main as it stands.
+      # Fetched at the tip, a run that started after main shrank a baseline or
+      # fixed a function judged a merge commit built before that change against
+      # it: #4813 went red (pipe_grep_q_baseline.txt 62 vs 60, a file it never
+      # touched), and #4970's re-run went red on m17 complexity (checkout at
+      # 60a59031, compared against acd599e52), while a re-run rebuilds the SAME
+      # merge commit. Pinned per event (scripts/ci/pin_build_base.sh):
+      #   pull_request  the merge commit's first parent, checked against the PR head
+      #   merge_group   merge_group.base_sha, as the refinement-gate pin does
+      #   otherwise     the tip, deepened by one on push (resolve_base.sh judges a
+      #                 push against HEAD's first parent: HEAD vs HEAD would pass
+      #                 vacuously, the G-10 quorum's finding)
+      # The shared ratchet library takes the same first parent on its own
+      # (scripts/lib_baseline_ratchet.sh FIRSTPARENT), so a lib ratchet and a
+      # script that reads origin/main directly cannot disagree. A PR that adds
+      # back an entry main has since deleted is still refused by its
+      # merge_group run, which builds on main as it merges. The pin refuses,
+      # and every guard below is skipped red, when the event names no build base.
       - id: guard-setup
-        name: Fetch origin/main as the comparand for every ratchet in this job
+        name: Pin origin/main to this run's build base, the comparand for every ratchet in this job (#4861)
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MG_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
-          git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
-          # push shape: HEAD IS the origin/main tip, so every differential ratchet judges it against
-          # its FIRST PARENT (scripts/lib/resolve_base.sh: HEAD vs HEAD would pass vacuously, the
-          # G-10 quorum's finding), and a depth-1 checkout has not fetched that parent. Deepen by one.
-          if [ "${GITHUB_EVENT_NAME:-}" = push ]; then git fetch --no-tags --deepen=1 origin +refs/heads/main:refs/remotes/origin/main; fi
+          bash scripts/ci/pin_build_base.sh --self-test
+          bash scripts/ci/pin_build_base.sh
       # #4415 (operator A4, 2026-09-25): ONE step runs every guard step of guard-tree-steps
       # below, keeps going past a red one, and reports every failure. GitHub would
       # stop this job at its first red step, and the others would never be seen.
@@ -1258,28 +1342,6 @@ jobs:
             --jq '.[].filename' > "$RUNNER_TEMP/ont-files.txt"
           setsid --wait bash scripts/check_pr_ont_delta.sh \
             --body "$RUNNER_TEMP/ont-body.txt" --changed "$RUNNER_TEMP/ont-files.txt"
-      # aprender#2822: THE REPORT. Runs even when the job dies mid-cargo,
-      # and takes its own final probe first -- without that, a failure at
-      # step K leaves the last recorded boundary BEFORE K and the table
-      # reads clean, which is the whole failure mode being investigated.
-      #
-      # It also pulls the host journal for the job's window into the job
-      # log. That is the decisive evidence and the only evidence that
-      # expires: `_work/*/target` is deleted by HOST automation (a sibling
-      # runner's job-started hook, a systemd timer) which logs under its own
-      # tag and appears in NO GitHub log. See
-      # scripts/runner-infra/runner-disk-guard.sh, whose own header records
-      # this exact signature.
-      #
-      # continue-on-error is deliberate and is NOT a disarmed gate: nothing
-      # here asserts anything. The gate that can fail is the case table
-      # wired above.
-      - name: "target-watch: report (aprender#2822)"
-        if: always()
-        continue-on-error: true
-        run: |
-          bash scripts/ci_target_watch.sh probe post-job
-          bash scripts/ci_target_watch.sh report
 
   guard-tree-steps:
     # MANIFEST, never run by GitHub (`if: false`). These are guard-tree's guard steps,
@@ -1291,21 +1353,6 @@ jobs:
     if: false
     runs-on: [self-hosted, Linux, clean-room]   # arch-neutral: intel, yoga or gx10 (#3100)
     steps:
-      # aprender#2822. Case table FIRST, per the convention above: the probe
-      # below is only worth its 0.15s if the classifier it feeds can still turn
-      # RED. Seven rows over a throwaway tree - no cargo, no network, no host.
-      # Mutation-verified: deleting the sentinel rule, deleting the inode rule,
-      # or restoring the read-after-plant ordering bug each takes it RED.
-      #
-      # This step IS a gate and may fail the job. The probe and report steps are
-      # not and never can - a recorder that can red a required check is a
-      # liability, and #2822 is already red.
-      - name: "target-watch case table (aprender#2822)"
-        run: bash scripts/ci_target_watch.sh --self-test
-      - name: "target-watch: post-checkout"
-        # aprender#2822 boundary probe (2 stat, 1 readdir, 1 df, 1 pgrep).
-        # Instrumentation, never a gate: the script always exits 0.
-        run: bash scripts/ci_target_watch.sh probe "post-checkout"
       # ── ONE STEP, EVERY CARGO-FREE GUARD, EVERY FAILURE REPORTED ──────────
       #
       # This step replaces 53 separate `bash scripts/check_X.sh` steps. GitHub
@@ -1337,16 +1384,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/guard_tree.sh --no-cargo
-      # The gate's mutants skip rule, executed from ci.yml's own marker block. It
-      # was run by no step: guard_tree.sh files it as a cargo guard (its text
-      # names guard-cargo) and no workflow dispatches --cargo-only, so the mutants
-      # rule (#3676) passed check_guards_are_wired.sh on a comment mention alone.
-      # It reads only ci.yml and invokes no build tool, so it runs here -- the job
-      # that runs on every PR, including the one that edits the gate.
-      - name: gate accepts a skipped mutants job only when that is its filter (#3676)
-        run: setsid --wait bash scripts/check_ci_gate_mutants_rule.sh
-      - name: gate mutants rule can still go RED (#3676)
-        run: setsid --wait bash scripts/check_ci_gate_mutants_rule.sh --self-test
       # The coverage receipt's guard, for the same reason: guard_tree.sh files it
       # as a cargo guard (a comment names `cargo llvm-cov`), but it runs the
       # receipt producer on fixture logs and reads coverage-nightly.yml and the
@@ -1395,30 +1432,11 @@ jobs:
           python3 scripts/lib/roadmap_merge.py --selftest
           python3 scripts/nightly_manifest.py --self-test   # #4189 nightly gate/manifest/publish plan
           bash scripts/nightly_prune_release.sh --self-test   # nightly publish overflowed page one (422)
-      - name: "target-watch: before-cargo-install-bashrs"
-        # aprender#2822 boundary probe (2 stat, 1 readdir, 1 df, 1 pgrep).
-        # Instrumentation, never a gate: the script always exits 0.
-        run: bash scripts/ci_target_watch.sh probe "before-cargo-install-bashrs"
+          bash scripts/nightly_gate_retry.sh --self-test   # #5053 ci-pending retries, then RED never green
       # The baseline printer holds its OWN output to the same pairing rule and
       # re-derives every number the contract quotes.
       - name: Dogfood baselines must re-derive from the ledger
         run: python3 scripts/dogfood_baseline.py --check
-      - name: "target-watch: before-pv-build"
-        # aprender#2822 boundary probe (2 stat, 1 readdir, 1 df, 1 pgrep).
-        # Instrumentation, never a gate: the script always exits 0.
-        run: bash scripts/ci_target_watch.sh probe "before-pv-build"
-      - name: "target-watch: before-contracts-tests"
-        # aprender#2822 boundary probe (2 stat, 1 readdir, 1 df, 1 pgrep).
-        # Instrumentation, never a gate: the script always exits 0.
-        run: bash scripts/ci_target_watch.sh probe "before-contracts-tests"
-      - name: "target-watch: before-wasm32-build"
-        # aprender#2822 boundary probe (2 stat, 1 readdir, 1 df, 1 pgrep).
-        # Instrumentation, never a gate: the script always exits 0.
-        run: bash scripts/ci_target_watch.sh probe "before-wasm32-build"
-      - name: "target-watch: before-facade-compat"
-        # aprender#2822 boundary probe (2 stat, 1 readdir, 1 df, 1 pgrep).
-        # Instrumentation, never a gate: the script always exits 0.
-        run: bash scripts/ci_target_watch.sh probe "before-facade-compat"
       # The bump half of the same defect. `cargo set-version --workspace` cannot
       # reach an `exclude`d workspace and does not warn, so three files in
       # crates/facades/ have to ride in every bump commit. scripts/bump-version.sh
@@ -1429,6 +1447,20 @@ jobs:
         run: bash scripts/bump-version.sh --self-test
       - name: Every workspace is at a consistent version
         run: bash scripts/bump-version.sh --check
+      # Every cargo-mutants container is memory-capped (C137). The guard reads
+      # only workflow and section text and invokes no build tool, so it runs
+      # here, on every PR, and not as an unisolated step inside the mutants job,
+      # which `make guards-local` cannot reach.
+      - name: Every mutation container is memory-capped (C137)
+        run: setsid --wait bash scripts/check_mutants_memory_cap.sh
+      - name: memory-cap guard can still go RED (C137)
+        run: setsid --wait bash scripts/check_mutants_memory_cap.sh --self-test
+      # The nightly full mutation job runs on the yoga clean-room pool, never the
+      # intel clean-room pool (C108). Same reason, same place: text only.
+      - name: The nightly mutation job runs on the mutants pool (C108)
+        run: setsid --wait bash scripts/check_mutants_pool.sh
+      - name: mutants-pool guard can still go RED (C108)
+        run: setsid --wait bash scripts/check_mutants_pool.sh --self-test
       - name: Every DAG row marked complete has a receipt whose marker says so (C0-7)
         run: setsid --wait bash scripts/check_receipt_complete.sh --dag docs/specifications/pp-066-dag.yaml
       # APR-PERF-GATE-001's PRIMARY gate — Arms A/B1/B2/C/D/E and
@@ -1547,27 +1579,7 @@ jobs:
       # the UNMEASURED bucket BY NAME rather than a schema error.
       - name: Receipt converter round-trips into a gate verdict
         run: python3 scripts/lib/perf_receipt.py --selftest
-      - name: "target-watch: before-profile-tests"
-        # aprender#2822 boundary probe (2 stat, 1 readdir, 1 df, 1 pgrep).
-        # Instrumentation, never a gate: the script always exits 0.
-        run: bash scripts/ci_target_watch.sh probe "before-profile-tests"
-      - name: "target-watch: before-model-tests-docker"
-        # aprender#2822 boundary probe (2 stat, 1 readdir, 1 df, 1 pgrep).
-        # Instrumentation, never a gate: the script always exits 0.
-        run: bash scripts/ci_target_watch.sh probe "before-model-tests-docker"
-      - name: "target-watch: before-book-examples"
-        # aprender#2822 boundary probe (2 stat, 1 readdir, 1 df, 1 pgrep).
-        # Instrumentation, never a gate: the script always exits 0.
-        run: bash scripts/ci_target_watch.sh probe "before-book-examples"
-      - name: "target-watch: before-cargo-package"
-        # aprender#2822 boundary probe (2 stat, 1 readdir, 1 df, 1 pgrep).
-        # Instrumentation, never a gate: the script always exits 0.
-        run: bash scripts/ci_target_watch.sh probe "before-cargo-package"
 
-      - name: "target-watch: before-cargo-deny-install"
-        # aprender#2822 boundary probe (2 stat, 1 readdir, 1 df, 1 pgrep).
-        # Instrumentation, never a gate: the script always exits 0.
-        run: bash scripts/ci_target_watch.sh probe "before-cargo-deny-install"
       - name: Tests must not gate on paths outside the workspace
         run: setsid --wait bash scripts/check_test_fixture_paths.sh
       - name: Fixture-path guard case table
@@ -1579,10 +1591,6 @@ jobs:
         run: setsid --wait bash scripts/check_ci_reusable_workflow_pinned.sh --self-test
       - name: ci.yml must pin sovereign-ci.yml by commit sha, not @main
         run: setsid --wait bash scripts/check_ci_reusable_workflow_pinned.sh
-      - name: "target-watch: after-last-cargo-step"
-        # aprender#2822 boundary probe (2 stat, 1 readdir, 1 df, 1 pgrep).
-        # Instrumentation, never a gate: the script always exits 0.
-        run: bash scripts/ci_target_watch.sh probe "after-last-cargo-step"
       # #2532: the guard above has a universe of crates/**/tests?/**/*.rs, which
       # structurally excludes 100% of the 324 machine-specific paths pmat found
       # in SHIPPED code -- 46 of them inside contracts/ itself. Seventeen crux
@@ -1624,8 +1632,7 @@ jobs:
       # run: the PR sits PENDING and nothing merges. This file carries BOTH
       # required checks (`ci / gate` and `workspace-test`), so that is a deadlock,
       # not a hypothetical. A job-level `if:` is the opposite shape — the workflow
-      # runs, the job reports `skipped`, and `gate` reads the result (`mutants` is
-      # the in-repo precedent).
+      # runs, the job reports `skipped`, and `gate` reads the result.
       #
       # Until this step, that rule lived in a COMMENT further down this file, on
       # `vendored-schemas`, and a comment is not a trigger — the exact shape that
@@ -1763,17 +1770,16 @@ jobs:
       # never as "no growth", so the mistake would have been loud rather than
       # silent. It is still a mistake. One fetch, before all of them.
       #
-      # fetch-depth is 1 here, so the merge-base is usually unavailable and the
-      # ratchets fall back to the origin/main TIP. That is the STRICTER
-      # comparand, and it means the CI path is the tip path: a local run that
-      # passes on the merge-base can still red here, and CI is authoritative.
-      - name: Fetch origin/main as the comparand for every ratchet in this job
-        run: |
-          git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
-          # push shape: HEAD IS the origin/main tip, so every differential ratchet judges it against
-          # its FIRST PARENT (scripts/lib/resolve_base.sh: HEAD vs HEAD would pass vacuously, the
-          # G-10 quorum's finding), and a depth-1 checkout has not fetched that parent. Deepen by one.
-          if [ "${GITHUB_EVENT_NAME:-}" = push ]; then git fetch --no-tags --deepen=1 origin +refs/heads/main:refs/remotes/origin/main; fi
+      # #4861 + #4983: origin/main is pinned to the commit this tree was BUILT
+      # on, not fetched at its tip -- the same pin, for the same reason, as
+      # guard-tree's guard-setup (which also runs the pin's self-test; this job
+      # only pins). m17's complexity ratchet is the #4983 case: a re-run of an
+      # unchanged PR judged against main's moved tip went red.
+      - name: Pin origin/main to this run's build base, the comparand for every ratchet in this job (#4861)
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MG_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+        run: bash scripts/ci/pin_build_base.sh
       # DOCKER CREATES A MISSING BIND SOURCE AS root:root, AND `--user` ALONE
       # THEN EACCESs ON IT. The per-RUN target path is fresh every run, so a
       # container that mounts it and drops to the runner's uid cannot write
@@ -2009,19 +2015,18 @@ jobs:
         run: |
           setsid --wait bash scripts/check_bashrs_gate.sh --self-test
           setsid --wait bash scripts/check_bashrs_gate.sh
-      # PMAT-746. The ONLY complexity gate in this repository was the LOCAL pmat
-      # pre-commit hook (cyclomatic <= 30, cognitive <= 25, staged files only);
-      # this workflow ran none. So the merge queue LANDS the debt and the
-      # individual developer pays it, on unrelated work, at the moment they try
-      # to commit: serve/handlers.rs sits at cognitive 69, tokenize.rs at 34/89.
-      # 715 offenders are recorded, shrink-only against origin/main, and the
-      # numbers may only fall. Case table FIRST, per the convention above: the
-      # 9s scan is only worth its cost if the comparator it feeds can still turn
-      # RED. Reads no clock and compiles nothing.
-      - name: Per-function complexity may only fall (shrink-only)
+      # #5182 (GATE/LAB). The per-function complexity ratchet (PMAT-746) and the
+      # shrink-only comparison of check_baseline_ratchets.sh left the PR path:
+      # a ratchet may not sit on a PR, merge-queue or release job. Both run
+      # nightly in guards-nightly.yml against main as it was 24 h earlier, and a
+      # red there opens or updates one ticket with one owner. What stays here is
+      # a fixed bound: every scripts/*.txt is classified (an unclassified
+      # baseline fails), plus the guard's own case table. Reads no clock, compares
+      # nothing, 0.1 s.
+      - name: Every baseline in scripts/ is classified (fixed bound; the ratchet runs nightly)
         run: |
-          setsid --wait bash scripts/check_complexity_ratchet.sh --selftest
-          setsid --wait bash scripts/check_complexity_ratchet.sh
+          setsid --wait bash scripts/check_baseline_ratchets.sh --self-test
+          setsid --wait bash scripts/check_baseline_ratchets.sh --classify-only
       # BSE-03 phase C (PMAT-1068): a ratchet verdict is a function of the
       # (comparand SHA, merge SHA) pair and of nothing else -- not of a file a
       # PR can rewrite, not of which pmat happened to be on PATH. The case
@@ -2150,9 +2155,11 @@ jobs:
       # runs first so a bad resolver is named as such rather than surfacing as a
       # mysterious verdict from the gate underneath it.
       #
-      # Cost: it sources pv_bin.sh, which cargo-builds pv -- already paid for by
-      # check_contract_test_binding.sh on the next line, which `cargo run`s the
-      # same binary. Nothing extra is compiled by placing it here.
+      # Cost: it sources pv_bin.sh, which cargo-builds pv -- the build the contracts
+      # gate and check_contract_test_binding.sh below resolve through the same
+      # pv_bin.sh, so the job compiles pv once. (#4974: the binding check used to
+      # `cargo run` pv WITHOUT pv_bin.sh's features, a second compile on every run
+      # that this comment said did not happen.)
       - name: pv_bin.sh must resolve the HEAD-built pv and refuse a stale one
         run: setsid --wait bash scripts/check_pv_bin_resolution.sh
       # #4475: the contract gate, blocking. `make contracts` stopped after its first step (an
@@ -2737,9 +2744,10 @@ jobs:
   #     derived universe (`git ls-files 'scripts/check_*.sh'`, BSE-001 PR-A) runs
   #     them in `guard-tree`, which `gate` needs. Adding a guard never edits this
   #     file, and removing this job does not un-wire them.
-  #   * the PR's own receipt is judged from the BASE by pr-review-quorum.yml
-  #     (`pull_request_target` + `merge_group`), which invokes
-  #     check_pr_review_arm4.sh itself and consumed nothing from this job.
+  #   * the receipts of merged PRs are judged once a night from the BASE by
+  #     pr-review-quorum.yml (`schedule`; #4602 took it off the PR and the
+  #     queue), which invokes check_pr_review_arm4.sh through
+  #     review_receipts_nightly.sh and consumed nothing from this job.
   #
   # WHAT NO LONGER RUNS IN CI, stated rather than discovered later: the two
   # mutation sweeps `scripts/mutate-guard.sh` (Arm 3) and
@@ -3042,12 +3050,23 @@ jobs:
   # judged a PR's own receipt was editable by that PR. `pull_request_target`
   # runs the base's definition. `gate` below no longer waits on it; the
   # ruleset decides whether `pr-review-quorum / present` is required (recorded
-  # in the C0-5 PR body, never applied by the session that wrote this).
+  # in the C0-5 PR body, never applied by the session that wrote this). It is
+  # not required, so since #4602 it runs on no PR at all: once a night, on
+  # `schedule`, over the PRs that merged.
 
   # ==========================================================================
-  # ADVISORY GPU JOBS AT PR TIME
+  # GPU LAB SECTIONS (were: ADVISORY GPU JOBS AT PR TIME)
   # spec docs/specifications/06x-release-schedule.md §2 row 67-C1 (`gpu-quick`,
   # gx10) and §2 row 67-D1 (`cuda-unit`, yoga).
+  #
+  # Q6 quorum, C324 (DELETE-TO-LAB 3/3): a check that cannot block a merge or a
+  # release is LAB, and LAB never runs in a PR, merge-queue or release job. These
+  # three sections no longer run in ci.yml at all. Their one home is
+  # .github/workflows/gpu-lab-nightly.yml (schedule + workflow_dispatch, gx10 in
+  # perf-gx10, yoga in perf-yoga). On those events gpu-touched does not select:
+  # there is no PR diff, so it answers the whole GPU set (gpu_touched=1,
+  # cuda_lint=1). The paragraphs below are the PR-time history, kept for why
+  # the shapes are what they are.
   #
   # WHY THEY ARE NOT IN `gate.needs`.
   #   They are ADVISORY in 0.67, deliberately. Each becomes a REQUIRED check
@@ -3089,7 +3108,8 @@ jobs:
     # whole point of splitting it out.
     runs-on: [self-hosted, X64, Linux, clean-room]
     timeout-minutes: 10
-    if: github.event_name == 'pull_request'
+    # Q6 quorum, C324: LAB, nightly only (gpu-lab-nightly.yml).
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     outputs:
       gpu_touched: ${{ steps.decide.outputs.gpu_touched }}
       gpu_crates: ${{ steps.decide.outputs.gpu_crates }}
@@ -3104,33 +3124,22 @@ jobs:
       # governs — a stale selector is caught on the same PR that broke it.
       - name: The GPU selector can still go RED (case table, no GPU, no cargo)
         run: bash scripts/ci_gpu_touched.sh --self-test
-      - name: Does this PR touch the GPU set? (rows 67-C1 / 67-D1)
+      # Q6 quorum, C324: the PR-diff selection (`ci_gpu_touched.sh --diff-from`
+      # against GITHUB_BASE_REF) left with the PR rows. A nightly has no PR
+      # diff and owes the whole GPU set, so the answer is the full set, stated.
+      - name: The nightly owes the whole GPU set (rows 67-C1 / 67-D1)
         id: decide
         run: |
           set -euo pipefail
-          # Shallow checkout: no merge-base. Tip-vs-tip is a SUPERSET of the
-          # PR's diff, which is the safe direction for a selector — it can only
-          # run the GPU jobs when they were not needed, never skip them when
-          # they were.
-          git fetch --no-tags --depth=1 origin \
-            "+refs/heads/${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}"
-          git diff --name-only "origin/${GITHUB_BASE_REF}" HEAD > "$RUNNER_TEMP/touched.txt"
-          printf 'touched (tip vs tip): %s path(s)\n' \
-            "$(wc -l < "$RUNNER_TEMP/touched.txt" | tr -d ' ')"
-          # No `|| true` and no pipe-swallowed status: the script exits 2 when
-          # the diff is undecidable, and an undecidable selection must fail the
-          # decision job rather than answer a green 0 that skips both GPU jobs
-          # forever.
-          bash scripts/ci_gpu_touched.sh --diff-from "$RUNNER_TEMP/touched.txt" \
-            > "$RUNNER_TEMP/gpu.txt"
-          cat "$RUNNER_TEMP/gpu.txt"
-          grep -E '^(gpu_touched|gpu_crates|cuda_lint|reason)=' "$RUNNER_TEMP/gpu.txt" >> "$GITHUB_OUTPUT"
+          printf 'gpu_touched=1\ncuda_lint=1\nreason=%s: no PR diff to select from; the whole GPU set is owed\n' \
+            "$GITHUB_EVENT_NAME" | tee -a "$GITHUB_OUTPUT"
 
   # ROW 67-C1 — `gpu-quick` on gx10 (GB10, sm_121, aarch64).
   # Promotion to required: row 68-C3, after 5 consecutive green gx10 nightlies.
   gpu-quick:
     needs: [gpu-touched]
-    if: github.event_name == 'pull_request' && needs.gpu-touched.outputs.gpu_touched == '1'
+    # Q6 quorum, C324: LAB, nightly only (gpu-lab-nightly.yml, perf-gx10).
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.gpu-touched.outputs.gpu_touched == '1'
     # LITERAL, not an expression: a guard can only check labels it can see, and
     # `runs-on: ${{ fromJSON(...) }}` hides them from check_runner_labels.sh.
     # `ephemeral, docker` is the DISPOSABLE gx10 runner (operator rule): its
@@ -3185,7 +3194,7 @@ jobs:
           procs=${procs:-0}
           echo "gx10: GPU memory.used=${used} MiB, existing compute procs=${procs}"
           if [ "${used:-0}" -gt 2000 ] || [ "${procs:-0}" -gt 0 ]; then
-            echo "::notice::gpu-quick: GPU busy (${used:-?} MiB, ${procs:-?} procs) — yielding to training, skipping the GPU leg on this PR"
+            echo "::notice::gpu-quick: GPU busy (${used:-?} MiB, ${procs:-?} procs) — yielding to training, skipping the GPU leg this run"
             echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
           echo "proceed=true" >> "$GITHUB_OUTPUT"
@@ -3223,7 +3232,8 @@ jobs:
     # gpu_touched=1 runs every step. cuda_lint=1 alone (an apr-cli-only diff,
     # #4336) runs ONLY the clippy step: the test steps carry their own
     # gpu_touched `if:`, so yoga is held for a check build, not the test builds.
-    if: github.event_name == 'pull_request' && (needs.gpu-touched.outputs.gpu_touched == '1' || needs.gpu-touched.outputs.cuda_lint == '1')
+    # Q6 quorum, C324: LAB, nightly only (gpu-lab-nightly.yml, perf-yoga).
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (needs.gpu-touched.outputs.gpu_touched == '1' || needs.gpu-touched.outputs.cuda_lint == '1')
     runs-on: [self-hosted, Linux, X64, cuda, yoga, ephemeral, docker]
     # 15 -> 35 (#3810): the derived cuda-only set needs a second, default-feature
     # test build of aprender-serve to list against. MEASURED on this PR's own run
@@ -3371,111 +3381,6 @@ jobs:
           set -euo pipefail
           setsid --wait bash scripts/check_clippy_cuda.sh --self-test
           nice -n 19 setsid --wait bash scripts/check_clippy_cuda.sh
-
-  # #4621 (operator E1): the CUDA mutants shard. cargo-mutants on clean-room builds default features, so a
-  # mutant in `#[cfg(feature = "cuda")]` code is never compiled there: it "survives" without being measured.
-  # The CPU `mutants` section defers that set (not_measured + its sha). This section builds the cuda feature on
-  # the yoga device, mutates exactly the diff's files that the cuda build compiles and the default build does
-  # not (both MEASURED from dep-info), and runs the derived cuda-only lib tests against each mutant. The `gate`
-  # job is RED on a pull_request whose deferred set is non-empty unless this section succeeded AND measured the
-  # same set (measured_sha == not_measured_sha). Local runs never count (E1).
-  #
-  # The GPU lock is taken WITHOUT a wait limit here. cuda-unit's `-w 600 -E 175` turns a busy lock into a
-  # failing test binary, and under cargo-mutants a failing test is a CAUGHT mutant: a lock wait would pass as a
-  # kill. The job timeout bounds the wait instead. A device skip cannot pass a mutant either way: a skipped test
-  # catches nothing, so the mutant survives and the section is RED.
-  mutants-cuda:
-    needs: [gpu-touched]
-    if: github.event_name == 'pull_request' && needs.gpu-touched.outputs.gpu_touched == '1'
-    runs-on: [self-hosted, Linux, X64, cuda, yoga, ephemeral, docker]
-    # 150, estimated, not measured (no history): two dep-info checks and two test listings (~10 min cold), a
-    # cuda lib test build (~10 min), then per mutant an incremental rebuild plus the cuda-only set run one
-    # thread at a time (#4043), ~5 min each at -j 1. #4620 has 7. Refit from this section's own p99.
-    timeout-minutes: 150
-    continue-on-error: false
-    env:
-      CARGO_TERM_COLOR: always
-      CARGO_TARGET_DIR: ${{ github.workspace }}/target
-      CARGO_INCREMENTAL: "0"
-      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: flock /run/lock/fleet-gpu/gpu.lock
-      MUTANTS_MAX_MISSED: ${{ vars.MUTANTS_MAX_MISSED || '0' }}
-      MUTANTS_CAP: ${{ vars.MUTANTS_CAP || '60' }}
-    outputs:
-      measured: ${{ steps.measured.outputs.measured }}
-      measured_sha: ${{ steps.measured.outputs.measured_sha }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - name: Preflight — the self-hosted toolset this job needs (67-C2)
-        run: bash scripts/ci_self_hosted_preflight.sh --cuda
-      - name: Host GPU lock — the host's file, taken with no wait limit
-        run: |
-          set -euo pipefail
-          l=/run/lock/fleet-gpu/gpu.lock
-          mountpoint -q /run/lock/fleet-gpu || { echo "::error::/run/lock/fleet-gpu is not mounted from the host (infra eph-env EXTRA_MOUNTS)"; exit 1; }
-          [ -f "$l" ] || { echo "::error::$l is absent on the host (infra gpu-lock-tmpfiles)"; exit 1; }
-          command -v flock > /dev/null || { echo "::error::no flock in the runner image"; exit 1; }
-          [ "$CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER" = "flock $l" ] \
-            || { echo "::error::the runner must be 'flock $l' (no -w: a lock timeout would read as a kill): '$CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER'"; exit 1; }
-          echo "GPU lock: $l; test binaries run under: $CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER"
-      - name: The PR diff -- the same merge-base diff the CPU mutants section judges
-        run: |
-          set -euo pipefail
-          BASE_REF="${{ github.event.pull_request.base.ref }}"
-          git fetch --no-tags origin "$BASE_REF"
-          MERGE_BASE=$(git merge-base HEAD "origin/$BASE_REF" 2>/dev/null || true)
-          [ -n "$MERGE_BASE" ] || MERGE_BASE="origin/$BASE_REF"
-          git diff "$MERGE_BASE"...HEAD > pr.diff
-          echo "merge-base $MERGE_BASE, diff $(wc -l < pr.diff) lines"
-      - name: Install cargo-mutants 27.1.0 into a private root
-        run: |
-          set -euo pipefail
-          export CARGO_INSTALL_ROOT="$RUNNER_TEMP/cargo-mutants-root"
-          cargo install cargo-mutants --locked --version 27.1.0 > "$RUNNER_TEMP/mi.log" 2>&1 \
-            || { tail -20 "$RUNNER_TEMP/mi.log"; echo "::error::cargo-mutants install failed; the shard cannot run"; exit 1; }
-          "$CARGO_INSTALL_ROOT/bin/cargo-mutants" mutants --version
-          echo "$CARGO_INSTALL_ROOT/bin" >> "$GITHUB_PATH"
-      - name: The cuda-only lib tests (derived, as cuda-unit derives them) and the shard
-        run: |
-          set -euo pipefail
-          export LC_ALL=C
-          t="$RUNNER_TEMP"
-          nice -n 19 cargo test -p aprender-serve --lib -- --list 2> "$t/cpu-list.err" \
-            | sed -n 's/: test$//p' | sort > "$t/cpu-list.txt" || { cat "$t/cpu-list.err"; exit 1; }
-          nice -n 19 cargo test -p aprender-serve --features cuda --lib -- --list 2> "$t/cuda-list.err" \
-            | sed -n 's/: test$//p' | sort > "$t/cuda-list.txt" || { cat "$t/cuda-list.err"; exit 1; }
-          comm -23 "$t/cuda-list.txt" "$t/cpu-list.txt" > "$t/cuda-only.txt"
-          printf 'cuda binary %s tests, default %s, cuda-only %s\n' "$(wc -l < "$t/cuda-list.txt")" \
-            "$(wc -l < "$t/cpu-list.txt")" "$(wc -l < "$t/cuda-only.txt")"
-          [ -s "$t/cuda-only.txt" ] || { echo "::error::the derived cuda-only set is empty: the cuda feature did not engage"; exit 1; }
-          # the crates the CPU section keeps out of mutation, derived from the same line, so both sets agree
-          EXCL=$(grep -m1 -E "^[[:space:]]+cargo nextest run --profile ci --workspace --lib" ci/sections.yml \
-            | grep -oE -- "--exclude [a-z0-9_-]+" | sed "s/^--exclude /--exclude-crate /" | tr "\n" " ")
-          [ -n "$EXCL" ] || { echo "::error::no --exclude list found on the workspace-test nextest line"; exit 1; }
-          # shellcheck disable=SC2086
-          nice -n 19 bash scripts/mutants_diff_gate.sh pr.diff --features aprender-serve/cuda --gated-only \
-            --test-names "$t/cuda-only.txt" --cap "$MUTANTS_CAP" --jobs 1 --timeout 900 \
-            --max-missed "$MUTANTS_MAX_MISSED" --out mutants-cuda-gate $EXCL
-      - name: The measured set -- the gate job compares its sha with the CPU section's deferred set
-        id: measured
-        if: always()
-        run: |
-          set -euo pipefail
-          f=mutants-cuda-gate/measured.txt
-          [ -f "$f" ] || { echo "measured=none" >> "$GITHUB_OUTPUT"; echo "::error::no $f: the shard never ran its scope"; exit 1; }
-          n=$(grep -c . "$f" || true)
-          sha=$(LC_ALL=C sort "$f" | sha256sum | cut -c1-64)
-          echo "measured=${n:-0}" >> "$GITHUB_OUTPUT"
-          echo "measured_sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "measured: ${n:-0} mutant(s), set sha $sha"
-          sed 's/^/  /' "$f"
-      - name: Upload the shard's results
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: mutation-results-cuda
-          path: mutants-cuda-gate/
 
   # APEX-001 EV-2a: the same figure, rendered on two architectures, must be the same bytes.
   #
@@ -3709,6 +3614,12 @@ jobs:
           echo "$ELAN_HOME/bin" >> "$GITHUB_PATH"
           echo "cache=$cache" >> "$GITHUB_OUTPUT"
 
+      - name: Planted rows -- a PR or push run skips leanchecker, the nightly runs it in full (C312)
+        # Seconds, no pv or Lean: stubs only. Runs even on a skipped ladder, so the event
+        # split below is checked on every run of this section.
+        shell: bash
+        run: bash scripts/ci/ladder_pr_skips_leanchecker.sh
+
       - name: Build the in-tree pv
         id: build
         if: ${{ steps.pre.outputs.skip != 'true' }}
@@ -3718,27 +3629,44 @@ jobs:
           cargo build --locked -p aprender-contracts-cli --bin pv
           test -x "$PV"
 
-      - name: pv discharge run (build.sh, then check --strict + comparator + leanchecker)
+      - name: pv discharge (PR, push - build + check --strict + comparator; nightly - run, adding leanchecker)
         id: discharge
         if: ${{ steps.pre.outputs.skip != 'true' }}
         shell: bash
+        # Operator ruling C312 (#4578): pull_request, merge_group and (amended 2026-10-06) push
+        # skip the leanchecker re-check (cap 3,600 s); the full `pv discharge run` is the nightly
+        # schedule, .github/workflows/provable-ladder-nightly.yml. The split and its planted rows: scripts/ci/provable_ladder_discharge.sh and
+        # scripts/ci/ladder_pr_skips_leanchecker.sh.
         # One run at a time per cache: two runs unpacking into the same .lake would race.
         # set +e: Actions runs `bash -e`, which would abort at a failing run before its rc and
         # its log tail are recorded.
+        # The runner service starts without a login session, so XDG_RUNTIME_DIR is unset and
+        # `systemd-run --user` cannot reach the user bus: pv declined the leanchecker arm on
+        # every full run (#4578). Point it at the lingering user's runtime dir when one exists;
+        # where none exists the variable stays unset and pv still declines (rc 2).
+        env:
+          EVENT: ${{ github.event_name }}
+          LOCK: ${{ steps.pre.outputs.cache }}.lock
         run: |
           set +e
-          flock "${{ steps.pre.outputs.cache }}.lock" "$PV" discharge run "$LEAN" > "$RUNNER_TEMP/discharge-run.log" 2>&1
+          if [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -O "/run/user/$(id -u)" ]; then
+            export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          fi
+          echo "XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-<unset>}"
+          LOG="$RUNNER_TEMP/discharge-run.log" bash scripts/ci/provable_ladder_discharge.sh discharge
           rc=$?
-          tail -n 40 "$RUNNER_TEMP/discharge-run.log"
-          echo "pv discharge run: rc=$rc" >> "$GITHUB_STEP_SUMMARY"
+          echo "pv discharge ($(bash scripts/ci/provable_ladder_discharge.sh mode)): rc=$rc" >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
 
       - name: summary-fresh -- the committed discharge-summary.json is what the run wrote
         # Only when the run RAN (it writes the summary on failure too). Skipped means nothing
-        # was regenerated, and a diff of an unregenerated file would pass vacuously.
+        # was regenerated, and a diff of an unregenerated file would pass vacuously. On a PR
+        # (no summary written) it checks the committed summary's tree_sha is this Lean tree.
         if: ${{ !cancelled() && (steps.discharge.outcome == 'success' || steps.discharge.outcome == 'failure') }}
         shell: bash
-        run: git diff --exit-code -- "$SUMMARY"
+        env:
+          EVENT: ${{ github.event_name }}
+        run: bash scripts/ci/provable_ladder_discharge.sh summary-fresh
 
       - name: pv lint contracts/
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -3775,244 +3703,3 @@ jobs:
             echo "Job status: ${{ job.status }}. It becomes required only when this blocker is clear:"
             echo "1. escape-allowlist.yaml: 7 entries are \`confirmed_by: pending\`, and a person must confirm them or delete the axioms (PVL-001 §5.3)"
           } >> "$GITHUB_STEP_SUMMARY"
-
-  # Mutation testing — DIFF-SCOPED + BLOCKING on PRs (PMAT build-system audit gap #1).
-  #
-  # BEFORE: full-tree `cargo mutants -- --lib`, push-to-main only, and
-  # `continue-on-error: true` at BOTH the job and step level → a surviving
-  # mutant never blocked anything. New under-tested code merged silently,
-  # contradicting the 80%-mutation / ZERO-tolerance rule.
-  #
-  # AFTER: scope mutation to the PR DIFF (`cargo mutants --in-diff`), run it on
-  # pull_request events, and make it BLOCKING (no continue-on-error; wired into
-  # the `gate` job). Diff-scoping is the key lever: full-tree mutation on a
-  # 75-crate monorepo is hours-long and would choke the merge queue. Gating only
-  # the lines a PR actually touches keeps it fast (minutes, proportional to diff
-  # size) while still preventing NEW untested code from landing. A PR whose diff
-  # contains no mutable code is a clean no-op pass (cargo-mutants reports 0
-  # mutants → exit 0).
-  #
-  # On a push to main (post-merge), the job is a no-op pass: there is no PR diff
-  # to scope against, so we skip rather than fall back to the old hours-long
-  # full-tree run.
-  mutants:
-    runs-on: [self-hosted, Linux, clean-room]   # arch-neutral: intel, yoga or gx10 (#3100)
-    timeout-minutes: 60
-    needs: [ci, workspace-test]
-    if: github.event_name == 'pull_request'
-    env:
-      IMAGE: localhost:5000/sovereign-ci:stable
-      # Max surviving (missed) mutants tolerated on the PR diff. 0 = every
-      # mutant introduced/touched by this PR must be caught by a test. Tune up
-      # via repo variable MUTANTS_MAX_MISSED if a diff legitimately can't reach 0.
-      MUTANTS_MAX_MISSED: ${{ vars.MUTANTS_MAX_MISSED || '0' }}
-      # #4142 (operator ruling via the cop, 2026-09-24): a PR diff of more than MUTANTS_CAP mutants is RED
-      # "too many to judge" -- about 60 fit this job's hour at -j 4 (measured: ~85 s per aprender-contracts
-      # mutant). mutants-nightly.yml judges main's merges with no cap.
-      MUTANTS_CAP: ${{ vars.MUTANTS_CAP || '60' }}
-      MUTANTS_JOBS: ${{ vars.MUTANTS_JOBS || '4' }}
-    # #4621 (operator E1): the mutants this build never compiles (cfg feature off by default) are DEFERRED to
-    # mutants-cuda, not passed. The gate job is RED unless mutants-cuda measured exactly this set (sha).
-    outputs:
-      not_measured: ${{ steps.deferred.outputs.not_measured }}
-      not_measured_sha: ${{ steps.deferred.outputs.not_measured_sha }}
-    steps:
-      - name: Pre-checkout ownership restore (EACCES self-heal)
-        # Same guard as workspace-test: a hard-killed docker job leaves
-        # root-owned files that EACCES this job's `git clean` at checkout
-        # (observed 2026-07-02 — the mutants job failed twice at checkout
-        # with zero mutants actually run, reading as a gate failure).
-        # Cached-image gate is sound: leftovers ⟹ a docker job ran here
-        # ⟹ image is cached.
-        run: |
-          if docker image inspect "$IMAGE" > /dev/null 2>&1; then
-            docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" "$IMAGE" \
-              bash -c 'chown -R 1000:1000 /workspace 2>/dev/null || true'
-          else
-            echo "Image not cached — no prior docker job on this runner, nothing to restore"
-          fi
-      - uses: actions/checkout@v7
-        with:
-          # Need history + base branch to compute the PR diff for --in-diff.
-          fetch-depth: 0
-      - name: Compute PR diff for mutation scoping
-        id: prdiff
-        # cargo-mutants --in-diff takes a unified diff and mutates ONLY the
-        # lines it adds/changes. We diff the PR head against the merge-base with
-        # the target branch so the scope is exactly "what this PR introduces".
-        env:
-          HEAD_REF: ${{ github.head_ref }}
-          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          BASE_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          # Rule 0 (operator 2026-09-27, verbatim "exempt the car"): a car/* PR of this repo is judged by
-          # mutants-nightly (uncapped) after it lands; every other PR keeps MUTANTS_CAP. Case table:
-          # scripts/mutants_diff_gate.sh --self-test (car, non-car, nested, fork rows).
-          if bash scripts/mutants_diff_gate.sh --exempt-ref "$HEAD_REF" "$HEAD_REPO" "$BASE_REPO"; then
-            echo "has_rs=false" >> "$GITHUB_OUTPUT"
-            : > pr.diff
-            exit 0
-          fi
-          BASE_REF="${{ github.event.pull_request.base.ref }}"
-          # NOT --depth=1: a shallow base commit has no shared ancestor with the
-          # fetch-depth:0 PR head, so `git merge-base` finds none and (under
-          # `set -e`) the step dies — failing the mutants gate on every PR.
-          # Fetch the base branch's history so the merge-base is reachable.
-          git fetch --no-tags origin "$BASE_REF"
-          MERGE_BASE=$(git merge-base HEAD "origin/$BASE_REF" 2>/dev/null || true)
-          if [ -z "$MERGE_BASE" ]; then
-            echo "No merge-base with origin/$BASE_REF — scoping diff to base tip"
-            MERGE_BASE="origin/$BASE_REF"
-          fi
-          echo "Base ref: $BASE_REF  merge-base: $MERGE_BASE"
-          git diff "$MERGE_BASE"...HEAD > pr.diff
-          echo "Diff size: $(wc -l < pr.diff) lines"
-          if [ ! -s pr.diff ]; then
-            echo "Empty diff — no code to mutate"
-          fi
-          # #3676: cargo-mutants mutates Rust. A diff with no .rs path has nothing to
-          # mutate, but used to pull the image and `cargo install cargo-mutants`
-          # anyway. --no-renames: a .rs file renamed away still counts.
-          git diff --no-renames --name-only "$MERGE_BASE"...HEAD > pr.files
-          if grep -qE '\.rs$' pr.files; then
-            echo "has_rs=true" >> "$GITHUB_OUTPUT"
-            echo "Rust paths in the diff: $(grep -cE '\.rs$' pr.files)"
-          else
-            echo "has_rs=false" >> "$GITHUB_OUTPUT"
-            echo "No .rs path in the diff ($(grep -c . pr.files || true) path(s)) -- nothing to mutate; the mutation steps skip and the job passes"
-          fi
-          # #4587 A' (operator 2026-09-29 06:36Z): a head ref in ci/mutants-table-refs.txt (PR-1 and PR-2 of 0.70
-          # only) is judged by the CI survivor table -- the mutants-shard matrix over the WHOLE diff, cap 0, verified
-          # by mutants-table -- and `gate` requires mutants-table to succeed for exactly these refs, read from the
-          # same file at the same commit. So this section hands over; it does not pass anything unjudged.
-          if grep -v '^#' ci/mutants-table-refs.txt | grep -qxF -- "$HEAD_REF"; then
-            echo "has_rs=false" >> "$GITHUB_OUTPUT"
-            echo "head ref $HEAD_REF is in ci/mutants-table-refs.txt: judged by the mutants-shard matrix + mutants-table (gate requires it)"
-          fi
-      - name: Pull sovereign-ci image (with retry + local-cache fallback)
-        if: steps.prdiff.outputs.has_rs == 'true'
-        # Same two-layer resilience as workspace-test — see that job for full context.
-        run: |
-          if docker image inspect "$IMAGE" > /dev/null 2>&1; then
-            echo "Image $IMAGE already cached locally — skipping pull"
-            exit 0
-          fi
-          max_attempts=15
-          delay=4
-          for i in $(seq 1 $max_attempts); do
-            if docker pull "$IMAGE"; then
-              echo "Image pulled successfully on attempt $i"
-              exit 0
-            fi
-            if [ "$i" -eq "$max_attempts" ]; then
-              echo "::error::Registry localhost:5000 unreachable after $max_attempts attempts AND image not in local cache"
-              exit 1
-            fi
-            echo "Pull attempt $i/$max_attempts failed; sleeping ${delay}s"
-            sleep "$delay"
-            delay=$((delay + 6))
-          done
-      - name: Install cargo-mutants
-        if: steps.prdiff.outputs.has_rs == 'true'
-        run: |
-          docker run --rm \
-          -e CI -e GITHUB_ACTIONS -e GITHUB_REF -e GITHUB_SHA -e GITHUB_REPOSITORY -e GITHUB_RUN_ID -e GITHUB_EVENT_NAME -e GITHUB_WORKFLOW \
-            -v "${GITHUB_WORKSPACE}:/workspace" \
-            -w /workspace \
-            "$IMAGE" \
-            cargo install cargo-mutants --locked
-      - name: Run diff-scoped mutation testing (BLOCKING)
-        if: steps.prdiff.outputs.has_rs == 'true'
-        # No continue-on-error: a missed mutant on the PR diff fails the job,
-        # which fails `gate`, which blocks merge. --in-diff pr.diff restricts
-        # mutation to PR-touched lines. Empty diff → 0 mutants → clean pass.
-        # We parse mutants.out/outcomes.json for the missed count and compare to
-        # MUTANTS_MAX_MISSED so the threshold is explicit and tunable (rather
-        # than relying solely on cargo-mutants' aggregate exit code).
-        run: |
-          set -euo pipefail
-          if [ ! -s pr.diff ]; then
-            echo "No PR diff content — nothing to mutate. Pass."
-            exit 0
-          fi
-          docker run --rm \
-          -e CI -e GITHUB_ACTIONS -e GITHUB_REF -e GITHUB_SHA -e GITHUB_REPOSITORY -e GITHUB_RUN_ID -e GITHUB_EVENT_NAME -e GITHUB_WORKFLOW \
-            -v "${GITHUB_WORKSPACE}:/workspace" \
-            -w /workspace \
-            -e MUTANTS_MAX_MISSED -e MUTANTS_CAP -e MUTANTS_JOBS \
-            "$IMAGE" \
-            bash -c '
-              set -uo pipefail
-              # The sovereign-ci image bakes cargo-nextest but NOT cargo-mutants,
-              # so `cargo mutants` exited 101 (no such command) on every run. Before
-              # #2514 hardened the outcomes.json check, that 101 was read as
-              # "0 mutants in diff. Pass." -- the gate passed BECAUSE the tool was
-              # absent. Installing it here is a stopgap; it belongs baked into the
-              # image (paiml/infra), which is tracked separately.
-              #
-              # Assert it RUNS after installing. An install that half-succeeds must
-              # not reach the gate looking like a clean diff -- that is the same
-              # failure mode #2514 just closed.
-              # Private install root, per scripts/check_cargo_install_private_root.sh.
-              # This install already runs INSIDE the ephemeral container (CARGO_HOME
-              # is /usr/local/cargo and the container is --rm), so it cannot reach
-              # the host toolchain -- but the guard reads workflow text and cannot
-              # see that, and "the guard cannot tell" is not a reason to exempt.
-              # Declaring the root makes it true rather than merely argued.
-              # /usr/local, not /tmp: this root is destroyed with the --rm
-              # container either way, but /tmp is what the paiml/infra
-              # shared-$HOME guard reads as boot-volatile, and "the guard
-              # cannot tell" is not a reason to keep the ambiguous spelling.
-              export CARGO_INSTALL_ROOT=/usr/local/cargo-mutants-root
-              export PATH="$CARGO_INSTALL_ROOT/bin:$PATH"
-              if ! cargo mutants --version > /dev/null 2>&1; then
-                echo "cargo-mutants absent from image; installing"
-                cargo install cargo-mutants --locked --version 27.1.0 > /tmp/mi.log 2>&1 || {
-                  echo "::error::cargo-mutants install failed; the gate cannot run"
-                  tail -20 /tmp/mi.log
-                  exit 1
-                }
-              fi
-              cargo mutants --version || {
-                echo "::error::cargo-mutants still not runnable after install"
-                exit 1
-              }
-              # #4142: the gate lives in scripts/mutants_diff_gate.sh, under a stubbed-cargo case table.
-              # It mutates with --workspace (without it only the root facade was mutated, so every crate
-              # diff listed 0 mutants and passed), goes RED over MUTANTS_CAP ("too many to judge"), runs
-              # -j MUTANTS_JOBS in copies, and refuses a dead run, an unparseable result, or a tested count
-              # that differs from the listed one.
-              # The crates workspace-test --excludes (hardware; aprender-compute segfaults at harness exit on a
-              # clean pass) are DERIVED from its nextest line, never restated, and kept out of mutation too.
-              EXCL=$(grep -m1 -E "^[[:space:]]+cargo nextest run --profile ci --workspace --lib" ci/sections.yml \
-                | grep -oE -- "--exclude [a-z0-9_-]+" | sed "s/^--exclude /--exclude-crate /" | tr "\n" " ")
-              [ -n "$EXCL" ] || { echo "::error::no --exclude list found on the workspace-test nextest line"; exit 1; }
-              # shellcheck disable=SC2086
-              bash scripts/mutants_diff_gate.sh pr.diff --cap "$MUTANTS_CAP" --jobs "$MUTANTS_JOBS" \
-                --max-missed "$MUTANTS_MAX_MISSED" --out mutants-gate --defer-unbuilt mutants-gate/not_measured.txt $EXCL
-            '
-      - name: The deferred NOT_MEASURED set -- the gate job requires mutants-cuda to measure exactly this (#4621)
-        id: deferred
-        if: steps.prdiff.outputs.has_rs == 'true'
-        run: |
-          set -euo pipefail
-          f=mutants-gate/not_measured.txt
-          if [ -s pr.diff ]; then
-            # the gate writes the file before it looks at the diff: absent means it never ran, not "none"
-            [ -f "$f" ] || { echo "::error::the gate wrote no $f"; exit 1; }
-          else
-            mkdir -p mutants-gate && : > "$f"
-          fi
-          n=$(grep -c . "$f" || true)
-          sha=$(LC_ALL=C sort "$f" | sha256sum | cut -c1-64)
-          echo "not_measured=${n:-0}" >> "$GITHUB_OUTPUT"
-          echo "not_measured_sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "deferred to mutants-cuda: ${n:-0} mutant(s), set sha $sha"
-          sed 's/^/  /' "$f"
-      - name: Upload mutation results
-        if: always() && steps.prdiff.outputs.has_rs == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: mutation-results
-          path: mutants-gate/

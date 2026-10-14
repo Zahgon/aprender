@@ -610,6 +610,24 @@ ratchet-semantics-test: ## BSE-03: D2 ratchet polarity rows (--class readme)
 # enforces COV_FLOOR, so this is a name, not a new policy.
 coverage-check: coverage
 
+# #4715: an LLVM coverage JSON plus the commit it was measured on, from the profiles a `make coverage`
+# run just left. qwen-story-daily's pmat hunt reads coverage gaps ONLY from this file, and only when the
+# recorded sha is its own checkout; without it `pmat query --coverage-gaps` derives coverage itself,
+# measured at >900 s per query on intel. Same report scope and excludes as the lcov in `coverage`.
+# Under .ONESHELL without -e every line carries its own `|| exit`.
+.PHONY: coverage-json
+coverage-json: ## LLVM coverage JSON + measured sha from the last `make coverage` profiles (pmat --coverage-file)
+	@[ -s target/coverage/lcov.info ] || { echo "❌ coverage-json: no lcov.info - run make coverage first"; exit 1; }
+	rm -f target/coverage/coverage.json target/coverage/coverage.sha || exit 1
+	scripts/coverage_report_scope.sh --self-test > /dev/null || { echo "❌ coverage-json: coverage_report_scope.sh self-test failed"; exit 1; }
+	scripts/coverage_report_scope.sh --exclude aprender-gpu > /dev/null || { echo "❌ coverage-json: no derived report scope"; exit 1; }
+	$(COV_CARGO_ENV) cargo llvm-cov report $$(scripts/coverage_report_scope.sh --exclude aprender-gpu) \
+		--json --output-path $(CURDIR)/target/coverage/coverage.json \
+		--ignore-filename-regex "$$(cat target/coverage/.exclude-re)" || exit 1
+	[ -s target/coverage/coverage.json ] || { echo "❌ coverage-json: no JSON was written"; exit 1; }
+	git rev-parse HEAD > target/coverage/coverage.sha || exit 1
+	echo "coverage-json: $$(du -h target/coverage/coverage.json | cut -f1) for $$(cat target/coverage/coverage.sha)"
+
 # PVL-001 EV-6a (#4139): the ONLY writer of the Lean label ratchet. `pv discharge check` never writes
 # unresolved-labels.json; this rewrites it DOWNWARD (a label that resolves now leaves; a new one is never added).
 .PHONY: label-ratchet
@@ -828,6 +846,16 @@ profile:
 # Benchmarks
 bench:
 	cargo bench
+
+# APR-071 V1 (#4954): reference TTFT ÷ apr TTFT with its 95% lower bound, on
+# THIS host. Starts the pinned llama.cpp and `apr serve run` on the same GGUF and
+# hands both to `apr test llm bench --band` (PERF-009: the one entrypoint).
+# Run on a GPU host under the fleet GPU lock:
+#   flock -w 900 /tmp/apr-gpu.lock make v1-ttft-baseline HOST=lambda MODEL=<gguf>
+.PHONY: v1-ttft-baseline
+v1-ttft-baseline:
+	@test -n "$(HOST)" -a -n "$(MODEL)" || { echo "usage: make v1-ttft-baseline HOST=<host> MODEL=<gguf> [V1_ARGS=...]"; exit 2; }
+	bash scripts/v1_ttft_baseline.sh --host "$(HOST)" --model "$(MODEL)" $(V1_ARGS)
 
 # Chaos engineering tests (from renacer, Issue #99)
 chaos-test: build ## Run chaos engineering tests with renacer
@@ -1555,6 +1583,18 @@ oracle-owl:
 oracle-owl-check: oracle-owl
 	@git diff --exit-code tests/oracle/tbox-differential.json \
 	  || { echo "FAIL: tests/oracle/tbox-differential.json differs from a fresh run — commit it"; exit 1; }
+
+# CRUX category R (spec §14): pv against Apache Jena 5.6.0, pinned by sha256, on a JVM 17+ (`ONT_ORACLE_JAVA`
+# names one; else `java` on PATH). ON DEMAND ONLY: no PR, merge-queue or release job runs it. It runs the planted
+# controls, then the cells, and writes tests/oracle/jena/receipt.json. Exit 0 GREEN, 1 RED, 2 NOT MEASURED; the
+# cells whose pv side waits for a Turtle reader or a W3C report are NOT MEASURED, so today's best is 2. A pv
+# report with no findings array (pv did not run) is an incomplete subject, never zero violations.
+.PHONY: oracle-jena
+oracle-jena:
+	@echo "== CRUX R: pv vs Apache Jena 5.6.0 (on demand, never a gate) =="
+	@. scripts/pv_bin.sh && "$$PV" lint contracts --gate shapes --format json > "$${TMPDIR:-/tmp}/pv-shapes-jena.json" 2>/dev/null || true
+	@cargo build --release --quiet --manifest-path tests/oracle/jena/Cargo.toml
+	@. scripts/pv_bin.sh && "$$(cargo metadata --no-deps --format-version 1 --manifest-path tests/oracle/jena/Cargo.toml | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')/release/jena-oracle" run . "$${TMPDIR:-/tmp}/pv-shapes-jena.json" --pv "$$PV"
 
 # ── BLD-002 R4: nightly evidence train (report-only) ────────────────────────────────────────────────────────
 # One line a night for main's head: RELEASABLE H=<C> or NOT RELEASABLE: <lane>, <run>. The timer runs a bundle copied

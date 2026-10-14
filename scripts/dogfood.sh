@@ -43,14 +43,23 @@ while [ $# -gt 0 ]; do
       # `shift 2` with one argument left does not shift, so a bare `--phase`
       # looped forever (seventh review of #2859, measured). A flag with no
       # value is a usage error.
-      [ $# -ge 2 ] || { echo "dogfood: --phase needs a value (full|pre-publish|post-publish)" >&2; exit 2; }
+      [ $# -ge 2 ] || { echo "dogfood: --phase needs a value (full|pre-publish|post-publish|nightly)" >&2; exit 2; }
       DOGFOOD_PHASE="$2"; shift 2 ;;
     --phase=*) DOGFOOD_PHASE="${1#--phase=}"; shift ;;
-    -h|--help) sed -n '2,14p' "$0"; echo "        dogfood.sh [--phase full|pre-publish|post-publish] [REPO_DIR]"; exit 0 ;;
+    -h|--help) sed -n '2,14p' "$0"; echo "        dogfood.sh [--phase full|pre-publish|post-publish|nightly] [REPO_DIR]"; exit 0 ;;
     *) REPO_DIR="$1"; shift ;;
   esac
 done
-case "$DOGFOOD_PHASE" in full|pre-publish|post-publish) : ;; *) echo "dogfood: unknown --phase '$DOGFOOD_PHASE' (full|pre-publish|post-publish)" >&2; exit 2 ;; esac
+case "$DOGFOOD_PHASE" in full|pre-publish|post-publish|nightly) : ;; *) echo "dogfood: unknown --phase '$DOGFOOD_PHASE' (full|pre-publish|post-publish|nightly)" >&2; exit 2 ;; esac
+# --phase nightly (#4672) runs the pre-publish row set against the commit under test, H, with no
+# OPEN state: a row that cannot be measured at H is NOT_MEASURED, and NOT_MEASURED is RED. Its
+# version row asks of DOGFOOD_TARGET_VERSION, the train's next version, instead of the tree's,
+# and the scheduled job derives that from the milestones. The override exists for nightly only:
+# a release-day phase that accepted it would answer the version question for a version it is
+# not publishing, so every other phase refuses it. The preflight (R5) refuses a nightly receipt.
+if [ -n "${DOGFOOD_TARGET_VERSION:-}" ] && [ "$DOGFOOD_PHASE" != nightly ]; then
+  echo "dogfood: DOGFOOD_TARGET_VERSION is honoured by --phase nightly only; --phase $DOGFOOD_PHASE publishes the tree's own version" >&2; exit 2
+fi
 export DOGFOOD_PHASE
 REPO_DIR="${REPO_DIR:-$PWD}"
 # The target is resolved to a real, existing directory before the cd (SEC010):
@@ -58,6 +67,10 @@ REPO_DIR="${REPO_DIR:-$PWD}"
 REPO_DIR=$(realpath -e -- "$REPO_DIR" 2>/dev/null) || { echo "dogfood: no such dir: ${1:-$PWD}" >&2; exit 2; }
 cd -- "$REPO_DIR" 2>/dev/null || { echo "dogfood: no such dir: $REPO_DIR" >&2; exit 2; }
 [ -f Cargo.toml ] || { echo "dogfood: not a Rust crate (no Cargo.toml) in $REPO_DIR" >&2; exit 2; }
+# jq reads every JSON this script consumes and writes the receipt (#4377: python3
+# did, and the gate path may not need Python). Without jq no row means anything,
+# so it is a setup error before any gate runs, not a red row.
+command -v jq >/dev/null 2>&1 || { echo "dogfood: jq is not installed; it parses every tool's JSON and writes the receipt" >&2; exit 2; }
 
 # Resolve identity from cargo itself, NOT by grepping Cargo.toml.
 #
@@ -74,19 +87,27 @@ cd -- "$REPO_DIR" 2>/dev/null || { echo "dogfood: no such dir: $REPO_DIR" >&2; e
 # `cargo metadata --no-deps` lists EVERY workspace member regardless of cwd, so
 # it must be filtered by manifest_path — picking ps[0], or requiring len==1,
 # silently yields nothing for any member of a workspace.
+# _pkg_json prints, as one JSON object, the package whose manifest_path is
+# ./Cargo.toml. Both sides go through realpath, so a symlinked checkout still
+# matches. Status 1, and no output, when there is no such package or the
+# metadata is unreadable (#4377: these readers were python3).
+_pkg_json() {
+  local here meta mp i=0
+  here=$(realpath Cargo.toml 2>/dev/null) || return 1
+  meta=$(cargo metadata --no-deps --format-version 1 2>/dev/null) || return 1
+  while IFS= read -r mp; do
+    if [ "$(realpath "$mp" 2>/dev/null)" = "$here" ]; then
+      printf '%s' "$meta" | jq -c ".packages[$i]" 2>/dev/null
+      return
+    fi
+    i=$((i + 1))
+  done < <(printf '%s' "$meta" | jq -r '.packages[]? | (.manifest_path // "")' 2>/dev/null)
+  return 1
+}
 _meta() {
-  cargo metadata --no-deps --format-version 1 2>/dev/null | python3 -c '
-import json,os,sys
-field=sys.argv[1]
-here=os.path.realpath("Cargo.toml")
-try:
-    d=json.load(sys.stdin)
-except Exception:
-    print(""); raise SystemExit
-for p in d.get("packages",[]):
-    if os.path.realpath(p.get("manifest_path","")) == here:
-        print(p.get(field,"")); raise SystemExit
-print("")' "$1" 2>/dev/null
+  local pj
+  pj=$(_pkg_json) || { echo ""; return 0; }
+  printf '%s' "$pj" | jq -r --arg f "$1" '(.[$f] // "") | tostring' 2>/dev/null || echo ""
 }
 CRATE=$(_meta name)
 VERSION=$(_meta version)
@@ -153,10 +174,13 @@ RECEIPT_DIR="$PWD/.dogfood"
 mkdir -p "$RECEIPT_DIR"
 # The receipt's stamp honours SOURCE_DATE_EPOCH (the reproducible-build
 # convention, DET002) and falls back to the clock: a receipt records when it
-# ran, and a caller that wants a pinned stamp sets the epoch. Formatted by
-# python3 (already a hard dependency of this script) rather than `date -d`,
-# which is GNU-only and fails on the macOS host of the multi-platform sweep.
-TS=$(python3 -c 'import datetime, os, time; e = int(os.environ.get("SOURCE_DATE_EPOCH") or time.time()); print(datetime.datetime.fromtimestamp(e, datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ"))')
+# ran, and a caller that wants a pinned stamp sets the epoch. `date -d @E` is
+# jq (checked at the top; it writes the receipt) formats it: `strftime` is
+# UTC on GNU and BSD alike, where `date -d @E` is GNU-only, and bashrs reads a
+# formatted `date` call as DET002 (#4377: this was python3).
+TS_EPOCH=${SOURCE_DATE_EPOCH:-$(date -u +%s)}
+TS=$(jq -rn --argjson e "$TS_EPOCH" '$e | strftime("%Y%m%dT%H%M%SZ")') \
+  || { echo "dogfood: cannot format the receipt stamp from epoch '$TS_EPOCH'" >&2; exit 2; }
 # The commit the evidence describes, stamped INTO the receipt: a consumer that
 # globs for the newest receipt after a crashed run would otherwise read a
 # previous verdict as current with nothing to expose it (#2644, DF-12). With
@@ -171,6 +195,18 @@ RECEIPT_PARTIAL="$RECEIPT.partial"
 # ── gate bookkeeping ─────────────────────────────────────────────────────────
 declare -a NAMES=() RESULTS=() NOTES=()
 FAILED=0
+# ROW ORDER AND ROW TIME (#4672). In 0.70.1 the coverage row ran for about 3.5 h
+# before the bashrs row (about 1 min) was reached, and that row was RED: a one-minute
+# finding surfaced hours late. So the LONG rows run LAST, after every other row, and
+# each row records how long it took. The order changes nothing else: every row still
+# runs, none is removed, no threshold moves, and the verdict is still the AND of all
+# rows -- a red cheap row does not stop the long rows (scripts/check_dogfood_row_order.sh
+# holds both properties). DOGFOOD_LONG_ROWS is the one place the long set is named.
+DOGFOOD_LONG_ROWS="test coverage"
+declare -a DURS=() ENDS=()
+ROW_T0="$SECONDS"
+# row_time — the seconds since the previous row closed, and when this one closed
+row_time() { DURS+=("$((SECONDS - ROW_T0))"); ENDS+=("$SECONDS"); ROW_T0="$SECONDS"; }
 # Statuses:
 #   PASS   — the gate ran and its subject held.
 #   FAIL   — the gate ran and its subject did not hold  → NO-GO.
@@ -212,7 +248,7 @@ gate() { # gate <name> <cmd...> — runs cmd, records pass/fail
   # a worse note than a real diagnostic but it cannot be a dependency's name.
   [ -z "$note" ] && note=$(printf '%s' "$out" | tail -1)
   [ "$rc" -ne 0 ] && note="$note  [log: $log]"
-  NAMES+=("$name")
+  NAMES+=("$name"); row_time
   if [ $rc -eq 0 ]; then RESULTS+=("PASS"); else RESULTS+=("FAIL"); FAILED=1; fi
   NOTES+=("${note:0:120}")
   printf '  [%s] %-26s %s\n' "$([ $rc -eq 0 ] && echo ' OK ' || echo 'FAIL')" "$name" "${note:0:80}"
@@ -225,17 +261,45 @@ gate() { # gate <name> <cmd...> — runs cmd, records pass/fail
 # receipt as OPEN and never as passed. In any other phase an OPEN row is an unmet obligation
 # and FAILs, which is what makes the post-publish dogfood discharge it. The list is closed.
 POST_PUBLISH_OBLIGATIONS="publish-dry-run declared:check_multiplatform_dogfood"
-mark() { # mark <name> <PASS|FAIL|SKIP|REPORT|WARN|MANUAL|OPEN> <note>
+# #5079, what --phase nightly owes. It has no OPEN state, so each of the two obligations above gets a
+# phase definition instead of a permanent red:
+#   · publish-dry-run is MEASURED at H, as the whole workspace (`cargo publish --workspace --dry-run`),
+#     which packages and verifies every member against the others' local sources, so it does not wait
+#     on the registry. PASS or FAIL on its exit code; never --allow-dirty.
+#   · declared:check_multiplatform_dogfood installs the PUBLISHED version on each host. Before a publish
+#     there is nothing to install, so it is not in the nightly row set: not a SKIP row, no row at all.
+#     The pre-publish and post-publish phases still owe it.
+NIGHTLY_NOT_OWED="declared:check_multiplatform_dogfood"
+nightly_owes() { # nightly_owes <row> -> 1 when --phase nightly does not owe <row>, by phase definition
+  [ "$DOGFOOD_PHASE" = nightly ] || return 0
+  case " $NIGHTLY_NOT_OWED " in *" $1 "*) return 1 ;; esac
+  return 0
+}
+publish_dry_run_at_h() { # the workspace dry-run at H; the caller reads its exit code
+  env -u CARGO_REGISTRY_TOKEN cargo publish --workspace --dry-run
+}
+mark_publish_dry_run() { # mark_publish_dry_run <rc> <output> -- row 10
+  if [ "$DOGFOOD_PHASE" = pre-publish ]; then
+    mark publish-dry-run OPEN "a workspace root cannot dry-run before its members are on the registry; discharged by the cascade's own per-tier publish and the post-publish dogfood"
+  elif [ "$1" -eq 0 ]; then
+    mark publish-dry-run PASS "packages cleanly$([ "$DOGFOOD_PHASE" = nightly ] && printf ' (cargo publish --workspace --dry-run at H)')"
+  else
+    mark publish-dry-run FAIL "$(printf '%s' "$2" | grep -iE 'error' | head -1)"
+  fi
+}
+mark() { # mark <name> <PASS|FAIL|SKIP|REPORT|WARN|INFO|MANUAL|OPEN> <note>
   local st="$2" note="$3"
   if [ "$st" = DEFER ]; then
     st=FAIL; note="DEFER is abolished (operator 2026-09-23, \"no defer\"): a row is measured or it is RED -- $note"
   fi
-  if [ "$st" = OPEN ] && [ "$DOGFOOD_PHASE" != pre-publish ]; then
+  if [ "$st" = OPEN ] && [ "$DOGFOOD_PHASE" = nightly ]; then
+    st=FAIL; note="NOT_MEASURED at H: --phase nightly has no OPEN state, and a row it cannot measure is RED: $note"
+  elif [ "$st" = OPEN ] && [ "$DOGFOOD_PHASE" != pre-publish ]; then
     st=FAIL; note="an OPEN post-publish obligation outside --phase pre-publish is an UNMET obligation: $note"
   elif [ "$st" = OPEN ]; then
     case " $POST_PUBLISH_OBLIGATIONS " in *" $1 "*) ;; *) st=FAIL; note="only [$POST_PUBLISH_OBLIGATIONS] may be OPEN; '$1' is not a post-publish obligation: $note" ;; esac
   fi
-  NAMES+=("$1"); RESULTS+=("$st"); NOTES+=("${note:0:200}")
+  NAMES+=("$1"); RESULTS+=("$st"); NOTES+=("${note:0:200}"); row_time
   [ "$st" = FAIL ] && FAILED=1
   printf '  [%s] %-26s %s\n' "$([ "$st" = PASS ] && echo ' OK ' || echo "$st")" "$1" "${note:0:96}"
 }
@@ -265,6 +329,11 @@ classify_declared() {
     [ "${RESULTS[${#RESULTS[@]}-1]}" = OPEN ] || return 1
   elif [ "$rc" -eq 0 ]; then
     mark "$name" PASS "$path exit=0$scoped"
+  elif [ "$DOGFOOD_PHASE" = nightly ] && grep -qE 'STALE BY SHA|no receipt at ' "$log" 2>/dev/null; then
+    # --phase nightly measures H. A lane whose receipt is for another commit, or absent, has not
+    # measured H: NOT_MEASURED, which is RED, and named so a reader knows which lane owes H.
+    mark "$name" FAIL "NOT_MEASURED at H: $path has no receipt for this commit (stale by sha, or none) — $tail"
+    return 1
   else
     mark "$name" FAIL "$path exit=$rc$scoped — $tail"
     return 1
@@ -389,18 +458,18 @@ fi
 run_to "$WORKLOG/meta-dogfood.json" cargo metadata --no-deps --format-version 1
 DG_META_RC=$RUN_RC
 # ONE parser, shared with scripts/check_verifier_pinning.sh — see
-# scripts/lib/dogfood_gates.py. This used to be an embedded heredoc while the
+# scripts/lib/dogfood_gates.jq (#4377: ported from Python). This used to be an embedded heredoc while the
 # guard scraped the same TOML with awk+grep, so the guard's scan universe could
 # be strictly smaller than the set the runner EXECUTES (#2644 audit, CI-3/VP-05).
-DG_PLAN=$(CRATE="$CRATE" python3 "$SKILL_DIR/lib/dogfood_gates.py" \
+DG_PLAN=$(jq -r --arg crate "$CRATE" -f "$SKILL_DIR/lib/dogfood_gates.jq" \
   "$WORKLOG/meta-dogfood.json" 2>/dev/null || echo "META_ERROR")
 if [ "$DG_META_RC" -ne 0 ]; then
   mark dogfood-gates FAIL "\`cargo metadata\` failed (exit=$DG_META_RC) — the release gates this crate declares could not be discovered, so none of them ran"
 elif [ "$DG_PLAN" = "META_ERROR" ]; then
-  # cargo succeeded; the python step died. The old message blamed cargo with
+  # cargo succeeded; the jq step died. The old message blamed cargo with
   # "failed (exit=0)" attached — an operator sent to the wrong component
   # (#2644, CI-4).
-  mark dogfood-gates FAIL "gate discovery's python3 step failed (cargo metadata itself exited 0) — \`$SKILL_DIR/lib/dogfood_gates.py\` could not parse the declaration (or is missing), so no declared gate ran"
+  mark dogfood-gates FAIL "gate discovery's jq step failed (cargo metadata itself exited 0) — \`$SKILL_DIR/lib/dogfood_gates.jq\` could not parse the declaration (or is missing), so no declared gate ran"
 elif [ "$DG_PLAN" = "NOPKG" ]; then
   mark dogfood-gates FAIL "no package named '$CRATE' in cargo metadata — run dogfood from the crate dir, not the virtual workspace root"
 elif [ "$DG_PLAN" = "NODECL" ]; then
@@ -441,6 +510,11 @@ else
     [ "$dg_kind" = "GATE" ] || continue
     DG_N=$((DG_N + 1))
     dg_name="declared:$(basename "$dg_path" .sh)"
+    if ! nightly_owes "$dg_name"; then
+      DG_N=$((DG_N - 1))
+      printf '  not in the nightly row set (phase definition, #5079): %s needs the published crate\n' "$dg_name"
+      continue
+    fi
     if [ ! -f "$dg_path" ]; then
       mark "$dg_name" FAIL "declared in [package.metadata.dogfood] but no such file: $dg_path — a declared gate that does not exist is a deleted gate, not an absent requirement"
       DG_BAD=$((DG_BAD + 1)); continue
@@ -512,21 +586,15 @@ index_version_state() {
   # error page behind a 200, a captive portal). Only 1 is "absent"; 2 is
   # UNKNOWN -- a gate that read `unparseable` as `absent` was fail-open
   # (fourth review of #2859, dogfood-index-decode-bypass).
-  python3 -c '
-import json, sys
-want = sys.argv[1]
-seen = 0
-try:
-    for line in open(sys.argv[2], encoding="utf-8"):
-        line = line.strip()
-        if not line: continue
-        rec = json.loads(line)
-        if not isinstance(rec, dict) or "vers" not in rec: sys.exit(2)
-        seen += 1
-        if rec.get("vers") == want: sys.exit(0)
-except (ValueError, OSError, UnicodeDecodeError):
-    sys.exit(2)
-sys.exit(1 if seen else 2)' "$2" "$WORKLOG/registry.ndjson"; parse=$?
+  # jq reads every record before it answers, so one malformed line anywhere is
+  # 2 (unknown), even after a match. That is stricter than the python3 it
+  # replaced (#4377), never looser. A jq that dies prints nothing, which is also 2.
+  parse=$(jq -n --arg want "$2" '[inputs] as $r
+    | if ($r | length) == 0 then 2
+      elif any($r | .[]; (type != "object") or ((has("vers")) | not)) then 2
+      elif any($r | .[]; .vers == $want) then 0
+      else 1 end' "$WORKLOG/registry.ndjson" 2>/dev/null) || parse=2
+  case "$parse" in 0|1) ;; *) parse=2 ;; esac
   case "$parse" in
     0) printf 'present\n' ;;
     1) printf 'absent\n' ;;
@@ -540,10 +608,34 @@ sys.exit(1 if seen else 2)' "$2" "$WORKLOG/registry.ndjson"; parse=$?
 #                 mark_version_row also requires it to INSTALL from crates.io. This
 #                 phase used to run the pre-publish row, which a successful publish turns RED forever,
 #                 so the post-publish dogfood could never say GO (0.68.2, 2026-09-20).
-# An unknown index is FAIL in both: an unconsulted registry is not evidence either way.
+#   nightly       version-unpublished: VERSION is the train's target (DOGFOOD_TARGET_VERSION); PASS only
+#                 when it is X.Y.Z, absent, and strictly above MAX, the highest stable version the index
+#                 carries (5th argument; "" when the crate is not on the index). A target at or below MAX
+#                 is a train that would publish backwards or collide.
+# An unknown index is FAIL in every phase: an unconsulted registry is not evidence either way.
 version_row() {
-  local phase=$1 crate=$2 ver=$3 state=$4 why=""
+  local phase=$1 crate=$2 ver=$3 state=$4 max=${5:-} why=""
   case "$state" in unknown\ *) why=${state#unknown }; state=unknown ;; esac
+  if [ "$phase" = nightly ]; then
+    if ! [[ "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      printf 'version-unpublished FAIL NOT_MEASURED: the train target %s is not X.Y.Z (DOGFOOD_TARGET_VERSION; nightly phase)\n' "${ver:-<unset>}"; return 0
+    fi
+    case "$state" in
+      unknown) printf 'version-unpublished FAIL %s — the target %s cannot be compared with crates.io (nightly phase)\n' "$why" "$ver" ;;
+      present) printf 'version-unpublished FAIL %s %s, the train target, is ALREADY in the crates.io index (nightly phase)\n' "$crate" "$ver" ;;
+      crate-absent) printf 'version-unpublished PASS %s is not in the crates.io index at all (HTTP 404), so the target %s is above it (nightly phase)\n' "$crate" "$ver" ;;
+      absent)
+        if [ -z "$max" ]; then
+          printf 'version-unpublished FAIL the crates.io index for %s carries no stable X.Y.Z version to compare the target %s with (nightly phase)\n' "$crate" "$ver"
+        elif [ "$ver" != "$max" ] && [ "$(printf '%s\n%s\n' "$max" "$ver" | sort -V | tail -n 1)" = "$ver" ]; then
+          printf 'version-unpublished PASS the train target %s is above crates.io max %s (consulted directly; nightly phase)\n' "$ver" "$max"
+        else
+          printf 'version-unpublished FAIL the train target %s is not above crates.io max %s — the train would publish backwards (nightly phase)\n' "$ver" "$max"
+        fi ;;
+      *) printf 'version-unpublished FAIL version_row has no verdict for phase nightly, state %s\n' "$state" ;;
+    esac
+    return 0
+  fi
   case "$phase:$state" in
     pre-publish:absent)        printf 'version-unpublished PASS %s absent from the crates.io index (consulted directly, HTTP 200, index parsed; pre-publish phase)\n' "$ver" ;;
     pre-publish:crate-absent)  printf 'version-unpublished PASS %s is not in the crates.io index at all (HTTP 404), so %s is absent (pre-publish phase)\n' "$crate" "$ver" ;;
@@ -587,9 +679,15 @@ published_install_check() {
 # mark_version_row PHASE -> marks the row version_row decides, from a fresh index lookup; post-publish,
 # a version the index carries must also INSTALL (published_install_check)
 mark_version_row() {
-  local row st note line state inst
-  state=$(index_version_state "$CRATE" "$VERSION")
-  line=$(version_row "$1" "$CRATE" "$VERSION" "$state")
+  local row st note line state inst ver="$VERSION" max=""
+  [ "$1" = nightly ] && ver="${DOGFOOD_TARGET_VERSION:-}"
+  state=$(index_version_state "$CRATE" "$ver")
+  if [ "$1" = nightly ] && [ "$state" = absent ]; then
+    # The highest stable version on the index, in bash (no new python): X.Y.Z only, sort -V.
+    max=$(grep -oE '"vers":"[0-9]+\.[0-9]+\.[0-9]+"' "$WORKLOG/registry.ndjson" 2>/dev/null \
+          | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -n 1)
+  fi
+  line=$(version_row "$1" "$CRATE" "$ver" "$state" "$max")
   row=${line%% *}; line=${line#* }; st=${line%% *}; note=${line#* }
   if [ "$1" = post-publish ] && [ "$state" = present ]; then
     inst=$(published_install_check "$CRATE" "$VERSION")
@@ -601,13 +699,16 @@ mark_version_row() {
   mark "$row" "$st" "$note"
 }
 
-if [ "$DOGFOOD_PHASE" = pre-publish ]; then
+if [ "$DOGFOOD_PHASE" = pre-publish ] || [ "$DOGFOOD_PHASE" = nightly ]; then
   # Before the cascade a dry-run of a workspace root cannot resolve its own
   # members (they are not on the registry yet), so it fails for a reason that
   # says nothing about the version. The question this row exists to answer --
   # "is $VERSION already on crates.io?" -- is asked of the registry directly.
   DRY=""; DRC=0
-  mark_version_row pre-publish
+  # --phase nightly measures the packaging at H (row 10, #5079): the WORKSPACE dry-run resolves the
+  # members against each other's local sources, so the registry reason above does not apply to it.
+  if [ "$DOGFOOD_PHASE" = nightly ]; then DRY=$(publish_dry_run_at_h 2>&1); DRC=$?; fi
+  mark_version_row "$DOGFOOD_PHASE"
 else
 DRY=$(env -u CARGO_REGISTRY_TOKEN cargo publish --dry-run --allow-dirty 2>&1); DRC=$?
 if [ "$DOGFOOD_PHASE" = post-publish ]; then
@@ -647,56 +748,58 @@ if [ -n "$CHANGELOG_PATH" ] && grep -qF "$VERSION" "$CHANGELOG_PATH"; then mark 
 elif [ -n "$CHANGELOG_PATH" ]; then mark changelog WARN "$CHANGELOG_PATH has no entry for $VERSION"
 else mark changelog WARN "no CHANGELOG.md (looked in $PWD and $REPO_ROOT)"; fi
 
+# ── C316 item 2c (#4672): pre-publish READS what the commit already has ─────
+# fmt and test re-ran, on the release commit, work CI had already done for that same commit. In
+# --phase pre-publish they now read it instead, for exactly HEAD's sha: fmt reads `ci / gate`
+# (same `cargo fmt --all -- --check`), test reads `workspace-test` (nextest --lib over the whole
+# workspace; the root facade's doctests and bin tests are not in it). No green receipt for that
+# sha is RED, never a skip: a red, pending or missing check, a green check on another commit, a
+# failed GitHub read, and a tree with uncommitted tracked changes. Coverage reads the receipt
+# cut_tag already requires: `tag_coverage_gate.sh --resolve SHA` (the coverage-nightly receipt,
+# #4734), PASS only on its rc 0. clippy stays measured; see where it sits (C314 design round, #4886).
+# One GraphQL call (GH-1); scripts/release/sha_checks.sh --self-test plants the reds.
+CI_READ="" CI_READ_ERR="" CI_SHA=""
+CI_SPEC_GATE="CI:ci / gate" CI_SPEC_TEST="CI:workspace-test"
+if [ "$DOGFOOD_PHASE" = pre-publish ]; then
+  CI_SHA=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)
+  if [ -z "$CI_SHA" ]; then CI_READ_ERR="there is no git HEAD to read CI for"
+  elif [ -n "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+    CI_READ_ERR="the tree has uncommitted tracked changes, so no CI result for ${CI_SHA:0:10} describes it"
+  else
+    CI_READ=$(bash "$SKILL_DIR/release/sha_checks.sh" "$CI_SHA" "$CI_SPEC_GATE" "$CI_SPEC_TEST" 2>&1)
+    printf '%s\n' "$CI_READ" > "${WORKLOG:-${TMPDIR:-/tmp}}/ci-read.log" 2>/dev/null || :
+  fi
+fi
+ci_mark() { # ci_mark <row> <spec> -- PASS only on sha_checks' "ok" line for <spec>
+  local line
+  if [ -n "$CI_READ_ERR" ]; then mark "$1" FAIL "pre-publish reads CI for HEAD, and $CI_READ_ERR"; return; fi
+  line=$(printf '%s\n' "$CI_READ" | grep -F -- " $2 -- " | head -1)
+  case "$line" in
+    "ok "*)  mark "$1" PASS "read, not re-run: ${line#ok "$2" -- }" ;;
+    "bad "*) mark "$1" FAIL "no green receipt: ${line#bad "$2" -- }" ;;
+    *)       mark "$1" FAIL "no receipt for '$2' on ${CI_SHA:0:10}: ${CI_READ:0:100}" ;;
+  esac
+}
+cov_mark() { # cov_mark -- PASS only when tag_coverage_gate.sh --resolve exits 0 for HEAD's sha
+  local out rc
+  if [ -n "$CI_READ_ERR" ]; then mark coverage FAIL "pre-publish reads the coverage receipt for HEAD, and $CI_READ_ERR"; return; fi
+  out=$(GIT_DIR=$(git -C "$REPO_ROOT" rev-parse --absolute-git-dir 2>/dev/null) bash "$SKILL_DIR/release/tag_coverage_gate.sh" --resolve "$CI_SHA" 2>&1); rc=$?
+  printf '%s\n' "$out" > "${WORKLOG:-${TMPDIR:-/tmp}}/coverage-gate.log" 2>/dev/null || :
+  if [ "$rc" -eq 0 ]; then mark coverage PASS "read, not re-run: coverage-nightly receipt for ${CI_SHA:0:10} holds COV_FLOOR"
+  else mark coverage FAIL "no coverage receipt at or above COV_FLOOR for ${CI_SHA:0:10} (tag_coverage_gate.sh --resolve rc $rc): $(printf '%s' "$out" | tail -n 1 | cut -c1-160)"; fi
+}
+
 # ── 4-8. quality gates ──────────────────────────────────────────────────────
 mark feature-scope INFO "clippy/test run with: ${FEAT_NOTE}"
-gate fmt              cargo fmt --all -- --check
+if [ "$DOGFOOD_PHASE" = pre-publish ]; then
+  ci_mark fmt    "$CI_SPEC_GATE"
+else
+  gate fmt              cargo fmt --all -- --check
+fi
+# clippy stays MEASURED in every phase (C314 design round on #4886): `ci / gate` lints default
+# features only, allows unused-variables and falls back to lib-only, which is narrower than this row.
 # shellcheck disable=SC2086
 gate clippy           cargo clippy --all-targets $FEATS -- -D warnings
-# shellcheck disable=SC2086
-gate test             cargo test $FEATS
-MAKEFILE_PATH=$(find_up Makefile)
-if [ -n "$MAKEFILE_PATH" ] && grep -qE '^coverage-check:' "$MAKEFILE_PATH" 2>/dev/null; then
-  # #3839 made coverage DEFERRABLE in pre-publish (operator 2026-09-22). SUPERSEDED by #3957
-  # F1b (operator 2026-09-23: "no defer", and "fold in 88% coverage" blocks 0.69.1): a miss is
-  # RED in every phase. The pre-publish branch below keeps the measured percentage in its note,
-  # because a FAIL that does not say what it measured is harder to act on.
-  #
-  # WHY. 87.82% (824853/939270) against COV_FLOOR 88, red in the nightly for 8
-  # consecutive runs back to 2026-09-15 and independent of any one release. The
-  # measurement itself is known wrong in both directions: COVERAGE_EXCLUDE_REGEX was
-  # last touched 2026-02-08 and APR-MONO moved realizar/entrenar/trueno in April, so
-  # `entrenar/` matches nothing at all and `trueno` matches 73 files in aprender-zram
-  # instead of 580 in aprender-compute. Repairing that moves a release gate's
-  # denominator in the direction that helps whoever moves it, so it is NOT done here.
-  #
-  cov_out=$(make -C "$(dirname "$MAKEFILE_PATH")" coverage-check 2>&1); cov_rc=$?
-  # KEEP THE LOG (#3844, aprender-45). `gate()` rows now write $WORKLOG/<name>.log,
-  # but coverage is a `mark` row with its own command substitution, so it was still
-  # discarding everything but one grep'd line. This is the row whose deferral is being
-  # asked for, which makes it the row whose evidence matters most.
-  printf '%s\n' "$cov_out" > "${WORKLOG:-${TMPDIR:-/tmp}}/coverage.log" 2>/dev/null || :
-  # ANCHOR the percentage to the line that ONLY EXISTS when LCOV was parsed.
-  # A bare `grep -oE '[0-9.]+%' | tail -1` scraped the Makefile's own BANNER --
-  # `@echo "Running coverage ($(COV_THRESHOLD)%+ threshold)..."`, COV_THRESHOLD := 95
-  # (Makefile:495,610) -- so an aborted run reported `measured 95% against floor 88`:
-  # a FABRICATED number, ABOVE the floor, for a gate that never ran. The
-  # `NO PERCENTAGE` fallback below was dead code, because the banner guarantees a
-  # match on every run. Found by aprender-45 on the yoga rehearsal.
-  # Measured: banner-only output -> new extractor yields "" (fallback fires);
-  #           `TOTAL: 824853/939270 lines covered (87.82%)` -> yields 87.82%.
-  cov_pct=$(printf '%s' "$cov_out" | grep -oE 'lines covered \([0-9]+(\.[0-9]+)?%\)' \
-            | grep -oE '[0-9]+(\.[0-9]+)?%' | tail -1)
-  cov_why=$(printf '%s' "$cov_out" | grep -iE 'REGRESSION|below the enforced floor|coverage [0-9]' | head -1)
-  if [ "$cov_rc" -eq 0 ]; then
-    mark coverage PASS "${cov_pct:+$cov_pct, }floor met"
-  elif [ "$DOGFOOD_PHASE" = pre-publish ]; then
-    # #3957 F1b: coverage is deferred WORK, not an unmeasurable row -- it is RED (operator
-    # rulings 2026-09-23: "no defer", and "fold in 88% coverage" blocks 0.69.1).
-    mark coverage FAIL "measured ${cov_pct:-NO PERCENTAGE (the run died before parsing LCOV)} against floor ${COV_FLOOR:-88}; owed by #3839 (stale COVERAGE_EXCLUDE_REGEX + the real gap). ${cov_why:0:60}"
-  else
-    mark coverage FAIL "${cov_why:-coverage-check failed (rc $cov_rc)}"
-  fi
-else mark coverage FAIL "no coverage-check make target in ${MAKEFILE_PATH:-$PWD/Makefile} — the >=95% floor is UNVERIFIED, which is not the same as met (was a WARN, contradicting this skill's own rule that a missing capability is a NO-GO)"; fi
 if command -v cargo-deny >/dev/null 2>&1; then gate security cargo deny check advisories
 else mark security FAIL "cargo-deny not installed — the advisory scan did not run, and a scan that did not run is not a clean scan"; fi
 
@@ -1056,25 +1159,24 @@ if command -v bashrs >/dev/null 2>&1; then
       # Classify by CODE PREFIX from the JSON, not by grepping rendered text.
       # (`--format json` prepends an ANSI tracing line when exactly ONE file is
       # linted; the sentinel guarantees >=2, and the parser skips it anyway.)
-      BR_CLASS=$(python3 - "$BR_DIR/out.json" <<'PY' 2>/dev/null || echo "PARSE_ERROR"
-import json, sys
-raw = open(sys.argv[1]).read()
-i = raw.find('{')
-raw = raw[i:] if i >= 0 else ''
-dec, pos, gating, soft, other, rules = json.JSONDecoder(), 0, 0, 0, 0, set()
-while pos < len(raw):
-    while pos < len(raw) and raw[pos] in ' \t\r\n': pos += 1
-    if pos >= len(raw): break
-    obj, pos = dec.raw_decode(raw, pos)
-    for d in obj.get('diagnostics', []):
-        if d.get('severity') != 'error': continue
-        c = d.get('code', '')
-        if c.startswith(('SEC', 'DET', 'IDEM')): gating += 1; rules.add(c)
-        elif c in ('SC1020', 'SC1035', 'SC1140'): soft += 1
-        else: other += 1
-print(f"{gating} {soft} {other} {' '.join(sorted(rules))}")
-PY
-)
+      # jq -s reads the stream of concatenated objects; everything before the first
+      # `{` (the ANSI line) is cut off first. jq is the LAST command of the pipe, so
+      # `|| PARSE_ERROR` sees jq's status (#4377: this was python3). An absent
+      # `diagnostics` holds none; one that is present but not a list is a
+      # PARSE_ERROR, as it was under python3.
+      # The soft-code filter sits on one quoted line of its own: check_bashrs_gate.sh
+      # greps for it verbatim, and check_dogfood_row_order.sh reads an unquoted
+      # `(. ` as a shell `.` (source) between the rows.
+      BR_OFF=$(grep -bo '{' "$BR_DIR/out.json" 2>/dev/null | head -n 1 | cut -d: -f1)
+      BR_SOFT='select(. == "SC1020" or . == "SC1035" or . == "SC1140")'
+      BR_CLASS=$( { [ -n "$BR_OFF" ] && tail -c +"$((BR_OFF + 1))" "$BR_DIR/out.json"; } \
+        | jq -rs '[.[] | (if has("diagnostics") then .diagnostics else [] end)
+          | if type == "array" then .[] else error("bashrs diagnostics is not a list") end
+          | select(.severity == "error") | (.code // "")] as $c
+          | ($c | map(select(test("^(SEC|DET|IDEM)")))) as $g
+          | ($c | map('"$BR_SOFT"') | length) as $soft
+          | "\($g | length) \($soft) \(($c | length) - ($g | length) - $soft) \($g | unique | join(" "))"' \
+        2>/dev/null || echo "PARSE_ERROR")
       BR_GATING=$(printf '%s' "$BR_CLASS" | awk '{print $1}')
       BR_SOFT=$(printf '%s'   "$BR_CLASS" | awk '{print $2}')
       BR_OTHER=$(printf '%s'  "$BR_CLASS" | awk '{print $3}')
@@ -1121,32 +1223,12 @@ if command -v "$PMAT_BIN" >/dev/null 2>&1; then
   #
   # Note pmat-comply below still runs and still gates CB-200, so a bin-only crate
   # is NOT unmeasured — it loses one of two pmat gates, not both.
-  HAS_LIB_TARGET=$(cargo metadata --no-deps --format-version 1 2>/dev/null \
-    | python3 -c '
-import json,os,sys
-here=os.path.realpath("Cargo.toml")
-try:
-    d=json.load(sys.stdin)
-except Exception:
-    print("unknown"); raise SystemExit
-for p in d.get("packages",[]):
-    if os.path.realpath(p.get("manifest_path","")) == here:
-        ks=[k for t in p.get("targets",[]) for k in t["kind"]]
-        print("yes" if ("lib" in ks or "rlib" in ks) else "no"); raise SystemExit
-print("unknown")' 2>/dev/null)
+  HAS_LIB_TARGET=$( { _pkg_json || echo null; } \
+    | jq -r 'if type != "object" then "unknown"
+             elif any(.targets[]?.kind[]?; test("^r?lib$")) then "yes"
+             else "no" end' 2>/dev/null || echo unknown)
   if [ "$HAS_LIB_TARGET" = "no" ]; then
-    TGTS=$(cargo metadata --no-deps --format-version 1 2>/dev/null \
-      | python3 -c '
-import json,os,sys
-here=os.path.realpath("Cargo.toml")
-try:
-    d=json.load(sys.stdin)
-except Exception:
-    print("?"); raise SystemExit
-for p in d.get("packages",[]):
-    if os.path.realpath(p.get("manifest_path","")) == here:
-        print(",".join(sorted({k for t in p.get("targets",[]) for k in t["kind"]}))); raise SystemExit
-print("?")' 2>/dev/null)
+    TGTS=$(_pkg_json | jq -r '[.targets[]?.kind[]?] | unique | join(",")' 2>/dev/null)
     mark pmat-verify SKIP "package has no lib target (kinds present: ${TGTS:-?}) — \`pmat verify\` requires one and hard-errors otherwise; pmat-comply/CB-200 below still gates this crate"
   else
     gate pmat-verify "$PMAT_BIN" verify --format json
@@ -1181,17 +1263,17 @@ print("?")' 2>/dev/null)
   # report "could not parse" for a run that worked perfectly.
   run_split "$WORKLOG/comply.json" "$WORKLOG/comply.err" timeout 900 "$PMAT_BIN" comply check --format json
   PMAT_COMPLY_RC=$RUN_RC
-  PMAT_SUM=$(python3 - "$WORKLOG/comply.json" <<'PY' 2>/dev/null || echo "PARSE_ERROR"
-import json, sys
-d = json.load(open(sys.argv[1]))
-s = d['summary']
-checks = {c['name']: c for c in d['checks']}
-cb = next((c for n, c in checks.items() if n.startswith('CB-200')), None)
-dark = [n for n, c in checks.items()
-        if c.get('status') == 'Skip' and c.get('severity') == 'Error']
-print(f"{s['fail']} {s['skip']} {cb['status'] if cb else 'ABSENT'} {len(dark)}")
-PY
-)
+  # Checks are keyed by name, last one wins, as before. A missing summary.fail,
+  # summary.skip, check name or CB-200 status is an error, so PARSE_ERROR
+  # (#4377: this was python3).
+  PMAT_SUM=$(jq -r '
+    def need($k): if has($k) then .[$k] else error("missing \($k)") end;
+    (.summary | need("fail")) as $fail | (.summary | need("skip")) as $skip
+    | (reduce .checks[] as $c ({}; .[($c | need("name"))] = $c) | to_entries | map(.value)) as $checks
+    | ([$checks | .[] | select(.name | startswith("CB-200"))] | first) as $cb
+    | ([$checks | .[] | select(.status == "Skip" and .severity == "Error")] | length) as $dark
+    | "\($fail) \($skip) \(if $cb == null then "ABSENT" else ($cb | need("status")) end) \($dark)"' \
+    "$WORKLOG/comply.json" 2>/dev/null || echo "PARSE_ERROR")
   if [ "$PMAT_SUM" = "PARSE_ERROR" ]; then
     mark pmat-comply FAIL "could not parse \`pmat comply check --format json\` (exit=$PMAT_COMPLY_RC, index build exit=$PMAT_IDX_RC) — the fleet gate did not run"
   else
@@ -1255,7 +1337,7 @@ PY
   # sweep of the whole file noticed. `--help` on a stale pmat also decides
   # whether the gate runs AT ALL, so an unpinned probe silently skips it.
   if "$PMAT_BIN" analyze reachability --help >/dev/null 2>&1; then
-    RO=$(timeout 900 "$PMAT_BIN" analyze reachability -p . -f json 2>/dev/null | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['orphan_count'],d['orphan_tests'])" 2>/dev/null || echo "? ?")
+    RO=$(timeout 900 "$PMAT_BIN" analyze reachability -p . -f json 2>/dev/null | jq -r 'if has("orphan_count") and has("orphan_tests") then "\(.orphan_count) \(.orphan_tests)" else error("no orphan counts") end' 2>/dev/null || echo "? ?")
     mark reachability WARN "unreachable files/tests: $RO (a file the build never compiles cannot be tested)"
   else
     # The if-with-no-else made this row VANISH on any pmat without the
@@ -1317,10 +1399,7 @@ else
 fi
 
 # ── 10. publish dry-run (already run above; verdict is its exit code) ───────
-if [ "$DOGFOOD_PHASE" = pre-publish ]; then
-  mark publish-dry-run OPEN "a workspace root cannot dry-run before its members are on the registry; discharged by the cascade's own per-tier publish and the post-publish dogfood"
-elif [ $DRC -eq 0 ]; then mark publish-dry-run PASS "packages cleanly"
-else mark publish-dry-run FAIL "$(printf '%s' "$DRY" | grep -iE 'error' | head -1)"; fi
+mark_publish_dry_run "$DRC" "$DRY"
 
 # ── 10b. the four apr binaries the tag owes (row 67-A1, PMAT-1098, #3082) ───
 # v0.66.0 shipped eight `pv` tarballs and ZERO `apr` binaries, and no gate said
@@ -1470,33 +1549,9 @@ fi
 # at least one test that passes. "0 tests, ok" is a vacuous pass and FAILs here.
 run_to "$WORKLOG/meta.json" cargo metadata --no-deps --format-version 1
 META_RC=$RUN_RC
-TP_PLAN=$(CRATE="$CRATE" python3 - "$WORKLOG/meta.json" <<'PY' 2>/dev/null || echo "META_ERROR"
-import json, os, sys
-d = json.load(open(sys.argv[1]))
-name = os.environ.get('CRATE', '')
-pkgs = d.get('packages', [])
-pkg = next((p for p in pkgs if p['name'] == name), None)
-if pkg is None and len(pkgs) == 1:
-    pkg = pkgs[0]
-if pkg is None:
-    print("NOPKG " + ",".join(sorted(p['name'] for p in pkgs))); raise SystemExit
-tp = (pkg.get('metadata') or {}).get('transports')
-tests = {t['name']: t['src_path'] for t in pkg['targets'] if 'test' in t['kind']}
-if not tp:
-    print("NODECL"); raise SystemExit
-man = tp.get('manifest')
-if isinstance(man, dict):
-    print(f"MANIFEST {man.get('path') or '-'} {man.get('regen') or '-'}")
-for k, v in sorted(tp.items()):
-    if k == 'manifest':
-        continue
-    if isinstance(v, bool):
-        print(f"BADSHAPE {k}"); continue
-    tgt = (v or {}).get('e2e', '')
-    feats = ",".join((v or {}).get('features', []))
-    print(f"DECL {k} {tgt or '-'} {feats or '-'} {tests.get(tgt, '-')}")
-PY
-)
+# The parser is scripts/lib/dogfood_transports.jq (#4377: this was python3).
+TP_PLAN=$(jq -r --arg crate "$CRATE" -f "$SKILL_DIR/lib/dogfood_transports.jq" \
+  "$WORKLOG/meta.json" 2>/dev/null || echo "META_ERROR")
 TP_BLOCKED=""
 if [ "$TP_PLAN" = "META_ERROR" ] || [ "$META_RC" -ne 0 ]; then
   mark transport-decl FAIL "\`cargo metadata\` failed (exit=$META_RC) — the transport declaration could not be read"
@@ -1615,28 +1670,24 @@ fi
 #
 # Declare it in Cargo.toml beside [package.metadata.transports]; see SKILL.md.
 #
-# NOT a pipeline: `python3 ... | head` reports head's status, and this gate's
+# NOT a pipeline: `checker ... | head` reports head's status, and this gate's
 # whole value is its own exit code. run_to keeps the command's status in
 # $RUN_RC — see run_to's comment and the two false GREENs that earned it.
-UI_DECL=$(CRATE="$CRATE" python3 - "$WORKLOG/meta.json" <<'UIPY' 2>/dev/null || echo ""
-import json, os, sys
-try:
-    d = json.load(open(sys.argv[1]))
-    pkg = next((p for p in d["packages"] if p["name"] == os.environ["CRATE"]), None)
-    us = ((pkg or {}).get("metadata") or {}).get("unified_surface")
-    print(json.dumps(us) if us else "")
-except Exception:
-    print("")
-UIPY
-)
+# The declaration of the package named $CRATE, compact; "" when absent, empty,
+# or unreadable (#4377: this was python3).
+UI_DECL=$(jq -c --arg crate "$CRATE" '
+  (first(.packages[] | select(.name == $crate)) // {}) | (.metadata // {}).unified_surface
+  | (select(IN(null, false, 0, "", [], {}) | not) // "")' \
+  "$WORKLOG/meta.json" 2>/dev/null) || UI_DECL=""
+[ "$UI_DECL" = '""' ] && UI_DECL=""
 if [ ! -x "$BINPATH" ]; then
   mark transport-invariance FAIL "no release binary at $BINPATH — nothing to invoke"
 elif [ -z "$UI_DECL" ]; then
   mark transport-invariance SKIP "no [package.metadata.unified_surface] — declare list/cli/http/probe to enable the simultaneous cross-transport check"
-elif [ ! -f "$SKILL_DIR/invariance.py" ]; then
-  mark transport-invariance FAIL "invariance.py missing from $SKILL_DIR — a gate that cannot run is not a SKIP"
+elif [ ! -f "$SKILL_DIR/invariance.sh" ]; then
+  mark transport-invariance FAIL "invariance.sh missing from $SKILL_DIR — a gate that cannot run is not a SKIP"
 else
-  run_to "$WORKLOG/invariance.log" python3 "$SKILL_DIR/invariance.py" "$BINPATH" "$UI_DECL"
+  run_to "$WORKLOG/invariance.log" bash "$SKILL_DIR/invariance.sh" "$BINPATH" "$UI_DECL"
   INV_RC=$RUN_RC
   INV_MSG=$(head -1 "$WORKLOG/invariance.log" 2>/dev/null || echo "")
   case "$INV_RC:$INV_MSG" in
@@ -1795,6 +1846,61 @@ else
   mark model-parity FAIL "scripts/check_model_parity.sh is missing — claim 2 (GPU = CPU per manifest model) is unmeasured"
 fi
 
+# ── 12. the LONG rows, LAST (#4672) ─────────────────────────────────────────
+# test and coverage ($DOGFOOD_LONG_ROWS) take hours; every row above takes minutes. They
+# run here so a red cheap row is known before the long wait, not after it. Moved
+# from section 4-8 unchanged but for one note's wording; their verdicts count exactly as before.
+if [ "$DOGFOOD_PHASE" = pre-publish ]; then
+  ci_mark test     "$CI_SPEC_TEST"
+  cov_mark
+else
+# shellcheck disable=SC2086
+gate test             cargo test $FEATS
+MAKEFILE_PATH=$(find_up Makefile)
+if [ -n "$MAKEFILE_PATH" ] && grep -qE '^coverage-check:' "$MAKEFILE_PATH" 2>/dev/null; then
+  # #3839 made coverage DEFERRABLE in pre-publish (operator 2026-09-22). SUPERSEDED by #3957
+  # F1b (operator 2026-09-23: "no defer", and "fold in 88% coverage" blocks 0.69.1): a miss is
+  # RED in every phase. The pre-publish branch below keeps the measured percentage in its note,
+  # because a FAIL that does not say what it measured is harder to act on.
+  #
+  # WHY. 87.82% (824853/939270) against COV_FLOOR 88, red in the nightly for 8
+  # consecutive runs back to 2026-09-15 and independent of any one release. The
+  # measurement itself is known wrong in both directions: COVERAGE_EXCLUDE_REGEX was
+  # last touched 2026-02-08 and APR-MONO moved realizar/entrenar/trueno in April, so
+  # `entrenar/` matches nothing at all and `trueno` matches 73 files in aprender-zram
+  # instead of 580 in aprender-compute. Repairing that moves a release gate's
+  # denominator in the direction that helps whoever moves it, so it is NOT done here.
+  #
+  cov_out=$(make -C "$(dirname "$MAKEFILE_PATH")" coverage-check 2>&1); cov_rc=$?
+  # KEEP THE LOG (#3844). `gate()` rows now write $WORKLOG/<name>.log,
+  # but coverage is a `mark` row with its own command substitution, so it was still
+  # discarding everything but one grep'd line. This is the row whose deferral is being
+  # asked for, which makes it the row whose evidence matters most.
+  printf '%s\n' "$cov_out" > "${WORKLOG:-${TMPDIR:-/tmp}}/coverage.log" 2>/dev/null || :
+  # ANCHOR the percentage to the line that ONLY EXISTS when LCOV was parsed.
+  # A bare `grep -oE '[0-9.]+%' | tail -1` scraped the Makefile's own BANNER --
+  # `@echo "Running coverage ($(COV_THRESHOLD)%+ threshold)..."`, COV_THRESHOLD := 95
+  # (Makefile:495,610) -- so an aborted run reported `measured 95% against floor 88`:
+  # a FABRICATED number, ABOVE the floor, for a gate that never ran. The
+  # `NO PERCENTAGE` fallback below was dead code, because the banner guarantees a
+  # match on every run. Found on a release rehearsal.
+  # Measured: banner-only output -> new extractor yields "" (fallback fires);
+  #           `TOTAL: 824853/939270 lines covered (87.82%)` -> yields 87.82%.
+  cov_pct=$(printf '%s' "$cov_out" | grep -oE 'lines covered \([0-9]+(\.[0-9]+)?%\)' \
+            | grep -oE '[0-9]+(\.[0-9]+)?%' | tail -1)
+  cov_why=$(printf '%s' "$cov_out" | grep -iE 'REGRESSION|below the enforced floor|coverage [0-9]' | head -1)
+  if [ "$cov_rc" -eq 0 ]; then
+    mark coverage PASS "${cov_pct:+$cov_pct, }floor met"
+  elif [ "$DOGFOOD_PHASE" = pre-publish ]; then
+    # #3957 F1b: coverage is deferred WORK, not an unmeasurable row -- it is RED (operator
+    # rulings 2026-09-23: "no defer", and "fold in 88% coverage" blocks 0.69.1).
+    mark coverage FAIL "measured ${cov_pct:-NO PERCENTAGE (the run died before parsing LCOV)} against floor ${COV_FLOOR:-88}; owed by #3839 (stale COVERAGE_EXCLUDE_REGEX + the real gap). ${cov_why:0:60}"
+  else
+    mark coverage FAIL "${cov_why:-coverage-check failed (rc $cov_rc)}"
+  fi
+else mark coverage FAIL "no coverage-check make target in ${MAKEFILE_PATH:-$PWD/Makefile} — the >=95% floor is UNVERIFIED, which is not the same as met (was a WARN, contradicting the rule of this skill that a missing capability is a NO-GO)"; fi
+fi # end: pre-publish reads CI (C316 2c), every other phase measures
+
 # ── clean-room reminder (heavy, runs on the CI box; not automated here) ─────
 mark clean-room MANUAL "run \`make -C ../infra/machines/clean-room clean-room-$CRATE\` (MANDATORY release gate)"
 
@@ -1814,49 +1920,142 @@ mark clean-room MANUAL "run \`make -C ../infra/machines/clean-room clean-room-$C
 # file that exists, looks like evidence, and answers no question. Encoded with
 # a real JSON encoder now, and the result is parsed back before the script will
 # claim it wrote one.
-NAMES_TSV=$(for i in "${!NAMES[@]}"; do
-  printf '%s\t%s\t%s\n' "${NAMES[$i]}" "${RESULTS[$i]}" "$(printf '%s' "${NOTES[$i]}" | tr '\n' '\r')"
-done)
-CRATE="$CRATE" VERSION="$VERSION" TS="$TS" SHA="$RECEIPT_SHA" PHASE="$DOGFOOD_PHASE" \
-VERDICT="$([ $FAILED -eq 0 ] && echo GO || echo NO-GO)" \
-ROWS="$NAMES_TSV" python3 > "$RECEIPT_PARTIAL" <<'PY'
-import json, os
-gates = []
-for line in os.environ.get("ROWS", "").split("\n"):
-    if not line.strip():
-        continue
-    parts = line.split("\t")
-    name, result = parts[0], parts[1] if len(parts) > 1 else ""
-    # rejoin: a literal TAB inside a gate note (log tails carry them) used to
-    # silently drop everything after it (#2644, DF-10)
-    note = "\t".join(parts[2:]).replace("\r", "\n") if len(parts) > 2 else ""
-    gates.append({"gate": name, "result": result, "note": note})
-print(json.dumps({
-    "crate": os.environ["CRATE"], "version": os.environ["VERSION"],
-    "timestamp": os.environ["TS"], "commit": os.environ["SHA"], "gates": gates,
-    "phase": os.environ["PHASE"],
-    "deferred": [g["gate"] for g in gates if g["result"] == "DEFER"],   # always empty since #3957 F1b; R5 refuses any
-    "open_obligations": [g["gate"] for g in gates if g["result"] == "OPEN"],
-    "verdict": os.environ["VERDICT"],
-}, indent=2))
-PY
-if ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$RECEIPT_PARTIAL" 2>/dev/null; then
+#
+# Since #4377 the receipt is also a dogfood-receipt/v1 (paiml/infra
+# contracts/dogfood-receipt-v1.yaml): `schema`, `repo`, `tag`, `commit`, `host`,
+# `verdict`, `rows` and `counts` sit beside the fields the release preflight
+# already reads (crate, version, timestamp, gates, phase, deferred,
+# open_obligations), which keep their meaning. One object, one verdict. It is
+# written twice: as receipt-<TS>.json, and as dogfood-receipt-v1.<host>.json,
+# the asset name the tag's release carries. Encoded by jq (#4377: python3 did
+# this, and no step of the gate path may need Python).
+#
+# VERDICT is the AND over every row. The v1 verdict is that AND and three more
+# conditions, none of which is a row (a row here would run after the long rows):
+#   - a run in which no row PASSed is NO-GO (DFR-INV-003): zero passes is vacuous;
+#   - a status outside mark()'s vocabulary has no v1 meaning, so it is RED;
+#   - a receipt with no owner/name repo is inadmissible, so it is not a GO.
+# Each one that holds is named in the receipt's `refusals`, and the script exits
+# on the receipt's verdict, so the printed verdict and the receipt cannot disagree.
+VERDICT="$([ $FAILED -eq 0 ] && echo GO || echo NO-GO)"
+# repo: DOGFOOD_REPO, else owner/name from origin.
+# tag: DOGFOOD_TAG, else the tag exactly at HEAD, else the tag this version
+# would carry; tag_source records which. host: DOGFOOD_HOST, else <arch>-<os>,
+# which names the platform and not the machine, because the asset is public.
+DF_REPO=${DOGFOOD_REPO:-$(git remote get-url origin 2>/dev/null \
+  | sed -nE 's#^.*[:/]([^/:]+)/([^/]+)$#\1/\2#p' | sed 's/\.git$//')}
+if [ -n "${DOGFOOD_TAG:-}" ]; then DF_TAG=$DOGFOOD_TAG DF_TAG_SRC=env
+elif DF_TAG=$(git describe --exact-match --tags HEAD 2>/dev/null); then DF_TAG_SRC=exact-at-head
+else DF_TAG="v$VERSION" DF_TAG_SRC=version
+fi
+DF_HOST=${DOGFOOD_HOST:-$(uname -m)-$(uname -s | tr '[:upper:]' '[:lower:]')}
+DF_HOST=$(printf '%s' "$DF_HOST" | tr -c 'A-Za-z0-9._-' '_')
+RECEIPT_V1="$RECEIPT_DIR/dogfood-receipt-v1.$DF_HOST.json"
+# One JSON line per row first (jq does the string escaping), then one object.
+DF_ENC_OK=1
+: > "$RECEIPT_PARTIAL.rows"
+for i in "${!NAMES[@]}"; do
+  jq -nc --arg g "${NAMES[$i]}" --arg r "${RESULTS[$i]}" --arg n "${NOTES[$i]}" \
+    '{gate: $g, result: $r, note: $n}' >> "$RECEIPT_PARTIAL.rows" || DF_ENC_OK=0
+done
+if [ "$DF_ENC_OK" != 1 ] || ! jq -s \
+  --arg crate "$CRATE" --arg version "$VERSION" --arg ts "$TS" --arg sha "$RECEIPT_SHA" \
+  --arg phase "$DOGFOOD_PHASE" --arg verdict "$VERDICT" --arg repo "$DF_REPO" \
+  --arg tag "$DF_TAG" --arg tag_source "$DF_TAG_SRC" --arg host "$DF_HOST" '
+  # legacy status -> v1 status. Only PASS counts as passed. WARN, REPORT and INFO
+  # never gate, so they are SKIP with a reason that says so; MANUAL and OPEN were
+  # not run by this script, so they are NotRun.
+  def v1: {PASS: "PASS", FAIL: "FAIL", SKIP: "SKIP", WARN: "SKIP", REPORT: "SKIP",
+           INFO: "SKIP", MANUAL: "NotRun", OPEN: "NotRun"}[.] // "FAIL";
+  def reason($g):
+    ($g.note | if . == "" then "\($g.result) with no note" else . end) as $n
+    | if ($g.result | IN("WARN", "REPORT", "INFO")) then "non-gating \($g.result): \($n)"
+      elif ($g.result | IN("PASS", "FAIL", "SKIP", "MANUAL", "OPEN")) then $n
+      else "unknown status \($g.result): \($n)" end;
+  . as $gates
+  # a row id is the gate name; a repeated name gets #2, #3 (DFR-INV-004: ids unique)
+  | [foreach ($gates | .[]) as $g ({};
+       .[$g.gate] += 1;
+       {id: (if .[$g.gate] == 1 then $g.gate
+             else "\($g.gate)#\(.[$g.gate])" end),
+        status: ($g.result | v1), reason: reason($g),
+        legacy_result: $g.result})] as $rows
+  | ([$rows | .[] | select(.status == "PASS")] | length) as $passed
+  | ([$rows | .[] | select(.status == "FAIL")] | length) as $red
+  | ([$gates | .[] | select(.result | IN("PASS", "FAIL", "SKIP", "WARN", "REPORT", "INFO", "MANUAL", "OPEN") | not)
+     | "\(.gate)=\(.result)"]) as $alien
+  | [if $passed == 0 then "no row PASSed: a GO over zero measured passes is vacuous (DFR-INV-003)" else empty end,
+     if ($alien | length) > 0 then "row status outside the mark() vocabulary: \($alien | join(" "))" else empty end,
+     if ($repo | test("^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")) then empty
+     else "no owner/name for this repo (origin unset or not a hosted remote; set DOGFOOD_REPO): got \"\($repo)\"" end]
+    as $refusals
+  | {schema: "dogfood-receipt/v1", repo: $repo, tag: $tag, tag_source: $tag_source,
+     commit: $sha, host: $host,
+     verdict: (if $verdict == "GO" and $red == 0 and ($refusals | length) == 0 then "GO" else "NO-GO" end),
+     refusals: $refusals,
+     rows: $rows,
+     counts: {rows: ($rows | length), passed: $passed, failed: $red,
+              unmeasured: ([$rows | .[] | select(.status == "NotRun" or .status == "SKIP")] | length)},
+     crate: $crate, version: $version, timestamp: $ts, gates: $gates, phase: $phase,
+     deferred: [$gates | .[] | select(.result == "DEFER") | .gate],   # always empty since #3957 F1b; R5 refuses any
+     open_obligations: [$gates | .[] | select(.result == "OPEN") | .gate]}' "$RECEIPT_PARTIAL.rows" > "$RECEIPT_PARTIAL"; then
+  echo "FATAL: the receipt encoder (jq) failed ($RECEIPT_PARTIAL)." >&2
+  echo "       Refusing to report a verdict backed by evidence that was not written." >&2
+  exit 3
+fi
+if ! jq -e 'type == "object" and .schema == "dogfood-receipt/v1"' "$RECEIPT_PARTIAL" >/dev/null 2>&1; then
   echo "FATAL: the receipt this run just wrote is not valid JSON ($RECEIPT_PARTIAL)." >&2
   echo "       Refusing to report a verdict backed by evidence that cannot be read." >&2
   echo "       The .partial is kept as-is; no completed receipt exists for this run." >&2
   exit 3
 fi
+rm -f "${RECEIPT_PARTIAL:?}.rows"
 # Atomic completion: the receipt EXISTS only once it is whole and parseable.
 mv "$RECEIPT_PARTIAL" "$RECEIPT"
+# The same bytes under the release-asset name (one per host, newest run wins).
+# Attach it to the tag's release: gh release upload <tag> "$RECEIPT_V1".
+if cp "$RECEIPT" "$RECEIPT_V1.partial" && mv "$RECEIPT_V1.partial" "$RECEIPT_V1"; then
+  echo "receipt: $RECEIPT_V1 (dogfood-receipt/v1; attach to the release of $DF_TAG)"
+else
+  echo "FATAL: could not write $RECEIPT_V1" >&2
+  exit 3
+fi
+# ROW TIME (#4672) goes in a sidecar beside the receipt, one line per receipt row in run
+# order, so the receipt's schema -- which the release preflight reads -- does not change.
+# dur_s is the time since the previous row closed; closed_at_s is time since the run began.
+TIMING="${RECEIPT%.json}.timing.tsv"
+if ! { printf 'idx\tgate\tresult\tdur_s\tclosed_at_s\n'
+       for i in "${!NAMES[@]}"; do
+         printf '%s\t%s\t%s\t%s\t%s\n' "$i" "${NAMES[$i]}" "${RESULTS[$i]}" "${DURS[$i]:-}" "${ENDS[$i]:-}"
+       done; } > "$TIMING"; then
+  echo "row times: not_measured -- the timing sidecar could not be written ($TIMING)" >&2
+fi
+# The CHEAP tier is every row that is neither long nor the clean-room reminder.
+CHEAP_N=0 CHEAP_END=0 CHEAP_RED=""
+for i in "${!NAMES[@]}"; do
+  case " $DOGFOOD_LONG_ROWS clean-room " in *" ${NAMES[$i]} "*) continue ;; esac
+  CHEAP_N=$((CHEAP_N+1)); CHEAP_END="${ENDS[$i]:-$CHEAP_END}"
+  [ "${RESULTS[$i]}" = FAIL ] && CHEAP_RED="$CHEAP_RED ${NAMES[$i]}"
+done
 
 echo "────────────────────────────────────────────────"
 echo "receipt: $RECEIPT"
-if [ $FAILED -eq 0 ]; then
+echo "row times: $TIMING"
+if [ -n "$CHEAP_RED" ]; then
+  echo "CHEAP TIER: RED ($CHEAP_N rows; red:$CHEAP_RED) closed at +${CHEAP_END}s of +${SECONDS}s -- the long rows ($DOGFOOD_LONG_ROWS) still ran after it"
+else
+  echo "CHEAP TIER: GREEN ($CHEAP_N rows) closed at +${CHEAP_END}s of +${SECONDS}s"
+fi
+# The exit follows the receipt's verdict: VERDICT and, beyond it, the receipt's refusals.
+DF_V1_VERDICT=$(jq -r '.verdict' "$RECEIPT" 2>/dev/null) || DF_V1_VERDICT=NO-GO
+if [ "$DF_V1_VERDICT" = GO ]; then
   for i in "${!NAMES[@]}"; do
     [ "${RESULTS[$i]}" = OPEN ] || continue
     printf '  · OPEN  %-18s %s\n' "${NAMES[$i]}" "${NOTES[$i]}"
   done
-  if [ "$DOGFOOD_PHASE" = pre-publish ]; then
+  if [ "$DOGFOOD_PHASE" = nightly ]; then
+    echo "VERDICT: ✅ GO (phase nightly) — every row measured green at H. A nightly receipt is not a release receipt: the preflight (R5) refuses it."
+  elif [ "$DOGFOOD_PHASE" = pre-publish ]; then
     echo "VERDICT: ✅ GO (phase pre-publish) — every measurable gate green; the OPEN rows above are post-publish obligations, NOT passed: the post-publish dogfood FAILs if any is unmet (#3957 F1b)."
   else
     echo "VERDICT: ✅ GO — all automated gates green. Complete clean-room (MANDATORY) then release."
@@ -1865,7 +2064,8 @@ if [ $FAILED -eq 0 ]; then
 else
   # Name every failing gate and its note. A verdict that says only "a gate
   # failed" makes the reader hunt for it, and the hunt is where bypasses start.
-  echo "NO-GO — these gates are RED (fix the root cause; never bypass):"
+  echo "NO-GO — these gates are RED, or the receipt refuses a GO (fix the root cause; never bypass):"
+  jq -r '.refusals[]? | "  · receipt: \(.)"' "$RECEIPT" 2>/dev/null
   for i in "${!NAMES[@]}"; do
     [ "${RESULTS[$i]}" = FAIL ] || continue
     printf '  · %-24s %s\n' "${NAMES[$i]}" "${NOTES[$i]}"

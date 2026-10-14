@@ -304,6 +304,12 @@ pub enum Commands {
         /// promote to Error and fail CI. Issue #1510.
         #[arg(long)]
         strict_test_binding: bool,
+        /// Run only what `--strict-test-binding` needs: validate (its precondition) and the strict
+        /// test-binding gate. Gates 2-22 do not run and nothing is cached or recorded as trend;
+        /// every armed gate that did not run reads `NotRun`, so this never reports a full-lint
+        /// PASS. The JSON keeps the full-lint shape. Implies `--strict-test-binding`. aprender#4974.
+        #[arg(long, conflicts_with_all = ["gate", "watch", "trend"])]
+        strict_test_binding_only: bool,
         /// Git ref whose `lint-baseline.json` is the `armed_gates` comparand (ONT-001 section 3.9). Default:
         /// merge-base(HEAD, origin/main), else the origin/main tip; with neither, NOT CHECKED is printed.
         #[arg(long)]
@@ -674,6 +680,13 @@ pub struct ReleaseArgs {
     /// The CRUX receipts, apr vs its comparators (default: evidence/crux/<version>/)
     #[arg(long)]
     pub crux_receipts: Option<PathBuf>,
+    /// aprender#3715 v2: the kernel-cell evidence dir (`input-sets.json`, `<host>/parity/*.json`). Adds the v2
+    /// kernel and model cells to the release graph; absent → none. Needs the kernel registry in the repo.
+    #[arg(long)]
+    pub v2_evidence: Option<PathBuf>,
+    /// The gate time (`YYYY-MM-DDTHH:MM:SSZ`) v2 sanitizer runs are aged against; absent → every run is stale
+    #[arg(long)]
+    pub gate_utc: Option<String>,
 }
 
 impl ReleaseArgs {
@@ -689,6 +702,8 @@ impl ReleaseArgs {
             || self.tokenizer_receipts.is_some()
             || self.surface.is_some()
             || self.crux_receipts.is_some()
+            || self.v2_evidence.is_some()
+            || self.gate_utc.is_some()
     }
 
     /// The subject, or `None` when no flag was passed. A partial set is refused, never completed by a default.
@@ -718,6 +733,8 @@ impl ReleaseArgs {
             .clone_from(&self.tokenizer_receipts);
         s.surface.clone_from(&self.surface);
         s.crux_receipts_dir.clone_from(&self.crux_receipts);
+        s.v2_dir.clone_from(&self.v2_evidence);
+        s.v2_gate_utc.clone_from(&self.gate_utc);
         Ok(Some(s))
     }
 }

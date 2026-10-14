@@ -19,11 +19,13 @@ use axum::{
 };
 use futures::stream::Stream;
 
+use super::chat_logprobs::StreamLogprobs;
+use super::stream_tool_calls::{self, StreamTools, ToolCallDetector};
 use super::{
     build_trace_data, clean_chat_output, format_chat_messages,
-    format_chat_messages_for_state_thinking, AppState, ChatChoice, ChatCompletionChunk,
+    format_chat_messages_for_state_thinking_tools, AppState, ChatChoice, ChatCompletionChunk,
     ChatCompletionRequest, ChatCompletionResponse, ChatMessage, ErrorResponse, FinishReason,
-    OpenAIModel, OpenAIModelsResponse, StreamMode, Usage,
+    OpenAIModel, OpenAIModelsResponse, StreamMode, TraceData, Usage,
 };
 use crate::generate::{CancelToken, GenerationConfig, SamplingStrategy};
 use crate::tokenizer::BPETokenizer;
@@ -64,6 +66,21 @@ fn require_tokenizer(state: &AppState) -> Result<Arc<BPETokenizer>, Response> {
     })
 }
 
+/// [`require_tokenizer`] for a chat backend that does not compute logprobs:
+/// a request that asked for them is refused with 501 naming `backend`, never
+/// served without them (#4971, ASOC-INV-021).
+#[allow(clippy::result_large_err)]
+fn require_tokenizer_refusing_logprobs(
+    state: &AppState,
+    request: &ChatCompletionRequest,
+    backend: &str,
+) -> Result<Arc<BPETokenizer>, Response> {
+    match super::chat_logprobs::logprobs_refusal(request, backend) {
+        Some(reason) => Err(fail_response(state, StatusCode::NOT_IMPLEMENTED, reason)),
+        None => require_tokenizer(state),
+    }
+}
+
 /// D5 (ruling-3715-2010): pass a tokenized turn through, or refuse it with a 400
 /// that names the limit when it cannot fit the serving context
 /// ([`AppState::serving_context`]; `None` means no cap, so nothing is refused).
@@ -90,12 +107,13 @@ fn tokenize_chat_prompt(
     messages: &[ChatMessage],
     model_hint: Option<&str>,
     thinking: Option<bool>,
+    tools: Option<&[super::OpenAiTool]>,
     state: &AppState,
 ) -> Result<Vec<u32>, Response> {
     // #3723: the request's thinking mode; an ON the model's template cannot express is the
-    // client's error, answered by name.
+    // client's error, answered by name. #4650: the request's tools reach the template too.
     let prompt_text =
-        format_chat_messages_for_state_thinking(state, messages, model_hint, thinking)
+        format_chat_messages_for_state_thinking_tools(state, messages, model_hint, thinking, tools)
             .map_err(|e| fail_response(state, StatusCode::BAD_REQUEST, e.to_string()))?;
     let ids = tokenizer.encode(&prompt_text);
     if ids.is_empty() {
@@ -475,7 +493,10 @@ mod pmat821_chat_handler_threading_tests {
             tool_choice: None,
             chat_template_kwargs: None,
             think: None,
+            response_format: None,
             stream_options: None,
+            logprobs: None,
+            top_logprobs: None,
         }
     }
 
@@ -617,7 +638,7 @@ fn finalize_chat_text(
 /// type:"function", function:{name, arguments-as-JSON-STRING}) and
 /// `finish_reason` becomes `"tool_calls"`. Otherwise the message is a normal
 /// assistant text turn and the supplied `finish_reason` is preserved.
-fn build_tool_calling_message(
+pub(super) fn build_tool_calling_message(
     text: String,
     finish_reason: String,
     tools: &[super::OpenAiTool],
@@ -639,8 +660,21 @@ fn build_tool_calling_message(
 
     let defs: Vec<crate::grammar::ToolDefinition> =
         tools.iter().map(super::OpenAiTool::to_grammar).collect();
-    let mut parser = ToolCallParser::new(defs);
-    let calls = parser.parse(&text);
+    // #4650: Qwen3.5's template instructs `<function=NAME><parameter=P>` XML. When the
+    // text carries that marker the XML parser goes FIRST: a parameter value may hold
+    // JSON shaped like a tool call, and the default parser would take that inner object
+    // as the call. With the marker the XML result is FINAL, so an XML call to an
+    // undeclared tool stays content rather than falling back to the JSON inside it. The
+    // price: a JSON call whose string argument quotes a whole declared `<function=…>`
+    // block resolves to that XML call, and JSON in text that only mentions the marker
+    // is not read.
+    let calls = if text.contains("<function=") {
+        ToolCallParser::new(defs)
+            .with_format(crate::grammar::ToolCallFormat::QwenXml)
+            .parse(&text)
+    } else {
+        ToolCallParser::new(defs).parse(&text)
+    };
 
     if calls.is_empty() {
         return (
@@ -695,14 +729,52 @@ pub(crate) fn build_chat_response(
     tool_choice: Option<crate::grammar::ToolChoice>,
     timings: Option<super::Timings>,
     used_gpu: Option<bool>,
+    logprobs: Option<super::ChatLogprobs>,
 ) -> Response {
-    let (brick_trace, step_trace, layer_trace) = build_trace_data(
+    let traces = build_trace_data(
         trace_level,
         latency.as_micros() as u64,
         prompt_tokens,
         completion_tokens,
         28,
     );
+    build_chat_response_traced(
+        request_id,
+        model,
+        text,
+        prompt_tokens,
+        completion_tokens,
+        max_tokens,
+        stops,
+        traces,
+        tools,
+        tool_choice,
+        timings,
+        used_gpu,
+        logprobs,
+    )
+}
+
+/// [`build_chat_response`] with the `(brick, step, layer)` traces already
+/// built — by a backend whose tracer ran (APR-OBS-001 OBS-09), where the
+/// wall-clock-only [`build_trace_data`] would throw its measurement away.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_chat_response_traced(
+    request_id: String,
+    model: String,
+    text: String,
+    prompt_tokens: usize,
+    completion_tokens: usize,
+    max_tokens: usize,
+    stops: Option<&[String]>,
+    traces: (Option<TraceData>, Option<TraceData>, Option<TraceData>),
+    tools: Option<&[super::OpenAiTool]>,
+    tool_choice: Option<crate::grammar::ToolChoice>,
+    timings: Option<super::Timings>,
+    used_gpu: Option<bool>,
+    logprobs: Option<super::ChatLogprobs>,
+) -> Response {
+    let (brick_trace, step_trace, layer_trace) = traces;
     let (text, finish_reason) = finalize_chat_text(text, stops, completion_tokens, max_tokens);
 
     // PMAT-801 no-regression: the tool-calling path is reached ONLY when the
@@ -720,7 +792,7 @@ pub(crate) fn build_chat_response(
         ),
     };
 
-    Json(ChatCompletionResponse {
+    let response = ChatCompletionResponse {
         used_gpu,
         id: request_id,
         object: "chat.completion".to_string(),
@@ -740,8 +812,8 @@ pub(crate) fn build_chat_response(
         step_trace,
         layer_trace,
         timings,
-    })
-    .into_response()
+    };
+    super::chat_logprobs::chat_reply(response, logprobs)
 }
 
 /// Serialize a value to an SSE event, returning `None` if serialization fails.
@@ -749,6 +821,26 @@ fn sse_event(value: &impl serde::Serialize) -> Option<Result<Event, Infallible>>
     serde_json::to_string(value)
         .ok()
         .map(|data| Ok(Event::default().data(data)))
+}
+
+/// #4971: the SSE event of `chunk`, carrying the logprobs entries held until
+/// now. Without any, the chunk serializes exactly as before. A chunk that
+/// cannot carry its entries is not sent without them: an error goes instead.
+// serde_json::json!() uses infallible unwrap
+#[allow(clippy::disallowed_methods)]
+fn chunk_event(
+    chunk: &ChatCompletionChunk,
+    logprobs: Option<&mut StreamLogprobs>,
+) -> Option<Result<Event, Infallible>> {
+    let Some(entries) = logprobs.and_then(StreamLogprobs::release) else {
+        return sse_event(chunk);
+    };
+    match super::chat_logprobs::with_logprobs(chunk, &entries) {
+        Some(value) => sse_event(&value),
+        None => sse_event(&serde_json::json!({
+            "error": "a chunk could not carry its logprobs (#4971)"
+        })),
+    }
 }
 
 /// Live-stream deltas: decoded RAW, and never split inside a character.
@@ -825,7 +917,7 @@ impl LiveUtf8Deltas {
 /// SSE writer, not the model. A receipt that recorded `ttft`/`itl_p95` off this
 /// path would be recording the wrong thing, which is why the mode is declared
 /// rather than inferred.
-fn pregenerated_sse_response(
+pub(crate) fn pregenerated_sse_response(
     token_ids: Vec<u32>,
     tokenizer: Arc<BPETokenizer>,
     request_id: String,
@@ -833,6 +925,7 @@ fn pregenerated_sse_response(
     stops: Option<&[String]>,
     max_tokens: usize,
     prompt_tokens: usize,
+    tools: Option<StreamTools>,
 ) -> Response {
     let completion_tokens = token_ids.len();
     // aprender#4340: the chat stop markers `clean_chat_output` truncates the
@@ -844,10 +937,15 @@ fn pregenerated_sse_response(
         .collect();
     let StreamedText { deltas, stopped } =
         streaming_text_deltas(&tokenizer, &token_ids, Some(&stops));
+    // #4918: tool-call detection runs after the stop filter, as on the live path.
+    let (deltas, calls) = stream_tool_calls::detect_all(tools, deltas);
     // #2375(6): `max_tokens` is a parameter so this path CANNOT emit a finish
     // reason without knowing the budget it was generated under. The terminal
     // chunk now agrees with the non-streaming body for the same request.
-    let finish = FinishReason::from_generation(stopped, completion_tokens, max_tokens);
+    let finish = stream_tool_calls::finish_reason(
+        &calls,
+        FinishReason::from_generation(stopped, completion_tokens, max_tokens),
+    );
     let usage = Usage {
         prompt_tokens,
         completion_tokens,
@@ -864,6 +962,12 @@ fn pregenerated_sse_response(
 
         for delta in &deltas {
             let chunk = ChatCompletionChunk::content(&request_id, &model_name, delta);
+            if let Some(evt) = sse_event(&chunk) {
+                yield evt;
+            }
+        }
+        if !calls.is_empty() {
+            let chunk = ChatCompletionChunk::tool_calls(&request_id, &model_name, calls);
             if let Some(evt) = sse_event(&chunk) {
                 yield evt;
             }
@@ -928,6 +1032,52 @@ fn tail_deltas(
     held.into_iter().chain(filter.finish()).collect()
 }
 
+/// What [`live_tail_events`] returns. The content and the calls' chunk stay apart
+/// because only content ends a client's TTFT (#4954), and so only content may set
+/// the server's first-content instant.
+struct LiveTail {
+    content: Vec<Result<Event, Infallible>>,
+    calls: Option<Result<Event, Infallible>>,
+    finish: FinishReason,
+}
+
+/// #4918 (T8): what a closed live stream still owes before its terminal chunk. The
+/// tail deltas go through the detector too, so a call whose last bytes were still
+/// held by the UTF-8 decoder or the stop filter is a call; then the detector's own
+/// held text; then the turn's calls on one chunk. Returns those events and the finish
+/// reason, which is `tool_calls` when calls went out and `generated` otherwise. The
+/// content events go out before the calls' chunk.
+fn live_tail_events(
+    tail: Vec<String>,
+    mut detector: Option<ToolCallDetector>,
+    generated: FinishReason,
+    request_id: &str,
+    model_name: &str,
+) -> LiveTail {
+    let mut texts: Vec<String> = tail
+        .into_iter()
+        .filter_map(|t| stream_tool_calls::detect(&mut detector, t))
+        .collect();
+    let end = stream_tool_calls::finish(detector);
+    texts.extend(end.content);
+    let finish = stream_tool_calls::finish_reason(&end.calls, generated);
+    let content = texts
+        .iter()
+        .filter_map(|t| sse_event(&ChatCompletionChunk::content(request_id, model_name, t)))
+        .collect();
+    let calls = if end.calls.is_empty() {
+        None
+    } else {
+        let chunk = ChatCompletionChunk::tool_calls(request_id, model_name, end.calls);
+        sse_event(&chunk)
+    };
+    LiveTail {
+        content,
+        calls,
+        finish,
+    }
+}
+
 /// Build a true-streaming SSE response with keep-alive (tokens arrive via channel).
 ///
 /// Deltas are raw, char-safe decodes — see `LiveUtf8Deltas`. The `clean` parameter
@@ -953,6 +1103,42 @@ pub(crate) fn true_streaming_sse_response(
     prompt_tokens: usize,
     timings_rx: Option<tokio::sync::oneshot::Receiver<super::PhaseTimings>>,
     stops: Option<&[String]>,
+    tools: Option<StreamTools>,
+) -> Response {
+    live_sse_response(
+        rx,
+        tokenizer,
+        request_id,
+        model_name,
+        metrics,
+        start,
+        max_tokens,
+        prompt_tokens,
+        timings_rx,
+        stops,
+        tools,
+        None,
+    )
+}
+
+/// [`true_streaming_sse_response`] whose chunks carry the tokens' logprobs
+/// (#4971): `logprobs` holds each token's entry until a chunk carries text,
+/// and the terminal chunk carries whatever is still held.
+// serde_json::json!() uses infallible unwrap
+#[allow(clippy::disallowed_methods)]
+pub(crate) fn live_sse_response(
+    rx: tokio::sync::mpsc::Receiver<Result<u32, String>>,
+    tokenizer: Arc<BPETokenizer>,
+    request_id: String,
+    model_name: String,
+    metrics: Arc<crate::metrics::MetricsCollector>,
+    start: Instant,
+    max_tokens: usize,
+    prompt_tokens: usize,
+    timings_rx: Option<tokio::sync::oneshot::Receiver<super::PhaseTimings>>,
+    stops: Option<&[String]>,
+    tools: Option<StreamTools>,
+    mut logprobs: Option<StreamLogprobs>,
 ) -> Response {
     use tokio_stream::wrappers::ReceiverStream;
     use tokio_stream::StreamExt;
@@ -961,6 +1147,8 @@ pub(crate) fn true_streaming_sse_response(
     let mut completion_tokens = 0usize;
     // aprender#4340: chat stop markers and the request's `stop` never reach a delta.
     let mut filter = ChatStopFilter::new(stops);
+    // #4918: after the stop filter, a tool call is held off the content deltas.
+    let mut detector = tools.map(StreamTools::detector);
 
     let stream = async_stream::stream! {
         if let Some(evt) = sse_event(&ChatCompletionChunk::initial_with_mode(
@@ -973,17 +1161,36 @@ pub(crate) fn true_streaming_sse_response(
 
         tokio::pin!(token_stream);
         let mut utf8 = LiveUtf8Deltas::new();
+        // #4954: the far edge of the server's TTFT, which the client's own
+        // TTFT ends on one network hop later.
+        let mut first_content_at: Option<Instant> = None;
         while let Some(result) = token_stream.next().await {
             match result {
                 Ok(token_id) => {
                     completion_tokens += 1;
+                    // #4971: the token's entry is held for the chunk that
+                    // releases its text, and a token without one ends the stream.
+                    let taken = match logprobs.as_mut() {
+                        Some(held) => held.take(&tokenizer, token_id),
+                        None => Ok(()),
+                    };
+                    if let Err(e) = taken {
+                        if let Some(evt) = sse_event(&serde_json::json!({ "error": e })) {
+                            yield evt;
+                        }
+                        break;
+                    }
                     // The token is still counted after a stop: the engine
                     // generated it. Draining (not breaking) keeps a stop from
                     // being recorded as an abandoned stream.
-                    let text = utf8.push(&tokenizer, token_id).and_then(|t| filter.push(&t));
+                    let text = utf8
+                        .push(&tokenizer, token_id)
+                        .and_then(|t| filter.push(&t))
+                        .and_then(|t| stream_tool_calls::detect(&mut detector, t));
                     if let Some(text) = text {
                         let chunk = ChatCompletionChunk::content(&request_id, &model_name, &text);
-                        if let Some(evt) = sse_event(&chunk) {
+                        if let Some(evt) = chunk_event(&chunk, logprobs.as_mut()) {
+                            first_content_at.get_or_insert_with(Instant::now);
                             yield evt;
                         }
                     }
@@ -996,23 +1203,25 @@ pub(crate) fn true_streaming_sse_response(
                 }
             }
         }
-        for text in tail_deltas(&mut utf8, &tokenizer, &mut filter) {
-            let chunk = ChatCompletionChunk::content(&request_id, &model_name, &text);
-            if let Some(evt) = sse_event(&chunk) {
-                yield evt;
-            }
-        }
-
+        let tail = tail_deltas(&mut utf8, &tokenizer, &mut filter);
         // #2375(6): a token stream that delivered the whole budget was cut off at
         // `max_tokens`; anything shorter ended on a stop/EOS token.
-        let finish = FinishReason::from_generation(filter.stopped(), completion_tokens, max_tokens);
+        let generated = FinishReason::from_generation(filter.stopped(), completion_tokens, max_tokens);
+        let LiveTail { content, calls, finish } =
+            live_tail_events(tail, detector, generated, &request_id, &model_name);
+        for evt in content {
+            first_content_at.get_or_insert_with(Instant::now);
+            yield evt;
+        }
+        if let Some(evt) = calls {
+            yield evt;
+        }
         // The engine has finished by the time the token channel closed, so the
         // oneshot either already carries the measurement or never will.
         let timings = match timings_rx {
-            Some(rx) => rx
-                .await
-                .ok()
-                .and_then(|phases| phases.to_timings(prompt_tokens, completion_tokens)),
+            Some(rx) => rx.await.ok().and_then(|phases| {
+                phases.to_timings_at(prompt_tokens, completion_tokens, start, first_content_at)
+            }),
             None => None,
         };
         let usage = Usage {
@@ -1020,13 +1229,14 @@ pub(crate) fn true_streaming_sse_response(
             completion_tokens,
             total_tokens: prompt_tokens + completion_tokens,
         };
-        if let Some(evt) = sse_event(&ChatCompletionChunk::done_with_usage(
+        let done = ChatCompletionChunk::done_with_usage(
             &request_id,
             &model_name,
             finish,
             usage,
             timings,
-        )) {
+        );
+        if let Some(evt) = chunk_event(&done, logprobs.as_mut()) {
             yield evt;
         }
 
@@ -1060,7 +1270,7 @@ fn try_gpu_backend(
     use crate::gpu::GpuGenerateConfig;
 
     let gpu_model_lock = state.gpu_model()?;
-    let tokenizer = match require_tokenizer(state) {
+    let tokenizer = match require_tokenizer_refusing_logprobs(state, request, "GPU") {
         Ok(t) => t,
         Err(r) => return Some(r),
     };
@@ -1071,6 +1281,7 @@ fn try_gpu_backend(
         &request.messages,
         arch_hint.as_deref(),
         request.thinking(),
+        request.tools.as_deref(),
         state,
     ) {
         Ok(ids) => ids,
@@ -1135,6 +1346,7 @@ fn try_gpu_backend(
             request.stop.as_deref(),
             max_tokens,
             prompt_tokens,
+            StreamTools::from_request(request),
         ));
     }
 
@@ -1161,6 +1373,7 @@ fn try_gpu_backend(
         // absent rather than zero.
         None,
         None,
+        None,
     ))
 }
 
@@ -1177,7 +1390,7 @@ fn try_cached_backend(
     use crate::gguf::QuantizedGenerateConfig;
 
     let cached_model = state.cached_model()?;
-    let tokenizer = match require_tokenizer(state) {
+    let tokenizer = match require_tokenizer_refusing_logprobs(state, request, "cached quantized") {
         Ok(t) => t,
         Err(r) => return Some(r),
     };
@@ -1188,6 +1401,7 @@ fn try_cached_backend(
         &request.messages,
         arch_hint.as_deref(),
         request.thinking(),
+        request.tools.as_deref(),
         state,
     ) {
         Ok(ids) => ids,
@@ -1231,6 +1445,7 @@ fn try_cached_backend(
             request.stop.as_deref(),
             max_tokens,
             prompt_tokens,
+            StreamTools::from_request(request),
         ));
     }
 
@@ -1255,6 +1470,7 @@ fn try_cached_backend(
         request_tool_choice(request),
         // This backend does not separate prefill from decode; §3 timings are
         // absent rather than zero.
+        None,
         None,
         None,
     ))
@@ -1426,6 +1642,109 @@ mod pmat801_tool_calling_tests {
         assert_eq!(msg.role, "assistant");
     }
 
+    fn args_of(msg: &ChatMessage) -> serde_json::Value {
+        let calls = msg.tool_calls.as_ref().expect("tool_calls populated");
+        assert_eq!(calls.len(), 1);
+        serde_json::from_str(&calls[0].function.arguments).expect("arguments is JSON")
+    }
+
+    /// #4650 must-RED on main: Qwen3.5's template tells the model to call in XML, and the
+    /// parser read only JSON, so a correct call came back as plain content.
+    #[test]
+    fn qwen35_xml_tool_call_populates_tool_calls_4650() {
+        let tools = vec![weather_tool()];
+        let generated = "I'll check.\n\n<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>".to_string();
+        let (msg, reason) = build_tool_calling_message(generated, "stop".to_string(), &tools, None);
+        assert_eq!(reason, "tool_calls");
+        assert_eq!(
+            msg.tool_calls.as_ref().expect("calls")[0].function.name,
+            "get_weather"
+        );
+        assert_eq!(args_of(&msg), serde_json::json!({"city": "Paris"}));
+    }
+
+    /// Values are typed by the tool's schema: an integer parameter is a JSON number, a
+    /// string parameter stays the string the model wrote even when it looks numeric.
+    #[test]
+    fn qwen35_xml_values_follow_the_schema_types_4650() {
+        let tool = OpenAiTool {
+            tool_type: "function".to_string(),
+            function: OpenAiFunctionDef {
+                name: "lookup".to_string(),
+                description: "Lookup".to_string(),
+                parameters: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": { "zip": { "type": "string" }, "days": { "type": "integer" } },
+                    "required": ["zip", "days"],
+                })),
+            },
+        };
+        let generated = "<tool_call>\n<function=lookup>\n<parameter=zip>\n02134\n</parameter>\n<parameter=days>\n3\n</parameter>\n</function>\n</tool_call>".to_string();
+        let (msg, reason) =
+            build_tool_calling_message(generated, "stop".to_string(), &[tool], None);
+        assert_eq!(reason, "tool_calls");
+        assert_eq!(
+            args_of(&msg),
+            serde_json::json!({"zip": "02134", "days": 3})
+        );
+    }
+
+    /// must-RED with JSON parsed first: an XML call whose parameter value is itself a
+    /// JSON tool-call object. The default parser took the inner object as the call and
+    /// the real XML call was lost.
+    #[test]
+    fn qwen35_xml_call_wins_over_json_inside_a_parameter_4650() {
+        let note = OpenAiTool {
+            tool_type: "function".to_string(),
+            function: OpenAiFunctionDef {
+                name: "save_note".to_string(),
+                description: "Save a note".to_string(),
+                parameters: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": { "body": { "type": "string" } },
+                    "required": ["body"],
+                })),
+            },
+        };
+        let tools = vec![weather_tool(), note];
+        let inner = r#"{"name": "get_weather", "arguments": {"city": "NYC"}}"#;
+        let generated = format!(
+            "<tool_call>\n<function=save_note>\n<parameter=body>\n{inner}\n</parameter>\n</function>\n</tool_call>"
+        );
+        let (msg, reason) = build_tool_calling_message(generated, "stop".to_string(), &tools, None);
+        assert_eq!(reason, "tool_calls");
+        assert_eq!(
+            msg.tool_calls.as_ref().expect("calls")[0].function.name,
+            "save_note"
+        );
+        assert_eq!(args_of(&msg), serde_json::json!({"body": inner}));
+    }
+
+    /// must-RED with a JSON fallback after XML: an XML call to an undeclared tool parses to
+    /// nothing, and the fallback took the JSON in its parameter as a declared call.
+    #[test]
+    fn qwen35_undeclared_xml_call_does_not_promote_inner_json_4650() {
+        let tools = vec![weather_tool()];
+        let generated = "<tool_call>\n<function=rm_rf>\n<parameter=cmd>\n{\"name\": \"get_weather\", \"arguments\": {\"city\": \"NYC\"}}\n</parameter>\n</function>\n</tool_call>".to_string();
+        let (msg, reason) =
+            build_tool_calling_message(generated.clone(), "stop".to_string(), &tools, None);
+        assert_eq!(reason, "stop");
+        assert!(msg.tool_calls.is_none());
+        assert_eq!(msg.content, generated);
+    }
+
+    /// A call to a tool the request never declared is not a tool call.
+    #[test]
+    fn qwen35_xml_call_to_an_undeclared_tool_stays_content_4650() {
+        let tools = vec![weather_tool()];
+        let generated = "<tool_call>\n<function=rm_rf>\n<parameter=path>\n/\n</parameter>\n</function>\n</tool_call>".to_string();
+        let (msg, reason) =
+            build_tool_calling_message(generated.clone(), "stop".to_string(), &tools, None);
+        assert_eq!(reason, "stop");
+        assert!(msg.tool_calls.is_none());
+        assert_eq!(msg.content, generated);
+    }
+
     /// tool_choice "none" skips parsing even when a tool call is present in text.
     #[test]
     fn tool_choice_none_skips_parsing() {
@@ -1529,6 +1848,7 @@ mod pmat801_tool_calling_tests {
 include!("cuda_chat_backend.rs");
 include!("qwen35_chat_backend.rs");
 include!("chat_completions_stream.rs");
+include!("constrained_chat_backend.rs");
 
 /// #3990 WIRING: the OpenAI chat path tokenizes the GGUF's OWN template when the server
 /// retained one -- not the hand-coded family template. Without this, the helper could be
@@ -1563,7 +1883,8 @@ mod chat_template_wiring_3990 {
             official, legacy,
             "the probe must distinguish the two renders"
         );
-        let got = tokenize_chat_prompt(&tokenizer, &msgs, None, None, &state).expect("tokenizes");
+        let got =
+            tokenize_chat_prompt(&tokenizer, &msgs, None, None, None, &state).expect("tokenizes");
         assert_eq!(
             got,
             tokenizer.encode(&official),
@@ -1604,8 +1925,9 @@ mod chat_template_wiring_3990 {
                 official,
                 "the probe must distinguish ({client_model})"
             );
-            let got = tokenize_chat_prompt(&tokenizer, &msgs, Some(client_model), None, &state)
-                .expect("tokenizes");
+            let got =
+                tokenize_chat_prompt(&tokenizer, &msgs, Some(client_model), None, None, &state)
+                    .expect("tokenizes");
             assert_eq!(
                 got,
                 tokenizer.encode(&official),
@@ -1706,8 +2028,8 @@ mod thinking_on_refusal_3723 {
             content: "Hi".to_string(),
             ..Default::default()
         }];
-        assert!(tokenize_chat_prompt(&tokenizer, &msgs, None, Some(false), &state).is_ok());
-        let refused = tokenize_chat_prompt(&tokenizer, &msgs, None, Some(true), &state);
+        assert!(tokenize_chat_prompt(&tokenizer, &msgs, None, Some(false), None, &state).is_ok());
+        let refused = tokenize_chat_prompt(&tokenizer, &msgs, None, Some(true), None, &state);
         assert!(
             refused.is_err(),
             "Qwen2.5's template renders ON == OFF; ON must be refused"
@@ -1715,6 +2037,43 @@ mod thinking_on_refusal_3723 {
         assert_eq!(
             refused.err().map(|r| r.status()),
             Some(StatusCode::BAD_REQUEST)
+        );
+    }
+}
+
+/// #4711: `tokenize_chat_prompt` returns the encoding of the prompt it rendered. The only other
+/// callers hash its output against itself, so a body returning a constant id list passed them
+/// all. This one needs no model file: the demo state renders and encodes on any host.
+#[cfg(test)]
+mod tokenize_chat_prompt_4711 {
+    use super::*;
+
+    fn user(content: &str) -> ChatMessage {
+        ChatMessage {
+            role: "user".to_string(),
+            content: content.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn returns_the_encoding_of_the_rendered_prompt_4711() {
+        let state = AppState::demo().expect("demo state");
+        let tokenizer = require_tokenizer(&state).unwrap_or_else(|_| panic!("demo tokenizer"));
+        let msgs = [user("Hello there, how are you?")];
+        let text = format_chat_messages_for_state_thinking_tools(&state, &msgs, None, None, None)
+            .expect("renders");
+        let want = tokenizer.encode(&text);
+        // A one-id oracle could not tell the real body from `Ok(vec![0])` or `Ok(vec![1])`.
+        assert!(
+            want.len() >= 2,
+            "the probe must encode to more than one id, got {want:?}"
+        );
+        let got = tokenize_chat_prompt(&tokenizer, &msgs, None, None, None, &state)
+            .unwrap_or_else(|_| panic!("tokenizes"));
+        assert_eq!(
+            got, want,
+            "the ids are not the encoding of the rendered prompt"
         );
     }
 }

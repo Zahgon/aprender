@@ -1,0 +1,246 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# release-ready-v1
+#
+# THE GATE LIST. ONE LIST IN CODE of what is required to merge, to tag and to publish (bar B4;
+# BLD-001 row 4; ticket #4688).
+#
+# GATE OR LAB. A check is a GATE when it can block a merge or a release, and every GATE is a row
+# below. A check that is not a row is LAB: it cannot block, and it has no report-only state on a
+# PR, merge-queue or release path.
+# Print the list: `bash scripts/release/release_ready.sh --gates`.
+#
+# WHY. The requirements of a release were stated in five places that nobody
+# compared: ci.yml's `gate` job, CLAUDE.md's required checks, autopilot.sh's
+# steps, check_publish_preflight.sh's rules and cascade-publish.sh's refusals.
+# Two of them disagreed on origin/main 316dee2cd4: the preflight header said
+# the R8 wrapper's committed mode "is `report`" while the wrapper has been
+# `enforce` since the operator ruling of 2026-09-28 (#3715 B1), and
+# autopilot.sh's header listed its steps without `readiness`.
+#
+# THE LIST is the `requirements:` block below: one flow map per line, with id,
+# applies_to (a subset of merge, tag, publish), anchor (what a surface states),
+# checker (path[#needle] that implements it), provenance (a ticket, a spec
+# section, or "operator ruling YYYY-MM-DD") and, for every publish requirement,
+# producer (the nightly_train.sh lane that proves it each night, BLD-001 row
+# 10; "-" never satisfies it).
+#
+# THE CHECKER is scripts/release/release_ready.sh (bash + awk, no Python). It
+# extracts every requirement the six surfaces state, and FAILS on:
+#   UNLISTED       a surface states a requirement the list lacks
+#   ORPHANED       a list entry whose checker is absent or lacks its needle, or
+#                  whose anchor no surface states any more
+#   CONTRADICTION  one key (a mode, a floor, a step list) with two values
+# A read-only probe (--probe) compares the merge set with GitHub's required
+# status checks in two reads (the ruleset and the classic branch protection);
+# changing the required checks is the operator's.
+#
+# BEFORE / AFTER (command: `bash scripts/release/release_ready.sh`):
+#   origin/main 316dee2cd4, no list: unlisted=45 orphaned=0 contradictions=2
+#   HEAD of this change:             unlisted=0  orphaned=0 contradictions=0
+#   after merging main c7569afd3d:   unlisted=4  (main added mg-reuse, mg-reuse-self-test,
+#     x86-main-advisories, tag_coverage_gate.sh); RR-M13..M15 + RR-T15 -> unlisted=0
+#   C129 review: --probe read only the ruleset (github=[gate,workspace-test]) while classic
+#     protection requires ci / gate; now it reads both and the list carries gate (RR-M16)
+#   C314 round (w4664): the publish path had two executors and the list read one. Now
+#     publish_strict.sh (the spec's T-4 executor) is a surface: 15 refusals, RR-P20..P34;
+#     cascade-publish's top-level `if [ … ]` refusals are read: RR-P35..P36; and the executor
+#     is a claim. HEAD: unlisted=0 orphaned=0 contradictions=1, the one being publish.executor:
+#     autopilot's `cascade` step runs cascade-drain.sh, the spec's T-4 row names publish_strict.sh.
+#   #4690 (no public release before its gates): the asset build is dispatched in `tag`
+#     (RR-T17), the assets are re-verified in `publish` (RR-P37), and the publish dry run
+#     moved ahead of the tag (RR-P07 -> RR-T16). HEAD: unlisted=0 orphaned=0 contradictions=1,
+#     the same publish.executor claim origin/main 682dab1e22 carries.
+#   #4912 (one GATE list): the T-1 lanes (deep, dogfood, models run as `t1_<step>`) were
+#     never read, so RR-T03..T11 were orphaned=9; now they are, and RR-T18..T20 list their
+#     `cargo metadata` calls. dogfood.sh is a surface: the 50 rows its pre-publish run can
+#     FAIL are RR-D01..D50, each `parent: RR-T09` (the dogfood step). HEAD: unlisted=0
+#     orphaned=0 contradictions=1 (publish.executor, as above); `--gates` prints gates=69.
+#   #4688 (child rows held at 50): publish_strict.sh is
+#     deleted (no step ran it; the cascade publishes), so RR-P20..P26 and P29..P34 go with it
+#     and the surfaces are six. RR-M03 M04 M12 T17 T19 T20 P08..P13 P15..P18 P35..P37 leave
+#     the list as rows; every stop they listed stays in the code and is listed by an `also`
+#     anchor on the GATE it belonged to. RR-P03 now checks check_release_assets.sh in
+#     `publish` (was RR-P37); the `assets` wait on the binary-release run is its `also`.
+#     Child rows 82 -> 50 (RR-D01..D50); GATEs unchanged at 19 (merge 10, tag 5, publish 5).
+#     The spec's T-4 row now names the executor the `cascade` step runs, so publish.executor agrees.
+#   #5174 (R5 never went green on a release): under the standing release policy the autopilot does
+#     not start the T-1 dogfood lane and the preflight does not run R5, the R8 form. release_ready.sh
+#     reads `[ "$s:$AP_POLICY" != dogfood:1 ]` on the lane loop as that lane off the release path, and
+#     dogfood.sh's rows with it, so RR-T09 and RR-D01..D50 leave the list (as R8 has no entry). The
+#     dogfood runs nightly; it comes back only as a GATE the operator rules in. GATEs 19 -> 18.
+#
+# A ROW (`parent: <id>`) is part of the GATE it names: checked like any entry, printed
+# under that GATE by `--gates`, and never counted in its total.
+# `also: ["<anchor>", …]` on a GATE names more stops a surface states that this GATE covers
+# without a row of their own. Each lists its stop like `anchor` does, and one no surface
+# states any more is ORPHANED. A row carries no `also`.
+#
+# THE CHECKER IS LAB. No gate calls it. It becomes a GATE only with an operator
+# yes, after three green nights on main, and with one gate retired for the one added.
+# ─────────────────────────────────────────────────────────────────────────────
+name: release-ready
+version: "1.0.0"
+scope: >
+  The requirements to merge, tag and publish that the repository states in
+  .github/workflows/ci.yml (job `gate`), CLAUDE.md ("Required status checks"),
+  scripts/release/autopilot.sh (steps wait..dryrun and the top-level lines
+  between them), scripts/check_publish_preflight.sh (RULES R1..R8),
+  scripts/cascade-publish.sh (`if !` refusals, and top-level `if [ … ]`
+  blocks before its upload loop that exit 1..9); plus the facts two of
+  those places can disagree on (R8 mode, autopilot's step list, the coverage
+  floor, and the publish executor: autopilot's `cascade` step vs the spec's
+  T-4 row).
+  Out of scope: requirements stated outside the repository; the CONTENT of
+  each checker (each has its own contract); and a verdict that runs after an
+  upload (a final verification, autopilot's `cascade incomplete`), which is an
+  outcome of publishing, not a requirement to start it.
+status: active
+
+metadata:
+  kind: pattern     # a cross-file inventory guard over scripts and workflow
+                    # YAML, not a math kernel. Explicit so `pv validate`'s
+                    # `kernel` default never silently applies.
+  version: "1.0.0"
+  created: '2026-10-04'
+  last_modified: '2026-10-06'
+  author: PAIML Engineering
+  references:
+    - 'scripts/release/release_ready.sh — the checker (extractors, verdict, probe, case table, mutants)'
+    - 'BLD-001 spec, row 4 (E4) — mechanism, falsifiers, first green'
+    - 'issue #4688 — R9, bar B4'
+  description: >
+    One list in code of what merge, tag and publish require. Every requirement a
+    surface states is on the list, every list entry has a checker that exists,
+    and no fact has two values.
+
+equations:
+  rr_listed_equals_stated:
+    formula: |
+      let S = anchors stated by the six surfaces (release_ready.sh --found)
+      let A = { e.anchor : e in requirements } ∪ { a : e in requirements, a in e.also }
+      UNLISTED = S \ A,  ORPHANED_STALE = A \ S
+      |UNLISTED| = 0  and  |ORPHANED_STALE| = 0
+    domain: 'the tree the checker runs on (HEAD or origin/main, printed as tree=)'
+    codomain: 'bool'
+    invariants:
+      - 'a surface that cannot be read is not_measured (exit 2), never zero findings'
+  rr_every_checker_exists:
+    formula: |
+      for every e in requirements: file(e.checker) exists and contains needle(e.checker)
+    domain: 'requirements'
+    codomain: 'bool'
+    invariants:
+      - 'a publish requirement names a nightly producer, or the list is malformed (exit 3)'
+  rr_no_contradiction:
+    formula: |
+      for every key k over claims ∪ { (e.key, e.value) : e in requirements }:
+        |{ v : (k, v) }| = 1
+    domain: 'claims extracted from the surfaces plus key/value pairs the list states'
+    codomain: 'bool'
+
+proof_obligations:
+  - id: RR-OB-001
+    statement: "A requirement stated by a surface and absent from the list turns the checker RED (UNLISTED)."
+    discharged_by: falsification_tests[0]
+  - id: RR-OB-002
+    statement: "A list entry whose checker is deleted, or whose anchor no surface states, turns the checker RED (ORPHANED)."
+    discharged_by: falsification_tests[1]
+  - id: RR-OB-003
+    statement: "Two entries or two surfaces giving one key different values turn the checker RED (CONTRADICTION)."
+    discharged_by: falsification_tests[2]
+  - id: RR-OB-004
+    statement: "A missing or unreadable surface is not_measured (exit 2), never a pass; a publish entry without a producer is malformed (exit 3)."
+    discharged_by: falsification_tests[3]
+  - id: RR-OB-005
+    statement: "Each falsifier's check, once dropped from the checker, leaves the case table RED (mutants killed/total = total/total)."
+    discharged_by: falsification_tests[4]
+
+falsification_tests:
+  - id: RR-F-001
+    rule: plant a requirement in a script that the list lacks → red
+    prediction: >-
+      A fixture tree whose autopilot step gains `bash scripts/new_gate.sh`
+      (and one whose preflight gains rule R9, one whose ci.yml gate gains a
+      needs: job) exits 1 naming UNLISTED.
+    test: 'bash scripts/release/release_ready.sh --selftest'
+    if_fails: 'a new gate could ship that no one lists, and the list would read complete'
+    mutation: 'drop the UNLISTED loop of the verdict; the case table must turn RED'
+  - id: RR-F-002
+    rule: delete a listed checker → red
+    prediction: >-
+      A fixture tree whose listed checker file is deleted exits 1 naming
+      ORPHANED; so does one whose needle is gone, and one whose anchor is gone.
+    test: 'bash scripts/release/release_ready.sh --selftest'
+    if_fails: 'the list could name gates that no longer run'
+    mutation: 'drop the checker-exists check of the verdict; the case table must turn RED'
+  - id: RR-F-003
+    rule: plant two entries with conflicting thresholds → red
+    prediction: >-
+      Two list entries with key coverage.floor and values 89 and 90 exit 1
+      naming CONTRADICTION; so does a preflight header that says the R8 mode
+      is `report` while release_readiness.sh says enforce.
+    test: 'bash scripts/release/release_ready.sh --selftest'
+    if_fails: 'two places could state different bars and both read as the truth'
+    mutation: 'drop the CONTRADICTION loop of the verdict; the case table must turn RED'
+  - id: RR-F-004
+    rule: an unreadable surface or malformed list never passes
+    prediction: >-
+      A fixture tree without autopilot.sh exits 2; a list whose publish entry
+      has no producer exits 3.
+    test: 'bash scripts/release/release_ready.sh --selftest'
+    if_fails: 'a moved file would read as zero findings'
+    mutation: 'make the not_measured path return 0; the case table must turn RED'
+  - id: RR-F-005
+    rule: every falsifier has a killing mutant
+    prediction: 'bash scripts/release/release_ready.sh --mutants prints killed=N total=N and exits 0'
+    test: 'bash scripts/release/release_ready.sh --mutants'
+    if_fails: 'a check of the checker could be deleted with the case table still green'
+
+non_goals:
+  - "Running any checker. The list says what is required and where it is checked; each checker proves itself."
+  - "Changing GitHub's required status checks or rulesets. The probe reads them; the operator changes them."
+  - "Blocking any merge, tag or publish. The checker is LAB; it becomes a GATE only with an operator yes, after three green nights on main, and with one gate retired for the one added."
+  - "Resolving producer names. Each publish entry must name a producer (checked non-empty); the names are lanes of the nightly release train, which is not on main yet. Resolving them against that lane table is follow-up work, not done here."
+  - "Known extractor limits (a requirement written in these forms is not seen, so it cannot be flagged unlisted): a checker invoked across a backslash line continuation; a cascade refusal not written as `if ! <fn|bash script>` nor as a top-level `if [ … ]` block before the upload loop; a needle that survives only in a comment still counts as present; a function name inside an echo string counts as a call."
+
+binding_registry:
+  checker: scripts/release/release_ready.sh
+  selftest: 'bash scripts/release/release_ready.sh --selftest'
+  issue: "https://github.com/paiml/aprender/issues/4688"
+
+# THE ENTRY LIST. Each stage reads its line through scripts/lib/release_policy.sh rp_entries
+# (the strict release_policy reader with block=release_entries). The ids are the counted GATEs of
+# `requirements` below: a GATE that is not on its stage's line is UNLISTED, a listed id that is not a
+# counted GATE of that stage is STALE, and either fails `release_ready.sh --budget`. Caps 10/5/5.
+# The checker stays LAB: a stage calls it as a blocking step only after three green nights on main.
+# Merge 9: the x86-main preflight is listed (RR-M17); RR-M01 is the same gate job as RR-M16 and RR-M14
+# the case table of RR-M13, so each is an `also`. Tag 4: readiness and the pre-publish dogfood run nightly
+# (autopilot starts neither under the standing release policy, #5174); the pre-push tag guard (RR-T21) is listed.
+stages:
+  release_entries:
+    merge: RR-M02 RR-M05 RR-M09 RR-M10 RR-M11 RR-M13 RR-M15 RR-M16 RR-M17
+    tag: RR-T01 RR-T11 RR-T16 RR-T21
+    publish: RR-T01 RR-P01 RR-P03 RR-P14 RR-P38
+
+# THE LIST. One requirement per line (the checker parses this block; keep one flow map per line).
+requirements:
+  - {id: RR-M02, applies_to: [merge], seven: workspace-tests, anchor: "merge:required-context/workspace-test", also: ["merge:ci.yml/gate/needs/workspace-test"], checker: ".github/workflows/ci.yml#  workspace-test:", provenance: "CLAUDE.md Git Workflow; branch protection on main", producer: "ci-main"}
+  - {id: RR-M05, applies_to: [merge], anchor: "merge:ci.yml/gate/needs/determinism", also: ["merge:ci.yml/gate/section/determinism-compare"], checker: ".github/workflows/ci.yml#  determinism:", provenance: "#4433 (gate needs)", producer: "ci-main"}
+  - {id: RR-M09, applies_to: [merge], anchor: "merge:ci.yml/gate/section/guard-tree", checker: ".github/workflows/ci.yml#guard-tree", provenance: "#4433 (gate section pair; was gate need guard-tree)", producer: "guards"}
+  - {id: RR-M10, applies_to: [merge], anchor: "merge:ci.yml/gate/section/guard-cargo", checker: ".github/workflows/ci.yml#guard-cargo", provenance: "#4433 (gate section pair; was gate need guard-cargo)", producer: "guards"}
+  - {id: RR-M11, applies_to: [merge], anchor: "merge:ci.yml/gate/section/sov.gate", checker: ".github/workflows/ci.yml#sov.*", provenance: "#4433 (gate section pair; sovereign-ci gate)", producer: "ci-main"}
+  - {id: RR-M13, applies_to: [merge], anchor: "merge:ci.yml/gate/needs/mg-reuse", also: ["merge:ci.yml/gate/needs/mg-reuse-self-test"], checker: ".github/workflows/ci.yml#  mg-reuse:", provenance: "#4753 T43 (merge_group reuses the head run on the same tree)", producer: "ci-main"}
+  - {id: RR-M15, applies_to: [merge], seven: supply-chain, anchor: "merge:ci.yml/gate/needs/x86-main-advisories", checker: ".github/workflows/ci.yml#  x86-main-advisories:", provenance: "#4753 T43 (advisories run whenever mg-reuse skips x86-main)", producer: "ci-main"}
+  - {id: RR-M16, applies_to: [merge], anchor: "merge:required-context/gate", also: ["merge:required-context/ci / gate"], checker: ".github/workflows/ci.yml#  gate:", provenance: "CLAUDE.md Git Workflow; org ruleset on main (ci/sections.yml: rulesets need the exact name gate)", producer: "ci-main"}
+  - {id: RR-M17, applies_to: [merge], anchor: "merge:ci.yml/gate/needs/x86-main", checker: ".github/workflows/ci.yml#  x86-main:", provenance: "the x86-main preflight: the jq pin, the cheap checks, the fat_driver and secret-plumbing case tables run before its sections", producer: "ci-main"}
+  - {id: RR-T01, applies_to: [tag, publish], seven: provenance, anchor: "tag:autopilot/commit/git merge-base --is-ancestor", also: ["tag:autopilot/commit/cargo metadata --no-deps --format-version", "publish:preflight/R1", "publish:preflight/R2", "publish:preflight/R3", "publish:preflight/R4"], checker: "scripts/release/autopilot.sh#git merge-base --is-ancestor", provenance: "APR-RELEASE-001 T-0, #3599 (release commit on origin/main)", producer: "ci-main"}
+  - {id: RR-T11, applies_to: [tag], seven: crux-smoke, anchor: "tag:autopilot/models/bash scripts/release/models_t1.sh", also: ["publish:preflight/R7"], checker: "scripts/release/models_t1.sh", provenance: "#3717 #3712 model matrix", producer: "models"}
+  - {id: RR-T16, applies_to: [tag], anchor: "tag:autopilot/tag/bash scripts/release/rc_publish_gate.sh --verify", also: ["publish:autopilot/dryrun/bash scripts/cascade-publish.sh --check"], checker: "scripts/release/rc_publish_gate.sh#--verify", provenance: "#4287 RC-DOGFOOD-001 §4.5 (compile every tarball), moved ahead of the tag (#4690, was RR-P07)", producer: "publish-dryrun"}
+  - {id: RR-T21, applies_to: [tag], anchor: "tag:autopilot/tag/git push origin", checker: "scripts/hooks/pre-push-tags.sh", provenance: "#4943 #4944 the pre-push tag guard refuses a release tag that is not exactly its release branch head", producer: "tag"}
+  - {id: RR-T22, applies_to: [tag], kind: mechanics, anchor: "tag:autopilot/tag/source scripts/lib/release_policy.sh", checker: "scripts/lib/release_policy.sh#rp_known_failures", provenance: "the release notes list each known failure with its ticket; it lists and never stops a release", producer: "tag"}
+  - {id: RR-T23, applies_to: [tag], kind: mechanics, anchor: "tag:autopilot/tag/bash scripts/hooks/pre-push-tags.sh --arm-release", checker: "scripts/hooks/pre-push-tags.sh#--arm-release", provenance: "#4950 G1: the one-shot marker the pre-push tag guard needs to let a release tag out, armed for that one tag after every tag check passed; it arms the push and judges nothing", producer: "tag"}
+  - {id: RR-P01, applies_to: [publish], seven: cleanroom-tag-commit, anchor: "publish:autopilot/cleanroom/gh-workflow clean-room.yml", also: ["publish:cascade/clean_room_gate"], checker: "scripts/release/autopilot.sh#clean-room.yml", provenance: "APR-RELEASE-001 T-3 (infra#621)", producer: "cleanroom-cpu"}
+  - {id: RR-P03, applies_to: [publish], seven: binaries-before-public, anchor: "publish:autopilot/publish/bash scripts/check_release_assets.sh", also: ["publish:autopilot/assets/gh-workflow binary-release.yml", "tag:autopilot/tag/gh-workflow binary-release.yml"], checker: "scripts/check_release_assets.sh", provenance: "#4657 #4659 release binaries; #4690 the draft goes public only with its assets verified (#4688: was RR-P37)", producer: "assets"}
+  - {id: RR-P06, applies_to: [publish], kind: mechanics, anchor: "publish:autopilot/preflight/bash scripts/check_publish_preflight.sh", also: ["publish:cascade/if [ -f .cargo/config.toml ]", "publish:cascade/scripts/check_publish_preflight.sh"], checker: "scripts/check_publish_preflight.sh", provenance: "PMAT-745 publish preflight", producer: "preflight"}
+  - {id: RR-P14, applies_to: [publish], anchor: "publish:preflight/R6", also: ["publish:cascade/facade_upstream_ready", "publish:cascade/if [ $UNIVERSE_N -lt 70 ]"], checker: "scripts/check_publish_preflight.sh#FAIL  R6 ", provenance: "PMAT-955 #3468 R6 no dev-dependency cycle", producer: "preflight"}
+  - {id: RR-P38, applies_to: [publish], anchor: "publish:autopilot/dryrun/bash scripts/release/check_crate_contents.sh", checker: "scripts/release/check_crate_contents.sh", seven: no-secret-in-crates, provenance: "#4950 nothing secret in the published crates: every publishable crate's package list read for key files, PEM private-key blocks and token shapes; rc 1 a finding, 2 not measured; the cascade runs it again on the release commit before the upload. Its nights are the crate-contents job of release-gates-nightly.yml", producer: "crate-contents"}
