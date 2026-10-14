@@ -62,13 +62,13 @@ falsification_tests:
   rule: "pv's dump of an ontology is isomorphic to riot's"
   prediction: "for contracts/contracts.nt and contracts/shapes.ttl, the harness finds pv's N-Triples dump and riot's isomorphic"
   test: >-
-    jena-oracle (tests/oracle/jena/), cell R-INPUT, comparator pv-vs-riot. GREEN 2026-10-09 at branch commit 27d5ccec95: contracts/contracts.nt (32732 triples), contracts/shapes.ttl (4165 distinct; riot streams 4166 because the file states one triple twice), the escapes control and 37 of 37 pinned W3C case files are isomorphic (tests/oracle/jena/receipt.json). The comparator is proven by FALSIFY-CRUXSHACL-001..003.
+    jena-oracle (tests/oracle/jena/), cell R-INPUT, comparator pv-vs-riot. GREEN 2026-10-14 at branch commit c818b43593: contracts/contracts.nt (35022 triples), contracts/shapes.ttl (4712 distinct; riot streams 4713 because the file states one triple twice), the escapes control and 37 of 37 pinned W3C case files are isomorphic (tests/oracle/jena/receipt.json). The comparator is proven by FALSIFY-CRUXSHACL-001..003.
   if_fails: "rule 'pv's dump of an ontology is isomorphic to riot's' is violated — pv and Jena read the same file as different graphs, and the jena parity claim for CRUX-R-01 is FALSE"
 - id: FALSIFY-CRUX-R-01-002
   rule: "a malformed file is refused by both, at the same line"
   prediction: "tests/oracle/jena/controls/syntax-error-line-7.ttl: riot refuses it naming line 7, and pv refuses it naming line 7"
   test: >-
-    jena-oracle (tests/oracle/jena/), cell R-INPUT case tests/oracle/jena/controls/syntax-error-line-7.ttl, comparator line. GREEN 2026-10-09 at branch commit 27d5ccec95: riot and pv both refuse the file at line 7 (tests/oracle/jena/receipt.json). The riot side alone is also the control FALSIFY-CRUXSHACL-004.
+    jena-oracle (tests/oracle/jena/), cell R-INPUT case tests/oracle/jena/controls/syntax-error-line-7.ttl, comparator line. GREEN 2026-10-14 at branch commit c818b43593: riot and pv both refuse the file at line 7 (tests/oracle/jena/receipt.json). The riot side alone is also the control FALSIFY-CRUXSHACL-004.
   if_fails: "rule 'a malformed file is refused by both, at the same line' is violated — pv recovers from a syntax error silently or counts lines differently from riot"
 
 proof_obligations:

@@ -62,19 +62,19 @@ falsification_tests:
   rule: "riot reads pv's contracts.nt as the same graph"
   prediction: "riot parses contracts/contracts.nt with no error, and its output is isomorphic to the harness's own N-Triples parse of the file"
   test: >-
-    jena-oracle (tests/oracle/jena/), cell R-RETURN case contracts.nt, comparator riot-vs-ntparse. GREEN 2026-10-09 at branch commit 27d5ccec95: 32732 triples (tests/oracle/jena/receipt.json).
+    jena-oracle (tests/oracle/jena/), cell R-RETURN case contracts.nt, comparator riot-vs-ntparse. GREEN 2026-10-14 at branch commit c818b43593: 35022 triples (tests/oracle/jena/receipt.json).
   if_fails: "rule 'riot reads pv's contracts.nt as the same graph' is violated — pv writes N-Triples another engine misreads or refuses"
 - id: FALSIFY-CRUX-R-02-002
   rule: "riot reads pv's shapes.ttl with no error and no warning"
   prediction: "riot parses contracts/shapes.ttl and logs no ERROR and no WARN"
   test: >-
-    jena-oracle (tests/oracle/jena/), cell R-RETURN case shapes.ttl, comparator riot. GREEN 2026-10-09 at branch commit 27d5ccec95: 4166 triples, no WARN (tests/oracle/jena/receipt.json).
+    jena-oracle (tests/oracle/jena/), cell R-RETURN case shapes.ttl, comparator riot. GREEN 2026-10-14 at branch commit c818b43593: 4713 triples, no WARN (tests/oracle/jena/receipt.json).
   if_fails: "rule 'riot reads pv's shapes.ttl with no error and no warning' is violated — pv's Turtle writer emits syntax Jena refuses or warns on"
 - id: FALSIFY-CRUX-R-02-003
   rule: "the round trip through pv preserves the graph"
   prediction: "for each X, Jena's parse of X and Jena's parse of pv_write(pv_read(X)), written in the same run, are isomorphic"
   test: >-
-    jena-oracle (tests/oracle/jena/), cell R-RETURN cases "roundtrip <file>", comparator riot-roundtrip. GREEN 2026-10-09 at branch commit 27d5ccec95 on contracts/contracts.nt (32732 triples), contracts/shapes.ttl (4165 distinct) and the escapes control (14): riot reads pv's dump, written in the run's work directory, in strict mode, and the graph equals riot's read of the original (tests/oracle/jena/receipt.json). The comparator is proven by FALSIFY-CRUXSHACL-005..007.
+    jena-oracle (tests/oracle/jena/), cell R-RETURN cases "roundtrip <file>", comparator riot-roundtrip. GREEN 2026-10-14 at branch commit c818b43593 on contracts/contracts.nt (35022 triples), contracts/shapes.ttl (4712 distinct) and the escapes control (14): riot reads pv's dump, written in the run's work directory, in strict mode, and the graph equals riot's read of the original (tests/oracle/jena/receipt.json). The comparator is proven by FALSIFY-CRUXSHACL-005..007.
   if_fails: "rule 'the round trip through pv preserves the graph' is violated — pv loses or changes a triple between reading and writing"
 
 proof_obligations:

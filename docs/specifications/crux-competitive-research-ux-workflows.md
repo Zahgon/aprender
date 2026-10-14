@@ -1280,7 +1280,7 @@ of reports (under test, Jena, W3C) per rule.
 |---|---|---|
 | S1 | `jena` in `CRUX_COMPETITORS`, with its admission comment. Category R stories, one per cell, and one contract per cell. This section and the master contract move together. **Done 2026-10-09** (v2.4): CRUX-R-01..04 | none (registration) |
 | S2 | The Jena distribution pinned by sha256, as the OWL oracle pins ELK 0.4.3. The detached harness under `tests/oracle/`, its exit codes and its planted controls. The JVM and Jena declared in the hosts' configuration (paiml/infra, cross-repo) | none alone; its controls prove the comparators. **Harness done 2026-10-09** (`tests/oracle/jena/`, `make oracle-jena`, self-test 26/26); the hosts' configuration in paiml/infra is not done |
-| S3 | pv reads Turtle and N-Triples, blank nodes included. The reader is in house, because R-13 bars a third-party RDF crate from `aprender-contracts`' tree, dev-dependencies included. R-15 bars blank nodes from the graph pv extracts and hashes, so the reader holds input blank nodes in its own types, outside that graph. **Done 2026-10-09**: `pv ontology read` (`crates/aprender-contracts/src/ontology/read/`), and the harness runs it (§14.9) | R-INPUT, R-RETURN: both GREEN at branch commit `27d5ccec95` (§14.9) |
+| S3 | pv reads Turtle and N-Triples, blank nodes included. The reader is in house, because R-13 bars a third-party RDF crate from `aprender-contracts`' tree, dev-dependencies included. R-15 bars blank nodes from the graph pv extracts and hashes, so the reader holds input blank nodes in its own types, outside that graph. **Done 2026-10-09**: `pv ontology read` (`crates/aprender-contracts/src/ontology/read/`), and the harness runs it (§14.9) | R-INPUT, R-RETURN: both GREEN at branch commit `c818b43593`, measured again 2026-10-14 (§14.9) |
 | S4 | pv emits a W3C `sh:ValidationReport`, as Turtle and as JSON, with every field of §14.2 | R-FEEDBACK; R-VALIDATE on S-W3C, where refused cases are named |
 | S5 | The rudof oracle reads S4's report and compares the full tuple. `tests/oracle/differential.json` is regenerated with every vendored case. The oracle runs on a schedule | none; it hardens the second oracle |
 
@@ -1337,22 +1337,22 @@ What the run taught the harness, each now handled in code:
 - The graph comparison is the harness's own (`tests/oracle/jena/src/nt.rs`:
   colour refinement, then individualisation), not Jena's `rdfcompare`.
 
-### 14.9 pv reads RDF: the S3 run (measured 2026-10-09 on branch commit `27d5ccec95`; receipt `tests/oracle/jena/receipt.json`)
+### 14.9 pv reads RDF: the S3 run (measured 2026-10-14 on branch commit `c818b43593`; receipt `tests/oracle/jena/receipt.json`)
 
-pv was built from the S3 reader commit `085bdb335d`. The harness runs `pv ontology
+pv was built from that commit. The harness runs `pv ontology
 read X --base file:///<path>` and gives `riot` the same bytes at the same base.
 The self-test saw 26 of 26 controls. The run exits 1 on the R-VALIDATE RED of
 §14.8 alone. The receipt is from a branch commit, not from `main`.
 
 | Cell | Case | Verdict |
 |---|---|---|
-| R-INPUT | `contracts.nt` | GREEN: 32,732 triples on each side, isomorphic, no blank nodes |
-| R-INPUT | `shapes.ttl` | GREEN: isomorphic, 4,165 distinct triples, 1,562 blank nodes. `riot` streams 4,166, because the file states `release-readiness-v1.host/node a sh:NodeShape` twice |
+| R-INPUT | `contracts.nt` | GREEN: 35,022 triples on each side, isomorphic, no blank nodes |
+| R-INPUT | `shapes.ttl` | GREEN: isomorphic, 4,712 distinct triples, 1,730 blank nodes. `riot` streams 4,713, because the file states one triple twice |
 | R-INPUT | the R-RETURN control (escapes, language tags) | GREEN: 14 triples, 4 blank nodes |
 | R-INPUT | the line-7 control | GREEN: both refuse it, both at line 7 |
 | R-INPUT | S-W3C | GREEN: 37 of 37 pinned case files isomorphic. `riot` reads them with strict off, as for R-VALIDATE: some cases carry an ill-formed literal on purpose |
 | R-RETURN | round trip, on the three files above | GREEN: `riot` reads pv's dump in strict mode, and the graph equals `riot`'s read of the original |
-| R-VALIDATE | S-CORPUS | **RED**, as in §14.8: Jena 745 results, pv 732. All 13 extra are `sh:closed` results on rdf:type values, on 12 focus nodes (#4837) |
+| R-VALIDATE | S-CORPUS | **RED**, the class §14.8 found: Jena 662 results, pv 569. All 93 extra are `sh:closed` results Jena reports and pv does not, on 92 focus nodes (#4837). The tree has more closed shapes than on 2026-10-09 |
 | R-VALIDATE | S-W3C | NOT MEASURED (S4) |
 | R-FEEDBACK | S-W3C + S-CORPUS | NOT MEASURED (S4) |
 | S-SHSH | `shapes.ttl` | GREEN |
