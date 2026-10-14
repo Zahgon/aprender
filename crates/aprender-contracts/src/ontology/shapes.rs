@@ -441,7 +441,7 @@ fn parse_node_shape(
             what: "`closed` is not a bool".into(),
         })?,
     };
-    let ignored_properties = match map.get("ignoredProperties") {
+    let mut ignored_properties: Vec<String> = match map.get("ignoredProperties") {
         None => Vec::new(),
         Some(v) => v
             .as_sequence()
@@ -454,6 +454,11 @@ fn parse_node_shape(
             .map(expand)
             .collect(),
     };
+    // The subset admits rdf:type on a closed shape (every extracted node is typed, §3.6). It says so in the
+    // shape, so the Turtle written from it means the same to any SHACL engine; SHACL itself admits nothing implicitly.
+    if closed && !ignored_properties.iter().any(|p| p == RDF_TYPE) {
+        ignored_properties.push(RDF_TYPE.to_string());
+    }
     let mut properties = Vec::new();
     if let Some(list) = map.get("properties") {
         let seq = list.as_sequence().ok_or_else(|| ShapeError::Malformed {
@@ -950,7 +955,8 @@ fn check_pairs(
     }
 }
 
-/// `sh:closed`: every predicate the focus carries is declared, ignored, or `rdf:type`.
+/// `sh:closed`: every predicate the focus carries is declared or ignored. `rdf:type` is admitted only when listed,
+/// as SHACL §4.8.1 says; a shape read from YAML lists it (see `parse_node_shape`), one read from Turtle as written.
 fn check_closed(
     graph: &Graph,
     shape: &NodeShape,
@@ -962,7 +968,6 @@ fn check_closed(
         .iter()
         .map(|p| p.path.as_str())
         .chain(shape.ignored_properties.iter().map(String::as_str))
-        .chain(std::iter::once(RDF_TYPE))
         .collect();
     // One result per TRIPLE, with the object as `sh:value` (SHACL §4.8.1; W3C node/closed-002 expects one per value).
     for pred in graph.predicates_of(focus) {
@@ -1794,6 +1799,18 @@ mod tests {
         ] {
             assert!(t1.contains(want), "{want}\n{t1}");
         }
+    }
+
+    /// The subset's admission of rdf:type is written down, so Jena reading the Turtle checks what pv checks (#4837).
+    #[test]
+    fn a_closed_shape_writes_rdf_type_as_an_ignored_property() {
+        let s = shape("entity: {type: pv-contract}\nshape:\n  closed: true\n  properties:\n    - {path: ont:id}\n");
+        assert_eq!(s.ignored_properties, vec![RDF_TYPE.to_string()]);
+        let t = to_turtle(std::slice::from_ref(&s));
+        assert!(
+            t.contains(&format!("sh:ignoredProperties ( <{RDF_TYPE}> )")),
+            "{t}"
+        );
     }
 
     #[test]

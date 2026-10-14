@@ -254,6 +254,29 @@ fn a_node_shape_that_is_a_class_targets_its_instances() {
     assert_eq!(r.results[0].focus, ex("a"));
 }
 
+/// W3C core node/closed-001: a closed shape read from Turtle admits only what it lists, rdf:type included.
+#[test]
+fn a_closed_shape_from_turtle_reports_rdf_type_unless_it_is_ignored() {
+    let shape =
+        "ex:S sh:targetNode ex:a\nex:S sh:closed \"true\"^^xsd:boolean\nex:S sh:property _:p\n\
+                 _:p sh:path ex:p\nex:a a ex:C\nex:a ex:p 1\nex:a ex:q 2\n";
+    let r = run(shape);
+    let mut paths: Vec<_> = r.results.iter().map(|x| x.path.clone()).collect();
+    paths.sort();
+    assert_eq!(
+        paths,
+        vec![Some(ex("q")), Some(RDF_TYPE.to_string())],
+        "{:?}",
+        r.results
+    );
+    let r = run(&format!(
+        "{shape}ex:S sh:ignoredProperties _:l\n{}",
+        list("l", &["rdf:type"])
+    ));
+    assert_eq!(r.results.len(), 1, "{:?}", r.results);
+    assert_eq!(r.results[0].path, Some(ex("q")));
+}
+
 #[test]
 fn non_validating_terms_are_skipped() {
     let g = triples(&format!(
