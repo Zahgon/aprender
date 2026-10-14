@@ -8,6 +8,11 @@ pub(crate) async fn safetensors_generate_handler(
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
+    // #2853: `ignore_eos` / `seed` are honoured here as on the chat route
+    let overrides = match st_sampling_overrides(&request) {
+        Ok(o) => o,
+        Err(refused) => return refused,
+    };
     let prompt = request.get("prompt").and_then(|p| p.as_str()).unwrap_or("");
     let max_tokens = request
         .get("max_tokens")
@@ -50,8 +55,9 @@ pub(crate) async fn safetensors_generate_handler(
         .as_ref()
         .map(super::handlers::tokenizer_info_stop_tokens)
         .unwrap_or_default();
-    let gen_config =
+    let mut gen_config =
         super::handlers::apr_cpu_generate_config(max_tokens, temperature, top_p, stop_tokens);
+    overrides.apply(&mut gen_config);
     let output_ids = {
         // PMAT-189: Handle transformer lock poisoning gracefully
         let t = match transformer.lock() {

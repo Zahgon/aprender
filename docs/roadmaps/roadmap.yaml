@@ -17150,6 +17150,28 @@ roadmap:
   - orch:fable
   - ci
   notes: null
+- id: PMAT-2853
+  github_issue: 2853
+  item_type: task
+  title: SafeTensors serve route refuses ignore_eos and seed instead of dropping them
+  status: planned
+  priority: high
+  assigned_to: null
+  created: 2026-10-14T12:25:50Z
+  updated: 2026-10-14T12:25:50Z
+  spec: null
+  acceptance_criteria:
+  - "Issue #2853 fix, verbatim: \"add the two fields to the type and either honour them in the SafeTensors decode loop or refuse them the way PERF-039 does.\""
+  - ignore_eos true on the SafeTensors chat and generate routes runs the reply to max_tokens; false or absent keeps the EOS and turn-end stops
+  - seed reaches the Session sampler (same seed gives the same reply, a different seed a different one, absent keeps the default seed); Ollama options.seed maps onto it
+  - a wrong-typed ignore_eos or seed is a 400 naming the field and the route; unknown fields stay ignored
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 2582
 - id: PMAT-3076
   github_issue: 3076
   item_type: task

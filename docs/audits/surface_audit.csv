@@ -34,7 +34,7 @@ aprender-data,aprender-data registry show-info,6,UNKNOWN,huggingface-transformer
 aprender-data,aprender-data repl,6,UNKNOWN,huggingface-transformers,no,4,data-pipeline,crates/aprender-data/src/cli/mod.rs:175,high
 aprender-data,aprender-data schema,6,UNKNOWN,huggingface-transformers,no,4,data-pipeline,crates/aprender-data/src/cli/mod.rs:66,high
 aprender-data,aprender-data view,6,UNKNOWN,huggingface-transformers,no,4,data-pipeline,crates/aprender-data/src/cli/mod.rs:140,high
-apr,DELETE /api/delete,6,x86_64-linux,ollama,no,10,apr-core-commands,crates/apr-cli/src/commands/serve/ollama.rs:654,medium
+apr,DELETE /api/delete,6,x86_64-linux,ollama,no,10,apr-core-commands,crates/apr-cli/src/commands/serve/ollama.rs:670,medium
 apr,GET /,6,x86_64-linux,llama.cpp,yes,3,http-apr-serve,crates/aprender-serve/src/api/router.rs:258,high
 apr,GET /api/tags,6,x86_64-linux,ollama,yes,3,http-apr-serve,crates/aprender-serve/src/api/router.rs:170,high
 apr,GET /api/version,9,x86_64-linux,ollama,yes,3,http-apr-serve,crates/aprender-serve/src/api/router.rs:172,medium
@@ -46,7 +46,7 @@ apr,GET /metrics/dispatch,7,x86_64-linux,llama.cpp,yes,3,http-apr-serve,crates/a
 apr,GET /models,6,x86_64-linux,llama.cpp,yes,3,http-apr-serve,crates/aprender-serve/src/api/router.rs:95,high
 apr,GET /ready,6,x86_64-linux,llama.cpp,yes,3,http-apr-serve,crates/aprender-serve/src/api/router.rs:93,high
 apr,GET /realize/model,4,x86_64-linux,llama.cpp,yes,3,http-apr-serve,crates/aprender-serve/src/api/router.rs:105,high
-apr,GET /tensors,6,x86_64-linux,llama.cpp,no,10,apr-core-commands,crates/apr-cli/src/commands/serve/safetensors.rs:170,low
+apr,GET /tensors,6,x86_64-linux,llama.cpp,no,10,apr-core-commands,crates/apr-cli/src/commands/serve/safetensors.rs:448,low
 apr,GET /v1/audit/:request_id,7,x86_64-linux,llama.cpp,yes,3,http-apr-serve,crates/aprender-serve/src/api/router.rs:146,medium
 apr,GET /v1/effective-config,7,x86_64-linux,llama.cpp,yes,3,http-apr-serve,crates/aprender-serve/src/api/router.rs:161,high
 apr,GET /v1/gpu/status,7,x86_64-linux,vllm,yes,3,http-apr-serve,crates/aprender-serve/src/api/router.rs:149,medium
@@ -58,7 +58,7 @@ apr,"POST /api/chat (stream:true, NDJSON)",3,x86_64-linux,ollama,no,3,http-apr-s
 apr,POST /api/embeddings,6,x86_64-linux,ollama,yes,3,http-apr-serve,crates/aprender-serve/src/api/router.rs:175,high
 apr,POST /api/generate,3,x86_64-linux,ollama,yes,3,http-apr-serve,crates/aprender-serve/src/api/router.rs:166,high
 apr,"POST /api/generate (stream:true, NDJSON)",3,x86_64-linux,ollama,no,3,http-apr-serve,crates/aprender-serve/src/api/ollama_handlers.rs:665 (framing :383-421),high
-apr,POST /api/pull,6,x86_64-linux,ollama,no,10,apr-core-commands,crates/apr-cli/src/commands/serve/ollama.rs:650,medium
+apr,POST /api/pull,6,x86_64-linux,ollama,no,10,apr-core-commands,crates/apr-cli/src/commands/serve/ollama.rs:665,medium
 apr,POST /api/show,6,x86_64-linux,ollama,yes,3,http-apr-serve,crates/aprender-serve/src/api/router.rs:171,high
 apr,POST /batch/generate,2,x86_64-linux,llama.cpp,yes,3,http-apr-serve,crates/aprender-serve/src/api/router.rs:99,high
 apr,POST /batch/tokenize,2,x86_64-linux,llama.cpp,yes,3,http-apr-serve,crates/aprender-serve/src/api/router.rs:98,high

@@ -486,6 +486,13 @@ pub struct ChatCompletionRequest {
     /// Top-p sampling
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f32>,
+    /// #2853: `true` empties the stop set, so the reply runs to `max_tokens`.
+    /// Absent or `false` keeps the tokenizer's EOS / turn-end stops.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ignore_eos: Option<bool>,
+    /// #2853: sampler seed; absent keeps the engine's default seed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
 }
 
 /// Chat completion response

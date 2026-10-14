@@ -1217,17 +1217,20 @@ pub(crate) fn tokenizer_info_stop_tokens(tok: &SafeTensorsTokenizerInfo) -> Vec<
 }
 
 /// #4334: the reply tokens of an `st_cpu_generate` result: everything past the
-/// prompt, minus the stop id the loop ended on (its stop set is
-/// `gen_config.stop_tokens` plus token 0).
+/// prompt, minus the stop id the loop ended on. `Session::generate` stops only on
+/// `gen_config.stop_tokens` (which `apr_cpu_generate_config` seeds with token 0),
+/// so that is the whole stop set; under `ignore_eos` it is empty and nothing is
+/// trimmed (#2853).
 #[cfg(feature = "inference")]
 pub(crate) fn generated_reply_tokens<'a>(
     output_ids: &'a [u32],
     prompt_len: usize,
     gen_config: &realizar::gguf::QuantizedGenerateConfig,
 ) -> &'a [u32] {
-    let mut stop_ids = gen_config.stop_tokens.clone();
-    stop_ids.push(0);
-    apr_cpu_reply_tokens(output_ids.get(prompt_len..).unwrap_or(&[]), &stop_ids)
+    apr_cpu_reply_tokens(
+        output_ids.get(prompt_len..).unwrap_or(&[]),
+        &gen_config.stop_tokens,
+    )
 }
 
 /// The reply text's tokens: `new_tokens` without the stop id the loop ended on.

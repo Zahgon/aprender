@@ -383,6 +383,10 @@ include!("simple.rs");
 #[cfg(all(test, feature = "inference"))]
 #[path = "tests_safetensors_stop_4334.rs"]
 mod tests_safetensors_stop_4334;
+
+#[cfg(all(test, feature = "inference"))]
+#[path = "tests_st_ignore_eos_seed_2853.rs"]
+mod tests_st_ignore_eos_seed_2853;
 /// #4269 (workstream M of #4263): the ONE SafeTensors CPU generate both serve
 /// handlers (`/v1/chat/completions` in chat.rs, `/generate` in simple.rs) call,
 /// driven through the engine's `realizar::session::Session<StCpuForward>`

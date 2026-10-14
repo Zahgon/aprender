@@ -89,6 +89,9 @@ pub(crate) struct OllamaOptions {
     /// Ollama's name for max tokens.
     #[serde(default)]
     pub num_predict: Option<u32>,
+    /// Sampler seed (#2853). Forwarded as the OpenAI `seed` field.
+    #[serde(default)]
+    pub seed: Option<u64>,
 }
 
 /// Ollama `/api/generate` request (single prompt, non-chat).
@@ -249,6 +252,9 @@ fn apply_options(
     }
     if let Some(n) = opts.num_predict {
         body.insert("max_tokens".to_string(), serde_json::json!(n));
+    }
+    if let Some(s) = opts.seed {
+        body.insert("seed".to_string(), serde_json::json!(s));
     }
 }
 
@@ -722,6 +728,7 @@ mod tests {
                 temperature: Some(0.5),
                 top_k: Some(10),
                 num_predict: Some(32),
+                seed: Some(7),
                 ..Default::default()
             }),
         };
@@ -731,6 +738,10 @@ mod tests {
         assert_eq!(body["messages"][1]["content"], "hi");
         assert_eq!(body["max_tokens"], 32);
         assert_eq!(body["top_k"], 10);
+        assert_eq!(
+            body["seed"], 7,
+            "#2853: options.seed reaches the chat handler"
+        );
         // Always coalesce — drive the underlying chat path non-streaming.
         assert_eq!(body["stream"], false);
     }

@@ -158,7 +158,110 @@ fn parse_chat_completion_request(
             .get("top_p")
             .and_then(|t| t.as_f64())
             .map(|v| v as f32),
+        // #2853: the fallback keeps these too; their types were checked by
+        // `st_sampling_overrides` before any parse.
+        ignore_eos: request
+            .get("ignore_eos")
+            .and_then(serde_json::Value::as_bool),
+        seed: request.get("seed").and_then(serde_json::Value::as_u64),
     })
+}
+
+/// #2853: what the SafeTensors CPU loop does with `ignore_eos` and `seed`.
+/// Both are honoured: `st_cpu_generate` drives `Session::generate`, which stops
+/// only on `config.stop_tokens` and seeds its sampler from `config.seed`.
+#[cfg(feature = "inference")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct StSamplingOverrides {
+    /// Empty the stop set, so the reply runs to `max_tokens`.
+    pub ignore_eos: bool,
+    /// Sampler seed; `None` keeps the engine's default.
+    pub seed: Option<u64>,
+}
+
+#[cfg(feature = "inference")]
+impl StSamplingOverrides {
+    /// The overrides a parsed chat request asks for; absent reads as today.
+    pub(crate) fn from_request(request: &ChatCompletionRequest) -> Self {
+        Self {
+            ignore_eos: request.ignore_eos.unwrap_or(false),
+            seed: request.seed,
+        }
+    }
+
+    /// Apply to a config built by `apr_cpu_generate_config`.
+    pub(crate) fn apply(self, config: &mut realizar::gguf::QuantizedGenerateConfig) {
+        if self.ignore_eos {
+            config.stop_tokens.clear();
+        }
+        if let Some(seed) = self.seed {
+            config.seed = seed;
+        }
+    }
+}
+
+/// #2853: read `ignore_eos` and `seed` off a SafeTensors request body. They were
+/// dropped silently; a value of the wrong type is now a 400 naming the field and
+/// the route, never a quiet fallback to the default. `null` reads as absent.
+#[cfg(feature = "inference")]
+#[allow(clippy::result_large_err, clippy::disallowed_methods)] // json!() unwraps infallibly
+pub(crate) fn st_sampling_overrides(
+    request: &serde_json::Value,
+) -> std::result::Result<StSamplingOverrides, axum::response::Response> {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let refuse = |param: &str, want: &str| {
+        let message = format!(
+            "`{param}` must be {want} on the SafeTensors F32 CPU route (apr serve run \
+             model.safetensors); refused rather than served with the default"
+        );
+        (
+            StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({
+                "error": {"message": message, "type": "invalid_request_error", "param": param}
+            })),
+        )
+            .into_response()
+    };
+    let ignore_eos = match request.get("ignore_eos") {
+        None | Some(serde_json::Value::Null) => false,
+        Some(v) => v.as_bool().ok_or_else(|| refuse("ignore_eos", "a boolean"))?,
+    };
+    let seed = match request.get("seed") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(v) => Some(
+            v.as_u64()
+                .ok_or_else(|| refuse("seed", "a non-negative integer"))?,
+        ),
+    };
+    Ok(StSamplingOverrides { ignore_eos, seed })
+}
+
+/// The first refusal a SafeTensors chat request earns, before any parse:
+/// #3568 PR 4 (this loop applies no constraint; one asked for is refused, never
+/// dropped), #4971 logprobs, and #2853 a wrong-typed `ignore_eos` / `seed`.
+#[cfg(feature = "inference")]
+fn st_chat_refusal(request: &serde_json::Value) -> Option<axum::response::Response> {
+    super::response_format::refuse_response_format(
+        request,
+        super::response_format::SAFETENSORS_CPU,
+    )
+    .or_else(|| super::handlers::logprobs_refusal_response(request, "SafeTensors F32 CPU"))
+    .or_else(|| st_sampling_overrides(request).err())
+}
+
+/// The chat reply text: cut at the first `<|im_end|>`, unless `ignore_eos` asked
+/// for every generated token, in which case it is not cut at a turn end (#2853).
+#[cfg(feature = "inference")]
+fn st_reply_text(text: String, ignore_eos: bool) -> String {
+    if ignore_eos {
+        return text;
+    }
+    match text.split_once("<|im_end|>") {
+        Some((head, _)) => head.to_string(),
+        None => text,
+    }
 }
 
 /// Build a ChatML-formatted prompt from a parsed chat completion request (GH-160)
@@ -224,16 +327,7 @@ pub(crate) async fn safetensors_chat_completions_handler(
     use axum::response::{sse::Event, IntoResponse, Sse};
     use futures_util::stream;
 
-    // #3568 PR 4: this loop applies no constraint; one asked for is refused, never dropped
-    if let Some(refusal) = super::response_format::refuse_response_format(
-        &request,
-        super::response_format::SAFETENSORS_CPU,
-    ) {
-        return refusal;
-    }
-    if let Some(refused) =
-        super::handlers::logprobs_refusal_response(&request, "SafeTensors F32 CPU")
-    {
+    if let Some(refused) = st_chat_refusal(&request) {
         return refused;
     }
 
@@ -246,6 +340,8 @@ pub(crate) async fn safetensors_chat_completions_handler(
     let max_tokens = parsed_request.max_tokens.unwrap_or(50) as usize;
     let stream_mode = parsed_request.stream;
     let has_tools = parsed_request.tools.as_ref().is_some_and(|t| !t.is_empty());
+    // #2853: honoured, not dropped (see `StSamplingOverrides`)
+    let overrides = StSamplingOverrides::from_request(&parsed_request);
 
     // Build prompt from messages (ChatML format)
     let prompt = build_chatml_prompt(&parsed_request, has_tools);
@@ -290,8 +386,9 @@ pub(crate) async fn safetensors_chat_completions_handler(
         .as_ref()
         .map(super::handlers::tokenizer_info_stop_tokens)
         .unwrap_or_default();
-    let gen_config =
+    let mut gen_config =
         super::handlers::apr_cpu_generate_config(max_tokens, temperature, top_p, stop_tokens);
+    overrides.apply(&mut gen_config);
     let output_ids = {
         // PMAT-189: Handle transformer lock poisoning gracefully
         let t = match transformer.lock() {
@@ -336,12 +433,7 @@ pub(crate) async fn safetensors_chat_completions_handler(
             .collect()
     };
 
-    // Clean output (remove any trailing special tokens)
-    let output_text = output_text
-        .split("<|im_end|>")
-        .next()
-        .unwrap_or(&output_text)
-        .to_string();
+    let output_text = st_reply_text(output_text, overrides.ignore_eos);
 
     let tokens_generated = new_tokens.len();
     let tok_per_sec = if elapsed.as_secs_f64() > 0.0 {
@@ -660,6 +752,8 @@ mod chat_helper_tests {
             stream: false,
             temperature: None,
             top_p: None,
+            ignore_eos: None,
+            seed: None,
         }
     }
 
