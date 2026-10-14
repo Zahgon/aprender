@@ -1,0 +1,18 @@
+- id: PMAT-5314
+  github_issue: 5314
+  item_type: task
+  title: 'TRACE-001: one trace schema from training to serving, with CRUX records'
+  status: planned
+  priority: high
+  assigned_to: null
+  created: 2026-10-14T13:34:31Z
+  updated: 2026-10-14T13:34:31Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 4000
