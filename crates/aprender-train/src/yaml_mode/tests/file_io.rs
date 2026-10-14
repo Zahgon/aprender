@@ -67,7 +67,8 @@ name: "save-test"
 version: "1.0.0"
 description: "Test saving manifest"
 "#;
-    let manifest: TrainingManifest = serde_yaml::from_str(yaml).expect("operation should succeed");
+    let manifest: TrainingManifest =
+        crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
 
     save_manifest(&manifest, &manifest_path).expect("save should succeed");
 
@@ -90,7 +91,8 @@ entrenar: "1.0"
 name: "nested-test"
 version: "1.0.0"
 "#;
-    let manifest: TrainingManifest = serde_yaml::from_str(yaml).expect("operation should succeed");
+    let manifest: TrainingManifest =
+        crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
 
     // This should fail since we don't create parent dirs in save_manifest
     let result = save_manifest(&manifest, &nested_path);

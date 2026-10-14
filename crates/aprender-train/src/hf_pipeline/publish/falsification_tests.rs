@@ -30,16 +30,16 @@ fn falsify_model_card_yaml_parseable() {
 
     let yaml_str = parts[1].trim();
     // Parse the YAML to verify it's valid
-    let yaml: serde_yaml::Value = serde_yaml::from_str(yaml_str).unwrap_or_else(|e| {
+    let yaml: serde_json::Value = crate::yaml_mode::yaml_from_str(yaml_str).unwrap_or_else(|e| {
         panic!("Model card YAML is invalid: {e}\nYAML:\n{yaml_str}");
     });
 
     // Verify required fields
     assert_eq!(yaml["license"], "apache-2.0");
-    assert!(yaml["language"].is_sequence());
+    assert!(yaml["language"].is_array());
     assert_eq!(yaml["base_model"], "meta-llama/Llama-3-8B");
-    assert!(yaml["tags"].is_sequence());
-    assert!(yaml["model-index"].is_sequence());
+    assert!(yaml["tags"].is_array());
+    assert!(yaml["model-index"].is_array());
 }
 
 #[test]

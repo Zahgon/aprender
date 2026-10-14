@@ -60,7 +60,7 @@ pub fn load_model(path: impl AsRef<Path>) -> Result<Model> {
     let state: ModelState = match format {
         ModelFormat::Json => serde_json::from_str(&content)
             .map_err(|e| Error::Serialization(format!("JSON deserialization failed: {e}")))?,
-        ModelFormat::Yaml => serde_yaml::from_str(&content)
+        ModelFormat::Yaml => crate::yaml_mode::yaml_from_str(&content)
             .map_err(|e| Error::Serialization(format!("YAML deserialization failed: {e}")))?,
         ModelFormat::SafeTensors => unreachable!(), // Handled above
         ModelFormat::Apr => unreachable!(),         // Handled above

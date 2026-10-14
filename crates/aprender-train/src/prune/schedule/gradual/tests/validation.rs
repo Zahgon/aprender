@@ -159,7 +159,8 @@ initial_sparsity: 0.0
 final_sparsity: 0.5
 frequency: 10
 ";
-    let schedule: PruningSchedule = serde_yaml::from_str(yaml).expect("operation should succeed");
+    let schedule: PruningSchedule =
+        crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
     match schedule {
         PruningSchedule::Gradual {
             start_step,

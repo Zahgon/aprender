@@ -6,6 +6,7 @@
 mod tests {
     use crate::config::schema::*;
     use crate::config::validate::{validate_config, ValidationError};
+    use crate::yaml_mode::yaml_from_str;
     use proptest::prelude::*;
     use std::collections::HashMap;
     use std::path::PathBuf;
@@ -127,16 +128,16 @@ mod tests {
 
         #[test]
         fn prop_model_ref_round_trip(model in arb_model_ref()) {
-            let yaml = serde_yaml::to_string(&model).expect("operation should succeed");
-            let parsed: ModelRef = serde_yaml::from_str(&yaml).expect("parsing should succeed");
+            let yaml = serde_saphyr::to_string(&model).expect("operation should succeed");
+            let parsed: ModelRef = yaml_from_str(&yaml).expect("parsing should succeed");
             prop_assert_eq!(model.path, parsed.path);
             prop_assert_eq!(model.layers, parsed.layers);
         }
 
         #[test]
         fn prop_data_config_round_trip(data in arb_data_config()) {
-            let yaml = serde_yaml::to_string(&data).expect("operation should succeed");
-            let parsed: DataConfig = serde_yaml::from_str(&yaml).expect("parsing should succeed");
+            let yaml = serde_saphyr::to_string(&data).expect("operation should succeed");
+            let parsed: DataConfig = yaml_from_str(&yaml).expect("parsing should succeed");
             prop_assert_eq!(data.train, parsed.train);
             prop_assert_eq!(data.val, parsed.val);
             prop_assert_eq!(data.batch_size, parsed.batch_size);
@@ -146,16 +147,16 @@ mod tests {
 
         #[test]
         fn prop_optim_spec_round_trip(optim in arb_optim_spec()) {
-            let yaml = serde_yaml::to_string(&optim).expect("operation should succeed");
-            let parsed: OptimSpec = serde_yaml::from_str(&yaml).expect("parsing should succeed");
+            let yaml = serde_saphyr::to_string(&optim).expect("operation should succeed");
+            let parsed: OptimSpec = yaml_from_str(&yaml).expect("parsing should succeed");
             prop_assert_eq!(optim.name, parsed.name);
             prop_assert!((optim.lr - parsed.lr).abs() < 1e-6);
         }
 
         #[test]
         fn prop_lora_spec_round_trip(lora in arb_lora_spec()) {
-            let yaml = serde_yaml::to_string(&lora).expect("operation should succeed");
-            let parsed: LoRASpec = serde_yaml::from_str(&yaml).expect("parsing should succeed");
+            let yaml = serde_saphyr::to_string(&lora).expect("operation should succeed");
+            let parsed: LoRASpec = yaml_from_str(&yaml).expect("parsing should succeed");
             prop_assert_eq!(lora.rank, parsed.rank);
             prop_assert!((lora.alpha - parsed.alpha).abs() < 1e-5);
             prop_assert_eq!(lora.target_modules, parsed.target_modules);
@@ -164,8 +165,8 @@ mod tests {
 
         #[test]
         fn prop_quant_spec_round_trip(quant in arb_quant_spec()) {
-            let yaml = serde_yaml::to_string(&quant).expect("operation should succeed");
-            let parsed: QuantSpec = serde_yaml::from_str(&yaml).expect("parsing should succeed");
+            let yaml = serde_saphyr::to_string(&quant).expect("operation should succeed");
+            let parsed: QuantSpec = yaml_from_str(&yaml).expect("parsing should succeed");
             prop_assert_eq!(quant.bits, parsed.bits);
             prop_assert_eq!(quant.symmetric, parsed.symmetric);
             prop_assert_eq!(quant.per_channel, parsed.per_channel);
@@ -173,15 +174,15 @@ mod tests {
 
         #[test]
         fn prop_merge_spec_round_trip(merge in arb_merge_spec()) {
-            let yaml = serde_yaml::to_string(&merge).expect("operation should succeed");
-            let parsed: MergeSpec = serde_yaml::from_str(&yaml).expect("parsing should succeed");
+            let yaml = serde_saphyr::to_string(&merge).expect("operation should succeed");
+            let parsed: MergeSpec = yaml_from_str(&yaml).expect("parsing should succeed");
             prop_assert_eq!(merge.method, parsed.method);
         }
 
         #[test]
         fn prop_training_params_round_trip(params in arb_training_params()) {
-            let yaml = serde_yaml::to_string(&params).expect("operation should succeed");
-            let parsed: TrainingParams = serde_yaml::from_str(&yaml).expect("parsing should succeed");
+            let yaml = serde_saphyr::to_string(&params).expect("operation should succeed");
+            let parsed: TrainingParams = yaml_from_str(&yaml).expect("parsing should succeed");
             prop_assert_eq!(params.epochs, parsed.epochs);
             prop_assert_eq!(params.warmup_steps, parsed.warmup_steps);
             prop_assert_eq!(params.save_interval, parsed.save_interval);
@@ -194,8 +195,8 @@ mod tests {
 
         #[test]
         fn prop_train_spec_round_trip(spec in arb_train_spec()) {
-            let yaml = serde_yaml::to_string(&spec).expect("operation should succeed");
-            let parsed: TrainSpec = serde_yaml::from_str(&yaml).expect("parsing should succeed");
+            let yaml = serde_saphyr::to_string(&spec).expect("operation should succeed");
+            let parsed: TrainSpec = yaml_from_str(&yaml).expect("parsing should succeed");
 
             // Core fields match
             prop_assert_eq!(spec.model.path, parsed.model.path);
@@ -349,8 +350,8 @@ mod tests {
         #[test]
         fn prop_yaml_json_interop(spec in arb_train_spec()) {
             // YAML -> JSON -> back should preserve data
-            let yaml = serde_yaml::to_string(&spec).expect("operation should succeed");
-            let from_yaml: TrainSpec = serde_yaml::from_str(&yaml).expect("operation should succeed");
+            let yaml = serde_saphyr::to_string(&spec).expect("operation should succeed");
+            let from_yaml: TrainSpec = yaml_from_str(&yaml).expect("operation should succeed");
 
             let json = serde_json::to_string(&from_yaml).expect("JSON serialization should succeed");
             let from_json: TrainSpec = serde_json::from_str(&json).expect("JSON deserialization should succeed");
@@ -368,8 +369,8 @@ mod tests {
     #[test]
     fn test_empty_layers_serializes() {
         let model = ModelRef { path: PathBuf::from("model.gguf"), ..Default::default() };
-        let yaml = serde_yaml::to_string(&model).expect("operation should succeed");
-        let parsed: ModelRef = serde_yaml::from_str(&yaml).expect("parsing should succeed");
+        let yaml = serde_saphyr::to_string(&model).expect("operation should succeed");
+        let parsed: ModelRef = yaml_from_str(&yaml).expect("parsing should succeed");
         assert!(parsed.layers.is_empty());
     }
 
@@ -380,16 +381,16 @@ mod tests {
             batch_size: 1_000_000,
             ..Default::default()
         };
-        let yaml = serde_yaml::to_string(&data).expect("operation should succeed");
-        let parsed: DataConfig = serde_yaml::from_str(&yaml).expect("parsing should succeed");
+        let yaml = serde_saphyr::to_string(&data).expect("operation should succeed");
+        let parsed: DataConfig = yaml_from_str(&yaml).expect("parsing should succeed");
         assert_eq!(parsed.batch_size, 1_000_000);
     }
 
     #[test]
     fn test_very_small_lr() {
         let optim = OptimSpec { name: "adam".to_string(), lr: 1e-10, params: HashMap::new() };
-        let yaml = serde_yaml::to_string(&optim).expect("operation should succeed");
-        let parsed: OptimSpec = serde_yaml::from_str(&yaml).expect("parsing should succeed");
+        let yaml = serde_saphyr::to_string(&optim).expect("operation should succeed");
+        let parsed: OptimSpec = yaml_from_str(&yaml).expect("parsing should succeed");
         assert!((parsed.lr - 1e-10).abs() < 1e-15);
     }
 
@@ -400,8 +401,8 @@ mod tests {
             layers: vec!["層".to_string()],
             ..Default::default()
         };
-        let yaml = serde_yaml::to_string(&model).expect("operation should succeed");
-        let parsed: ModelRef = serde_yaml::from_str(&yaml).expect("parsing should succeed");
+        let yaml = serde_saphyr::to_string(&model).expect("operation should succeed");
+        let parsed: ModelRef = yaml_from_str(&yaml).expect("parsing should succeed");
         assert_eq!(parsed.path, PathBuf::from("模型/model.gguf"));
     }
 
@@ -422,7 +423,7 @@ mod tests {
             publish: None,
         };
 
-        let yaml = serde_yaml::to_string(&spec).expect("operation should succeed");
+        let yaml = serde_saphyr::to_string(&spec).expect("operation should succeed");
         // Optional None fields should not appear in YAML
         assert!(!yaml.contains("lora:"));
         assert!(!yaml.contains("quantize:"));
@@ -438,7 +439,7 @@ beta1: 0.9
 beta2: 0.999
 weight_decay: 0.01
 ";
-        let optim: OptimSpec = serde_yaml::from_str(yaml).expect("operation should succeed");
+        let optim: OptimSpec = yaml_from_str(yaml).expect("operation should succeed");
         assert_eq!(optim.name, "adamw");
         assert!(optim.params.contains_key("beta1"));
         assert!(optim.params.contains_key("weight_decay"));
@@ -450,7 +451,7 @@ weight_decay: 0.01
 method: ties
 density: 0.2
 ";
-        let merge: MergeSpec = serde_yaml::from_str(yaml).expect("operation should succeed");
+        let merge: MergeSpec = yaml_from_str(yaml).expect("operation should succeed");
         assert_eq!(merge.method, "ties");
         assert!(merge.params.contains_key("density"));
     }

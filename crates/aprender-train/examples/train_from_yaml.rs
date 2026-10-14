@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Serialize to YAML
-    let yaml = serde_yaml::to_string(&spec)?;
+    let yaml = serde_saphyr::to_string(&spec)?;
     println!("Generated YAML configuration:\n");
     println!("{yaml}");
 
@@ -91,7 +91,10 @@ training:
 ";
     println!("{minimal_yaml}");
 
-    let minimal_spec: TrainSpec = serde_yaml::from_str(minimal_yaml)?;
+    let minimal_spec: TrainSpec = serde_saphyr::from_str_with_options(
+        minimal_yaml,
+        serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false },
+    )?;
     println!("✓ Minimal config parsed successfully");
     println!("  Epochs: {}", minimal_spec.training.epochs);
     println!("  LoRA: {}", if minimal_spec.lora.is_some() { "yes" } else { "no" });

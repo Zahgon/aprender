@@ -29,7 +29,7 @@ pub fn run_info(args: InfoArgs, level: LogLevel) -> Result<(), String> {
             println!("{json}");
         }
         OutputFormat::Yaml => {
-            let yaml = serde_yaml::to_string(&spec)
+            let yaml = serde_saphyr::to_string(&spec)
                 .map_err(|e| format!("YAML serialization error: {e}"))?;
             println!("{yaml}");
         }

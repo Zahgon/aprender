@@ -66,7 +66,7 @@ fn save_json(model: &Model, path: &Path, pretty: bool) -> Result<()> {
 /// Serialize and save a model as YAML
 fn save_yaml(model: &Model, path: &Path) -> Result<()> {
     let state = model.to_state();
-    let data = serde_yaml::to_string(&state)
+    let data = serde_saphyr::to_string(&state)
         .map_err(|e| Error::Serialization(format!("YAML serialization failed: {e}")))?;
     let mut file = File::create(path)?;
     file.write_all(data.as_bytes())?;

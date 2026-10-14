@@ -68,7 +68,8 @@ pub fn run_research_init(args: ResearchInitArgs, level: LogLevel) -> Result<(), 
         artifact = artifact.with_doi(doi);
     }
 
-    let yaml = serde_yaml::to_string(&artifact).map_err(|e| format!("Serialization error: {e}"))?;
+    let yaml =
+        serde_saphyr::to_string(&artifact).map_err(|e| format!("Serialization error: {e}"))?;
     std::fs::write(&args.output, &yaml).map_err(|e| format!("Failed to write file: {e}"))?;
 
     log(level, LogLevel::Normal, &format!("Artifact saved to: {}", args.output.display()));

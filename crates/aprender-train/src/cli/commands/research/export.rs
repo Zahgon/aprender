@@ -63,8 +63,8 @@ fn export_anonymized_json(args: &ExportArgs, level: LogLevel) -> Result<(), Stri
     let yaml = std::fs::read_to_string(&args.input)
         .map_err(|e| format!("Failed to read artifact: {e}"))?;
 
-    let artifact: ResearchArtifact =
-        serde_yaml::from_str(&yaml).map_err(|e| format!("Failed to parse artifact: {e}"))?;
+    let artifact: ResearchArtifact = crate::yaml_mode::yaml_from_str(&yaml)
+        .map_err(|e| format!("Failed to parse artifact: {e}"))?;
 
     let config = AnonymizationConfig::new(salt);
     let anon = config.anonymize(&artifact);

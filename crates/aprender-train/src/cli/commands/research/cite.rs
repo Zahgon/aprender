@@ -12,8 +12,8 @@ pub fn run_research_cite(args: CiteArgs, level: LogLevel) -> Result<(), String> 
     let yaml = std::fs::read_to_string(&args.artifact)
         .map_err(|e| format!("Failed to read artifact: {e}"))?;
 
-    let artifact: ResearchArtifact =
-        serde_yaml::from_str(&yaml).map_err(|e| format!("Failed to parse artifact: {e}"))?;
+    let artifact: ResearchArtifact = crate::yaml_mode::yaml_from_str(&yaml)
+        .map_err(|e| format!("Failed to parse artifact: {e}"))?;
 
     // Create citation
     let mut citation = CitationMetadata::new(artifact, args.year);

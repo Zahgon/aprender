@@ -51,12 +51,25 @@ pub use validation::{validate_manifest, ManifestError, ValidationResult};
 
 use std::path::Path;
 
+/// Parse YAML text with the standard stage options (#5205).
+///
+/// The one crate-wide YAML parse entry point: every reader in this crate goes
+/// through it, so the options cannot drift between call sites.
+pub(crate) fn yaml_from_str<T: serde::de::DeserializeOwned>(
+    s: &str,
+) -> std::result::Result<T, serde_saphyr::Error> {
+    serde_saphyr::from_str_with_options(
+        s,
+        serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false },
+    )
+}
+
 /// Load and validate a training manifest from a YAML file
 pub fn load_manifest(path: &Path) -> crate::Result<TrainingManifest> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| crate::Error::Io(format!("Failed to read manifest: {e}")))?;
 
-    let manifest: TrainingManifest = serde_yaml::from_str(&content)
+    let manifest: TrainingManifest = crate::yaml_mode::yaml_from_str(&content)
         .map_err(|e| crate::Error::Parse(format!("Failed to parse manifest: {e}")))?;
 
     validate_manifest(&manifest).map_err(|e| crate::Error::Validation(e.to_string()))?;
@@ -66,7 +79,7 @@ pub fn load_manifest(path: &Path) -> crate::Result<TrainingManifest> {
 
 /// Save a training manifest to a YAML file
 pub fn save_manifest(manifest: &TrainingManifest, path: &Path) -> crate::Result<()> {
-    let content = serde_yaml::to_string(manifest)
+    let content = serde_saphyr::to_string(manifest)
         .map_err(|e| crate::Error::Parse(format!("Failed to serialize manifest: {e}")))?;
 
     std::fs::write(path, content)

@@ -1015,7 +1015,7 @@ mod tests {
         else {
             return;
         };
-        let doc: serde_yaml::Value = serde_yaml::from_str(&sovereign_yaml)
+        let doc: serde_json::Value = crate::yaml_mode::yaml_from_str(&sovereign_yaml)
             .expect("llama-370m-sovereign-v1.yaml must parse as YAML");
 
         // Contract identity — must be the right contract.
@@ -1090,8 +1090,8 @@ mod tests {
         else {
             return;
         };
-        let doc: serde_yaml::Value =
-            serde_yaml::from_str(&sovereign_yaml).expect("parse sovereign contract");
+        let doc: serde_json::Value =
+            crate::yaml_mode::yaml_from_str(&sovereign_yaml).expect("parse sovereign contract");
         assert_eq!(
             doc["status"].as_str(),
             Some("ACTIVE"),
@@ -1279,10 +1279,10 @@ mod tests {
         ) else {
             return;
         };
-        let doc: serde_yaml::Value =
-            serde_yaml::from_str(&sovereign_yaml).expect("parse sovereign contract");
+        let doc: serde_json::Value =
+            crate::yaml_mode::yaml_from_str(&sovereign_yaml).expect("parse sovereign contract");
         let gates =
-            doc["gates"].as_sequence().expect("gates must be a sequence in sovereign contract");
+            doc["gates"].as_array().expect("gates must be a sequence in sovereign contract");
         let gate = gates
             .iter()
             .find(|g| g["id"].as_str() == Some("GATE-ARCH-370M-004"))
@@ -1305,7 +1305,7 @@ mod tests {
              (full discharge blocks on real trained 370M .apr)",
         );
         let evidence = gate["evidence_discharged_by"]
-            .as_sequence()
+            .as_array()
             .expect("GATE-ARCH-370M-004 must have evidence_discharged_by");
         assert!(
             !evidence.is_empty(),
@@ -1432,10 +1432,10 @@ mod tests {
         ) else {
             return;
         };
-        let doc: serde_yaml::Value =
-            serde_yaml::from_str(&sovereign_yaml).expect("parse sovereign contract");
+        let doc: serde_json::Value =
+            crate::yaml_mode::yaml_from_str(&sovereign_yaml).expect("parse sovereign contract");
         let gates =
-            doc["gates"].as_sequence().expect("gates must be a sequence in sovereign contract");
+            doc["gates"].as_array().expect("gates must be a sequence in sovereign contract");
         let gate = gates
             .iter()
             .find(|g| g["id"].as_str() == Some("GATE-ARCH-370M-005"))
@@ -1459,7 +1459,7 @@ mod tests {
              `apr run` harness)",
         );
         let evidence = gate["evidence_discharged_by"]
-            .as_sequence()
+            .as_array()
             .expect("GATE-ARCH-370M-005 must have evidence_discharged_by");
         assert!(
             !evidence.is_empty(),
@@ -1591,10 +1591,10 @@ mod tests {
         ) else {
             return;
         };
-        let doc: serde_yaml::Value =
-            serde_yaml::from_str(&sovereign_yaml).expect("parse sovereign contract");
+        let doc: serde_json::Value =
+            crate::yaml_mode::yaml_from_str(&sovereign_yaml).expect("parse sovereign contract");
         let gates =
-            doc["gates"].as_sequence().expect("gates must be a sequence in sovereign contract");
+            doc["gates"].as_array().expect("gates must be a sequence in sovereign contract");
         let gate = gates
             .iter()
             .find(|g| g["id"].as_str() == Some("GATE-ARCH-370M-006"))
@@ -1618,7 +1618,7 @@ mod tests {
              `apr bench` median run)",
         );
         let evidence = gate["evidence_discharged_by"]
-            .as_sequence()
+            .as_array()
             .expect("GATE-ARCH-370M-006 must have evidence_discharged_by");
         assert!(
             !evidence.is_empty(),
@@ -1829,10 +1829,10 @@ mod tests {
         ) else {
             return;
         };
-        let doc: serde_yaml::Value =
-            serde_yaml::from_str(&sovereign_yaml).expect("parse sovereign contract");
+        let doc: serde_json::Value =
+            crate::yaml_mode::yaml_from_str(&sovereign_yaml).expect("parse sovereign contract");
 
-        let gates = doc["gates"].as_sequence().expect("contract must have `gates:` sequence");
+        let gates = doc["gates"].as_array().expect("contract must have `gates:` sequence");
 
         let gate = gates
             .iter()
@@ -1856,7 +1856,7 @@ mod tests {
              full discharge blocks on trained 370M .apr + real apr eval",
         );
         let evidence = gate["evidence_discharged_by"]
-            .as_sequence()
+            .as_array()
             .expect("GATE-ARCH-370M-007 must have evidence_discharged_by");
         assert!(
             !evidence.is_empty(),
@@ -2016,10 +2016,10 @@ mod tests {
         ) else {
             return;
         };
-        let doc: serde_yaml::Value =
-            serde_yaml::from_str(&sovereign_yaml).expect("parse sovereign contract");
+        let doc: serde_json::Value =
+            crate::yaml_mode::yaml_from_str(&sovereign_yaml).expect("parse sovereign contract");
         let gates =
-            doc["gates"].as_sequence().expect("gates must be a sequence in sovereign contract");
+            doc["gates"].as_array().expect("gates must be a sequence in sovereign contract");
         let gate = gates
             .iter()
             .find(|g| g["id"].as_str() == Some("GATE-ARCH-370M-008"))
@@ -2042,7 +2042,7 @@ mod tests {
              (full discharge blocks on real trained 370M .apr + `apr qa` harness)",
         );
         let evidence = gate["evidence_discharged_by"]
-            .as_sequence()
+            .as_array()
             .expect("GATE-ARCH-370M-008 must have evidence_discharged_by");
         assert!(
             !evidence.is_empty(),

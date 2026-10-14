@@ -133,7 +133,7 @@ impl ClusterConfig {
     /// Returns error if file cannot be read or parsed, or if validation fails.
     pub fn from_file(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let contents = std::fs::read_to_string(path)?;
-        let config: Self = serde_yaml::from_str(&contents)?;
+        let config: Self = crate::yaml_mode::yaml_from_str(&contents)?;
         config.validate()?;
         Ok(config)
     }
@@ -143,7 +143,7 @@ impl ClusterConfig {
     /// # Errors
     /// Returns error if parsing or validation fails.
     pub fn from_yaml(yaml: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let config: Self = serde_yaml::from_str(yaml)?;
+        let config: Self = crate::yaml_mode::yaml_from_str(yaml)?;
         config.validate()?;
         Ok(config)
     }
@@ -502,7 +502,7 @@ nodes:
     #[test]
     fn test_serialization_roundtrip() {
         let config = ClusterConfig::from_yaml(sample_yaml()).unwrap();
-        let yaml = serde_yaml::to_string(&config).unwrap();
+        let yaml = serde_saphyr::to_string(&config).unwrap();
         let reparsed = ClusterConfig::from_yaml(&yaml).unwrap();
         assert_eq!(reparsed.nodes.len(), config.nodes.len());
         assert_eq!(reparsed.total_adapter_capacity(), config.total_adapter_capacity());

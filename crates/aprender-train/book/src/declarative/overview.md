@@ -144,7 +144,7 @@ The `train_from_yaml()` function orchestrates:
 pub fn train_from_yaml<P: AsRef<Path>>(config_path: P) -> Result<()> {
     // 1. Load and validate config
     let yaml_content = fs::read_to_string(config_path.as_ref())?;
-    let spec: TrainSpec = serde_yaml::from_str(&yaml_content)?;
+    let spec: TrainSpec = serde_saphyr::from_str(&yaml_content)?;
     validate_config(&spec)?;
 
     // 2. Build components

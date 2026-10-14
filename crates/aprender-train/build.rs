@@ -35,6 +35,14 @@ struct Binding {
     notes: Option<String>,
 }
 
+/// The standard stage options (#5205).
+fn yaml_from_str<T: serde::de::DeserializeOwned>(s: &str) -> Result<T, serde_saphyr::Error> {
+    serde_saphyr::from_str_with_options(
+        s,
+        serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false },
+    )
+}
+
 /// Convert a contract filename + equation into a canonical env var name.
 ///
 /// `"learning-rate-schedules-v1.yaml"` + `"cosine_warmup"` → `"CONTRACT_LEARNING_RATE_SCHEDULES_V1_COSINE_WARMUP"`
@@ -115,7 +123,7 @@ fn load_binding_file(binding_path: &Path) -> Option<BindingFile> {
         }
     };
 
-    match serde_yaml_ng::from_str::<BindingFile>(&yaml_content) {
+    match yaml_from_str::<BindingFile>(&yaml_content) {
         Ok(b) => Some(b),
         Err(e) => {
             println!(
@@ -256,7 +264,7 @@ fn emit_contract_file(path: &Path, total_pre: &mut usize, total_post: &mut usize
     let Ok(contents) = std::fs::read_to_string(path) else {
         return;
     };
-    let Ok(parsed) = serde_yaml_ng::from_str::<ContractYaml>(&contents) else {
+    let Ok(parsed) = yaml_from_str::<ContractYaml>(&contents) else {
         return;
     };
     for (eq_name, eq) in &parsed.equations {

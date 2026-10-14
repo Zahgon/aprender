@@ -81,7 +81,7 @@ pub fn generate_yaml(
 ) -> String {
     let manifest =
         generate_manifest_with_hints(template, name, model, data, lora_rank, learning_rate);
-    serde_yaml::to_string(&manifest).unwrap_or_else(|_err| "# Error generating YAML".to_string())
+    serde_saphyr::to_string(&manifest).unwrap_or_else(|_err| "# Error generating YAML".to_string())
 }
 
 fn generate_minimal(name: &str, model: Option<&str>, data: Option<&str>) -> TrainingManifest {
@@ -621,7 +621,8 @@ mod tests {
             merge_adapters: true
             format: safetensors
         "#;
-        let config: PublishConfig = serde_yaml::from_str(yaml).expect("config should be valid");
+        let config: PublishConfig =
+            crate::yaml_mode::yaml_from_str(yaml).expect("config should be valid");
         assert_eq!(config.repo, "myuser/my-model");
         assert!(!config.private);
         assert!(config.model_card);
@@ -634,7 +635,8 @@ mod tests {
         use super::super::manifest::PublishConfig;
 
         let yaml = r#"repo: "org/name""#;
-        let config: PublishConfig = serde_yaml::from_str(yaml).expect("config should be valid");
+        let config: PublishConfig =
+            crate::yaml_mode::yaml_from_str(yaml).expect("config should be valid");
         assert!(!config.private);
         assert!(config.model_card); // default true
         assert!(!config.merge_adapters);
@@ -652,7 +654,7 @@ publish:
   merge_adapters: true
 "#;
         let manifest: TrainingManifest =
-            serde_yaml::from_str(yaml).expect("operation should succeed");
+            crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
         let publish = manifest.publish.expect("operation should succeed");
         assert_eq!(publish.repo, "myuser/my-model");
         assert!(publish.merge_adapters);

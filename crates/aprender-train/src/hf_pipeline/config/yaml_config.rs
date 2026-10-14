@@ -46,7 +46,7 @@ impl DistillationYamlConfig {
 
     /// Parse configuration from YAML string
     pub fn from_yaml(content: &str) -> Result<Self> {
-        serde_yaml::from_str(content).map_err(|e| FetchError::ConfigParseError {
+        crate::yaml_mode::yaml_from_str(content).map_err(|e| FetchError::ConfigParseError {
             message: format!("Failed to parse YAML: {e}"),
         })
     }
@@ -61,7 +61,7 @@ impl DistillationYamlConfig {
 
     /// Serialize to YAML string
     pub fn to_yaml(&self) -> Result<String> {
-        serde_yaml::to_string(self).map_err(|e| FetchError::ConfigParseError {
+        serde_saphyr::to_string(self).map_err(|e| FetchError::ConfigParseError {
             message: format!("Failed to serialize YAML: {e}"),
         })
     }

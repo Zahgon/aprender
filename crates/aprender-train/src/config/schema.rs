@@ -615,7 +615,8 @@ optimizer:
   lr: 0.001
 ";
 
-        let spec: TrainSpec = serde_yaml::from_str(yaml).expect("operation should succeed");
+        let spec: TrainSpec =
+            crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
         assert_eq!(spec.model.path, PathBuf::from("model.gguf"));
         assert_eq!(spec.data.batch_size, 8);
         assert_eq!(spec.optimizer.name, "adam");
@@ -663,7 +664,8 @@ training:
   output_dir: ./outputs
 ";
 
-        let spec: TrainSpec = serde_yaml::from_str(yaml).expect("operation should succeed");
+        let spec: TrainSpec =
+            crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
         assert_eq!(spec.model.layers.len(), 4);
         assert!(spec.lora.is_some());
         assert_eq!(spec.lora.as_ref().expect("operation should succeed").rank, 64);
@@ -698,12 +700,14 @@ training:
     fn test_model_mode_serde_roundtrip() {
         // Tabular mode
         let yaml = "tabular";
-        let mode: ModelMode = serde_yaml::from_str(yaml).expect("operation should succeed");
+        let mode: ModelMode =
+            crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
         assert_eq!(mode, ModelMode::Tabular);
 
         // Transformer mode
         let yaml = "transformer";
-        let mode: ModelMode = serde_yaml::from_str(yaml).expect("operation should succeed");
+        let mode: ModelMode =
+            crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
         assert_eq!(mode, ModelMode::Transformer);
     }
 
@@ -711,12 +715,14 @@ training:
     fn test_training_mode_serde_roundtrip() {
         // Regression mode
         let yaml = "regression";
-        let mode: TrainingMode = serde_yaml::from_str(yaml).expect("operation should succeed");
+        let mode: TrainingMode =
+            crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
         assert_eq!(mode, TrainingMode::Regression);
 
         // CausalLM mode
         let yaml = "causal_lm";
-        let mode: TrainingMode = serde_yaml::from_str(yaml).expect("operation should succeed");
+        let mode: TrainingMode =
+            crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
         assert_eq!(mode, TrainingMode::CausalLm);
     }
 
@@ -749,7 +755,8 @@ training:
   mixed_precision: bf16
 ";
 
-        let spec: TrainSpec = serde_yaml::from_str(yaml).expect("operation should succeed");
+        let spec: TrainSpec =
+            crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
 
         // Model assertions
         assert_eq!(spec.model.mode, ModelMode::Transformer);
@@ -784,7 +791,8 @@ optimizer:
   lr: 0.001
 ";
 
-        let spec: TrainSpec = serde_yaml::from_str(yaml).expect("operation should succeed");
+        let spec: TrainSpec =
+            crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
         assert_eq!(spec.model.mode, ModelMode::Tabular);
         assert_eq!(spec.training.mode, TrainingMode::Regression);
         assert!(spec.data.tokenizer.is_none());
@@ -826,7 +834,8 @@ training:
     role: coordinator
     coordinator_addr: '0.0.0.0:9000'
 ";
-        let spec: TrainSpec = serde_yaml::from_str(yaml).expect("operation should succeed");
+        let spec: TrainSpec =
+            crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
         let dist = spec.training.distributed.expect("distributed config present");
         assert_eq!(dist.world_size, 2);
         assert_eq!(dist.backend, "cuda");
@@ -854,7 +863,8 @@ training:
   distributed:
     world_size: 4
 ";
-        let spec: TrainSpec = serde_yaml::from_str(yaml).expect("operation should succeed");
+        let spec: TrainSpec =
+            crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
         let dist = spec.training.distributed.expect("distributed config present");
         assert_eq!(dist.world_size, 4);
         assert_eq!(dist.backend, "auto");
@@ -876,7 +886,8 @@ optimizer:
   name: adam
   lr: 0.001
 ";
-        let spec: TrainSpec = serde_yaml::from_str(yaml).expect("operation should succeed");
+        let spec: TrainSpec =
+            crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
         assert!(spec.training.distributed.is_none());
     }
 
@@ -903,7 +914,8 @@ training:
     eta_min: 0.000001
 ";
 
-        let spec: TrainSpec = serde_yaml::from_str(yaml).expect("operation should succeed");
+        let spec: TrainSpec =
+            crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
         assert_eq!(spec.training.seed, Some(42));
         let params = spec.training.scheduler_params.expect("operation should succeed");
         assert_eq!(params["t_max"], serde_json::json!(1000));
@@ -934,7 +946,8 @@ quantize:
   per_channel: "false"
 "#;
 
-        let spec: TrainSpec = serde_yaml::from_str(yaml).expect("operation should succeed");
+        let spec: TrainSpec =
+            crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
         assert!(spec.data.auto_infer_types);
         let quant = spec.quantize.expect("operation should succeed");
         assert!(quant.symmetric);
@@ -1003,7 +1016,8 @@ optimizer:
   name: adamw
   lr: 0.0001
 ";
-        let spec: TrainSpec = serde_yaml::from_str(yaml).expect("operation should succeed");
+        let spec: TrainSpec =
+            crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
         assert!(spec.model.is_hf_repo_id());
         assert_eq!(spec.model.path, PathBuf::from("Qwen/Qwen2.5-Coder-0.5B"));
     }
@@ -1031,7 +1045,8 @@ publish:
   merge_adapters: true
   format: safetensors
 ";
-        let spec: TrainSpec = serde_yaml::from_str(yaml).expect("operation should succeed");
+        let spec: TrainSpec =
+            crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
         let publish = spec.publish.expect("operation should succeed");
         assert_eq!(publish.repo, "myuser/my-model");
         assert!(!publish.private);
@@ -1054,7 +1069,8 @@ optimizer:
   name: adam
   lr: 0.001
 ";
-        let spec: TrainSpec = serde_yaml::from_str(yaml).expect("operation should succeed");
+        let spec: TrainSpec =
+            crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
         assert!(spec.publish.is_none());
     }
 
@@ -1075,7 +1091,8 @@ optimizer:
 publish:
   repo: org/model
 ";
-        let spec: TrainSpec = serde_yaml::from_str(yaml).expect("operation should succeed");
+        let spec: TrainSpec =
+            crate::yaml_mode::yaml_from_str(yaml).expect("operation should succeed");
         let publish = spec.publish.expect("operation should succeed");
         assert_eq!(publish.repo, "org/model");
         assert!(!publish.private);
@@ -1104,7 +1121,7 @@ training:
   deterministic: true
   seed: 12345
 ";
-        let spec: TrainSpec = serde_yaml::from_str(yaml).expect("parse YAML");
+        let spec: TrainSpec = crate::yaml_mode::yaml_from_str(yaml).expect("parse YAML");
         assert!(spec.training.deterministic, "deterministic should be true from YAML");
         assert_eq!(spec.training.seed, Some(12345));
     }
@@ -1123,7 +1140,7 @@ optimizer:
   name: adamw
   lr: 0.001
 ";
-        let spec: TrainSpec = serde_yaml::from_str(yaml).expect("parse YAML");
+        let spec: TrainSpec = crate::yaml_mode::yaml_from_str(yaml).expect("parse YAML");
         assert!(!spec.training.deterministic, "deterministic should default to false");
     }
 
@@ -1151,7 +1168,7 @@ lora:
 training:
   epochs: 1
 ";
-        let spec: TrainSpec = serde_yaml::from_str(yaml).expect("parse YAML");
+        let spec: TrainSpec = crate::yaml_mode::yaml_from_str(yaml).expect("parse YAML");
         let lora = spec.lora.expect("lora should be present");
         assert!(lora.quantize_base, "quantize_base should be true");
         assert!(lora.double_quantize, "double_quantize should be true");
@@ -1177,7 +1194,7 @@ lora:
   alpha: 16.0
   target_modules: [q_proj]
 ";
-        let spec: TrainSpec = serde_yaml::from_str(yaml).expect("parse YAML");
+        let spec: TrainSpec = crate::yaml_mode::yaml_from_str(yaml).expect("parse YAML");
         let lora = spec.lora.expect("lora should be present");
         assert!(!lora.quantize_base, "quantize_base should default to false");
     }
