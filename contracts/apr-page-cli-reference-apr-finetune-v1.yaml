@@ -37,3 +37,10 @@ falsification:
   - condition: "Legacy name in page text"
     severity: P0
     action: delete_from_summary
+
+falsification_tests:
+  - id: FALSIFY-PAGE-CLI-REFERENCE-APR-FINETUNE-001
+    rule: "The page exists, carries its PCU header, imports no legacy crate, holds no placeholder text and keeps every section this contract lists"
+    prediction: "scripts/book-gate.sh cli-reference-apr-finetune --strict exits 0: book/src/cli-reference/apr-finetune.md exists (G3), its first line carries PCU: (G4), it has no 'use trueno|realizar|entrenar|batuta|presentar|renacer::' line (G7) and no TODO, TBD, WIP, coming soon or under construction (G8), and G9 skips, since this contract lists no sections. It does not check for page sections the contract omits"
+    test: "bash scripts/book-gate.sh cli-reference-apr-finetune --strict"
+    if_fails: "The book page drifted from its contract: it moved, lost a contracted section, teaches a removed crate name, or its example stopped building or running"

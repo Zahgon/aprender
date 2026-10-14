@@ -68,3 +68,10 @@ falsification:
   - condition: "Legacy name in page text"
     severity: P0
     action: delete_from_summary
+
+falsification_tests:
+  - id: FALSIFY-PAGE-EXAMPLES-CROSS-VALIDATION-001
+    rule: "The page exists, its example builds and runs, and the page imports no legacy crate, holds no placeholder text and keeps every section this contract lists"
+    prediction: "scripts/book-gate.sh examples-cross-validation --strict exits 0: book/src/examples/cross-validation.md exists (G3), its first line carries PCU: (G4), cargo build -p aprender-core --example cross_validation succeeds (G5) and cargo run of it exits 0 (G6), it has no 'use trueno|realizar|entrenar|batuta|presentar|renacer::' line (G7) and no TODO, TBD, WIP, coming soon or under construction (G8), and every one of the 8 section headings this contract lists appears as a ## heading on the page (G9). It does not check for page sections the contract omits"
+    test: "bash scripts/book-gate.sh examples-cross-validation --strict"
+    if_fails: "The book page drifted from its contract: it moved, lost a contracted section, teaches a removed crate name, or its example stopped building or running"
