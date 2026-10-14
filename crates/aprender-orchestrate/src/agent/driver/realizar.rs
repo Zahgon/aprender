@@ -92,6 +92,7 @@ impl LlmDriver for RealizarDriver {
             trace: false,
             trace_verbose: false,
             trace_output: None,
+            trace_level: None,
             trace_steps: None,
             verbose: false,
             use_mock_backend: false,

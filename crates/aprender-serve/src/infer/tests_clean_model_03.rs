@@ -189,6 +189,7 @@ fn main() {
             trace: true,
             trace_verbose: true,
             trace_output: Some(PathBuf::from("/trace.json")),
+            trace_level: None,
             trace_steps: Some(vec!["a".to_string()]),
             verbose: true,
             use_mock_backend: false,
