@@ -41,14 +41,14 @@ equations:
     note: "Computed as 1 − Π_{i=n−c+1}^{n} (1 − k/i) for numerical stability, and as 1 when n − c < k. n = 1 ⇒ pass@k = pass@1 (eval-passk-single-sample-v1)."
   ACE-MET-003:
     description: "Wilson 95% score interval on pass@1 (n = 1)"
-    formula: "p̂ = x/N, z = 1.959964;  (p̂ + z²/2N ± z·√(p̂(1−p̂)/N + z²/4N²)) / (1 + z²/N)"
+    formula: "N = |T| (n = 1), x = |{ t : v_t = RESOLVED }|, p̂ = x/N, z = 1.959964;  (p̂ + z²/2N ± z·√(p̂(1−p̂)/N + z²/4N²)) / (1 + z²/N)"
   ACE-MET-004:
     description: "Refusal: no number without evidence"
     formula: "|T| = 0 ∨ Σ_t tests_executed(t) = 0 ∨ |{ t : v_t ≠ EMPTY }| = 0  ⇒  metrics = Err(Refused)"
     note: "Every model output EMPTY is a broken driver, not a 0% model; the run is refused, not scored."
   ACE-MET-005:
     description: "Edit-format conformance (Aider practice)"
-    formula: "format_conformance = 1 − |{ t : v_t = FORMAT_ERROR }| / |T|"
+    formula: "format_conformance = 1 − |{ (t, s) : v_{t,s} = FORMAT_ERROR }| / (|T| · n),  over all n samples of every task"
   ACE-MET-006:
     description: "Contamination split (LiveCodeBench practice)"
     formula: "T_post = { t : release_date(t) > cutoff(model) };  post_cutoff_pass@1 = pass@1 over T_post, reported with |T_post|;  |T_post| = 0 ⇒ field = null, not 0"
@@ -120,7 +120,7 @@ falsification_tests:
     if_fails: "The harness prints 0% or 100% for a run that measured nothing."
   - id: FALSIFY-ACE-MET-005
     name: format_conformance
-    prediction: "4 FORMAT_ERROR of 20 tasks gives format_conformance = 0.8."
+    prediction: "4 FORMAT_ERROR of 20 tasks (n = 1) gives format_conformance = 0.8."
     test_harness: "PLANNED (#5285, crate not yet built): unit test falsify_ace_met_005_format_conformance in the metric module"
     expected_output: "test result: ok"
     if_fails: "Edit-format failures are hidden inside FAILED."

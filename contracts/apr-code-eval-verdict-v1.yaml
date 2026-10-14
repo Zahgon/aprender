@@ -42,10 +42,11 @@ equations:
     note: "Holds even when the hidden tests would pass on the untouched snapshot; ACE-TASK-003 should have excluded that task, and this is the second line."
   ACE-VER-003:
     description: "Zero executed tests is never resolved"
-    formula: "rep.tests_executed = 0 ∨ executed(F2P) ⊂ F2P ⇒ verdict ∈ { NO_TESTS, SANDBOX_ERROR }"
+    formula: "rep.tests_executed = 0 ∨ executed(F2P) ≠ F2P ⇒ verdict ≠ RESOLVED;  and if pre(t, out) ∧ rep.status = ok then verdict = NO_TESTS"
+    note: "pre(t, out) := edits(out) ≠ ∅ ∧ parses(out, fmt(t)) ∧ applies(edits(out), snapshot(t)). EMPTY, FORMAT_ERROR, TIMEOUT and SANDBOX_ERROR are checked first (description order), so VER-003 never contradicts VER-002/004/005."
   ACE-VER-004:
     description: "A sandbox failure is never resolved and never dropped"
-    formula: "rep.killed_by = timeout ⇒ TIMEOUT;  rep.status = sandbox_error ⇒ SANDBOX_ERROR;  both stay in |T|"
+    formula: "pre(t, out) ∧ rep.killed_by = timeout ⇒ TIMEOUT;  pre(t, out) ∧ rep.status = sandbox_error ⇒ SANDBOX_ERROR;  both stay in |T|"
   ACE-VER-005:
     description: "A malformed or non-applying edit is a format error, not silently repaired"
     formula: "¬parses(out, fmt(t)) ∨ ¬applies(edits(out), snapshot(t)) ⇒ verdict = FORMAT_ERROR"
@@ -72,7 +73,7 @@ proof_obligations:
   - id: ACE-VER-PO-004
     type: invariant
     property: "Timeout and sandbox error are labels, never RESOLVED (ACE-VER-004)"
-    formal: "rep.status ≠ ok ⇒ verdict ∈ {TIMEOUT, SANDBOX_ERROR}"
+    formal: "rep.status ≠ ok ⇒ verdict ≠ RESOLVED;  pre(t, out) ∧ rep.status ≠ ok ⇒ verdict ∈ {TIMEOUT, SANDBOX_ERROR}"
   - id: ACE-VER-PO-005
     type: invariant
     property: "A non-applying edit is FORMAT_ERROR (ACE-VER-005)"
