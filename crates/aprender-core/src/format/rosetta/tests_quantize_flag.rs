@@ -82,3 +82,6 @@ fn falsifier_intermediate_hop_drops_quantization() {
     assert!(!hop.verify, "other options must survive unchanged");
     assert_eq!(hop.tolerance, 0.25, "other options must survive unchanged");
 }
+
+#[path = "tests_trained_roundtrip.rs"]
+mod tests_trained_roundtrip;

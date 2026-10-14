@@ -1,0 +1,63 @@
+metadata:
+  version: 1.0.0
+  kind: pattern
+  created: '2026-10-14'
+  author: PAIML Engineering
+  description: >
+    Epic #4000 row T5 ("Train What You Serve"): weights produced by training
+    (a LoRA adapter merged into its base) survive the full format cycle
+    safetensors -> .apr -> gguf -> .apr -> safetensors with per-tensor cosine
+    >= 0.98, for both an fp16 and a q4_k GGUF hop. A tensor that is dropped,
+    renamed, resized or transposed on any hop fails the cycle.
+  references:
+  - crates/aprender-core/src/format/rosetta/tests_trained_roundtrip.rs
+  - crates/aprender-core/src/format/rosetta/sharded.rs
+  - contracts/tensor-layout-v1.yaml
+  depends_on:
+  - tensor-layout-v1
+equations:
+  lora_merge:
+    formula: W' = W + (alpha / r) * B * A
+    domain: W in R^{m x n}, A in R^{r x n}, B in R^{m x r}, r = 8, alpha = 16
+    invariants:
+    - Every merged element is distinct; the fixture has no period a converter can reproduce by accident
+  roundtrip_cosine:
+    formula: cos(t, rt(t)) = <t, rt(t)> / (||t|| * ||rt(t)||) >= 0.98 for every tensor t
+    domain: rt = st -> apr -> gguf(q) -> apr -> st, q in {fp16, q4_k}
+    invariants:
+    - The compared count equals the source tensor count; zero compared is a failure
+    - Element count of every tensor is unchanged by the cycle
+proof_obligations:
+- type: invariant
+  property: Full-cycle cosine >= 0.98 per tensor
+  applies_to: all
+- type: invariant
+  property: No tensor is lost or resized
+  applies_to: all
+- type: invariant
+  property: The checker detects a layout defect
+  applies_to: all
+falsification_tests:
+- id: FALSIFY-T5-RT-001
+  rule: fp16 cycle
+  prediction: Every tensor of the LoRA-merged model has cosine >= 0.98 after the cycle through an fp16 GGUF
+  test: cargo test -p aprender-core --lib falsifier_t5_trained_weights_roundtrip_fp16
+  if_fails: A converter hop dropped, renamed, resized or mis-laid-out a tensor; the panic names it and its cosine
+- id: FALSIFY-T5-RT-002
+  rule: q4_k cycle
+  prediction: Every tensor of the LoRA-merged model has cosine >= 0.98 after the cycle through a q4_k GGUF
+  test: cargo test -p aprender-core --lib falsifier_t5_trained_weights_roundtrip_q4_k
+  if_fails: Q4_K export or import lost precision past the bar, or a hop broke layout; the panic names the tensor
+- id: FALSIFY-T5-RT-003
+  rule: checker is not vacuous
+  prediction: A transposed LoRA-merged q_proj scores below 0.98
+  test: cargo test -p aprender-core --lib falsifier_t5_checker_rejects_a_transposed_tensor
+  if_fails: The fixture is too symmetric to detect LAYOUT-001; RT-001 and RT-002 would pass a transposing converter
+qa_gate:
+  id: F-T5-RT-001
+  name: Trained weights survive safetensors, .apr and gguf at cosine >= 0.98
+  description: The three FALSIFY-T5-RT tests run in aprender-core's lib tests; RT-003 proves the cosine check can fail on a transposed tensor.
+  checks:
+  - fp16_cycle
+  - q4_k_cycle
+  - checker_not_vacuous
