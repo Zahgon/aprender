@@ -68,7 +68,15 @@ pub enum ShapesOutcome {
     /// Not one contract carries a shape.
     NoShapes { contracts_checked: usize },
     /// Shapes exist, but no node in the graph has any of their target classes.
-    NoFocus { shapes_n: usize },
+    ///
+    /// #4100: the decline carries the per-shape evidence the `Ran` path reports — `by_shape` (`<shape>=<n>`,
+    /// sorted) and `declines` (every shape that graded nothing) — so a consumer that parses stdout whatever
+    /// the exit code can name the shapes on this path too, not only on the per-shape vacuity path (#3610).
+    NoFocus {
+        shapes_n: usize,
+        by_shape: Vec<String>,
+        declines: Vec<String>,
+    },
     /// A shape resolves receipts and the tree holds none under `evidence/dogfood/models/`.
     NoReceipts { shapes_n: usize, dir: String },
     /// PMAT-3577 — `extract:parity-receipt` matched a different number of focus nodes than
@@ -315,7 +323,8 @@ fn run_or_answer(
     // Every shape in scope empty is the global vacuity — unless every one of them declared it (#3610 quorum).
     let all_allow_empty = shapes.iter().all(|s| s.allow_empty.is_some());
     if let Some(d) = decline(
-        shapes.len(),
+        &focus_of,
+        &vacuous_any,
         &report,
         all_allow_empty,
         unmeasured,
@@ -745,16 +754,23 @@ fn harness_broken(extraction: &extract::Extraction) -> Option<ShapesOutcome> {
 ///
 /// No focus node at all is `NoFocus` unless EVERY shape in scope declares `allowEmpty` (#3610): then the run
 /// reaches the per-shape path, which names each one in `declines` and does not refuse for them.
+/// The global `NoFocus` carries `by_shape` and `declines` too (#4100): it refuses, and it still names the shapes.
 fn decline(
-    shapes_n: usize,
+    focus_of: &[(String, usize)],
+    vacuous: &[String],
     report: &Report,
     all_allow_empty: bool,
     unmeasured: bool,
     plant_violations: usize,
     pc_extract: &BTreeMap<String, String>,
 ) -> Option<ShapesOutcome> {
+    let shapes_n = focus_of.len();
     if report.focus_nodes_n == 0 && !all_allow_empty {
-        return Some(ShapesOutcome::NoFocus { shapes_n });
+        return Some(ShapesOutcome::NoFocus {
+            shapes_n,
+            by_shape: by_shape(focus_of),
+            declines: vacuous.to_vec(),
+        });
     }
     if unmeasured {
         return Some(ShapesOutcome::NoReceipts {
@@ -1412,7 +1428,7 @@ mod tests {
         ));
         assert!(matches!(
             run_shapes_gate(&fixture("shapes-nofocus")),
-            ShapesOutcome::NoFocus { shapes_n: 1 }
+            ShapesOutcome::NoFocus { shapes_n: 1, .. }
         ));
         match run_shapes_gate(&fixture("shapes-unsupported")) {
             ShapesOutcome::Unsupported(ShapeError::Unsupported { component, .. }) => {

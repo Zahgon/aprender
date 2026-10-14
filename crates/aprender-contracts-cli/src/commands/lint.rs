@@ -386,13 +386,14 @@ fn decide_named_gate(
 ) -> Result<NamedGateAnswer, Box<dyn std::error::Error>> {
     use provable_contracts::lint::{NamedGateOutcome, NAMED_GATES};
 
+    let started = std::time::Instant::now();
     match provable_contracts::lint::run_named_gate_with(contract_dir, name, shapes_opts) {
         NamedGateOutcome::UnknownGate => Err(crate::contract_walk::UnknownGate {
             asked: name.to_string(),
             known: NAMED_GATES.iter().map(|g| (*g).to_string()).collect(),
         }
         .into()),
-        NamedGateOutcome::Shapes(outcome) => decide_shapes_gate(outcome),
+        NamedGateOutcome::Shapes(outcome) => decide_shapes_gate(outcome, started),
         NamedGateOutcome::Consistency(outcome) => decide_consistency_gate(outcome),
         NamedGateOutcome::Refines(outcome) => decide_refines_gate(outcome),
         NamedGateOutcome::Tbox(outcome) => decide_tbox_gate(outcome),
@@ -602,10 +603,23 @@ fn decide_tbox_gate(
 /// other arm prints what could not be checked before it returns its decline or refusal.
 fn decide_shapes_gate(
     outcome: provable_contracts::lint::shapes_gate::ShapesOutcome,
+    started: std::time::Instant,
 ) -> Result<NamedGateAnswer, Box<dyn std::error::Error>> {
     use provable_contracts::lint::shapes_gate::ShapesOutcome;
+    use provable_contracts::ontology::verdict::Reason;
 
     match outcome {
+        ShapesOutcome::NoFocus {
+            shapes_n,
+            by_shape,
+            declines,
+        } => {
+            print_no_focus_report(shapes_n, &by_shape, &declines, started)?;
+            Err(LintDeclined {
+                reason: Reason::NoFocus,
+            }
+            .into())
+        }
         ShapesOutcome::Unsupported(e) => {
             Err(crate::contract_walk::SigmaMalformed(e.to_string()).into())
         }
@@ -618,6 +632,63 @@ fn decide_shapes_gate(
         }
         .into()),
     }
+}
+
+/// #4100: the per-shape evidence the global `NoFocus` decline prints. The same keys, nested and flattened, that
+/// the per-shape vacuity path (#3610) prints through [`SingleGateReport`]: a consumer that parses stdout whatever
+/// the exit code (infra's SLK gate) reads `.verdict`, `.by_shape` and `.declines` on both refusal paths.
+#[derive(serde::Serialize, Clone, Copy)]
+struct NoFocusExtra<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    shapes_n: usize,
+    focus_nodes_n: usize,
+    by_shape: &'a [String],
+    declines: &'a [String],
+}
+
+#[derive(serde::Serialize)]
+struct NoFocusReport<'a> {
+    gate: &'static str,
+    verdict: Verdict,
+    passed: bool,
+    duration_ms: u64,
+    extra: NoFocusExtra<'a>,
+    #[serde(flatten)]
+    flat: NoFocusExtra<'a>,
+    findings: [(); 0],
+}
+
+/// The global `NoFocus` decline's report: stdout carries the JSON document, stderr names every zero-focus shape,
+/// and the caller still declines (exit 2). The refusal is the exit code; the report is the evidence.
+fn print_no_focus_report(
+    shapes_n: usize,
+    by_shape: &[String],
+    declines: &[String],
+    started: std::time::Instant,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let extra = NoFocusExtra {
+        kind: "shapes",
+        shapes_n,
+        focus_nodes_n: 0,
+        by_shape,
+        declines,
+    };
+    let report = NoFocusReport {
+        gate: "shapes",
+        verdict: Verdict::Unknown(provable_contracts::ontology::verdict::Reason::NoFocus),
+        passed: false,
+        duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        extra,
+        flat: extra,
+        findings: [],
+    };
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    eprintln!(
+        "shapes: no focus node for any of {shapes_n} shape(s): {}",
+        by_shape.join(", ")
+    );
+    Ok(())
 }
 
 /// A `shapes` outcome that is a decline: print what could not be checked, return the decline's reason.

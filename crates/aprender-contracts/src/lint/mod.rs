@@ -1277,8 +1277,8 @@ fn shapes_result(contract_dir: &Path, validation_passed: bool) -> (GateResult, V
             skipped_gate("shapes", &format!("no `shape:` block in {contracts_checked} contracts — R-2: zero is a decline")),
             Vec::new(),
         ),
-        shapes_gate::ShapesOutcome::NoFocus { shapes_n } => (
-            skipped_gate("shapes", &format!("{shapes_n} shape(s), no focus node")),
+        shapes_gate::ShapesOutcome::NoFocus { shapes_n, by_shape, .. } => (
+            skipped_gate("shapes", &format!("{shapes_n} shape(s), no focus node: {}", by_shape.join(", "))),
             Vec::new(),
         ),
         shapes_gate::ShapesOutcome::WrongCorpus { shapes_n, expected, found, refused } => (
