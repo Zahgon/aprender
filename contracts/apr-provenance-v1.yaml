@@ -403,3 +403,20 @@ references:
   - "contracts/training-loop-pretrain-v1.yaml"
   - "docs/specifications/aprender-train/ship-two-models-spec.md §5, §7.2"
   - "Mitchell et al. (2019) arXiv:1810.03993"
+
+falsification_tests:
+  - id: INV-APR-PROV-001-T
+    rule: "license, data_source and data_license round-trip as named metadata fields"
+    prediction: "An AprV2Metadata with license Apache-2.0, data_source teacher-only and data_license Apache-2.0 survives to_json then from_json with all three values intact, and none of the three keys lands in the custom map"
+    test: "cargo test -p aprender-core --lib falsify_ship_022_apr_metadata_provenance_round_trip"
+    if_fails: "A provenance field is dropped on write or read, or is stored as a free-form custom key instead of a named field"
+  - id: INV-APR-PROV-002-T1
+    rule: "Absent provenance serialises as JSON null, never as a missing key"
+    prediction: "AprV2Metadata with all three provenance fields None serialises to a JSON object that contains license, data_source and data_license, each null"
+    test: "cargo test -p aprender-core --lib falsify_ship_022_inspect_emits_provenance_keys"
+    if_fails: "A skip_serializing_if hides absent provenance, so JSON consumers cannot tell missing from not reported"
+  - id: INV-APR-PROV-002-T2
+    rule: "Absent provenance renders as (missing) in text output"
+    prediction: "format_provenance_block on a default MetadataInfo contains a 'Provenance:' header and 'license: (missing)', 'data_source: (missing)' and 'data_license: (missing)'. It tests the formatter, not apr inspect run on a model file"
+    test: "cargo test -p apr-cli --lib falsify_ship_022_inspect_missing_renders_as_missing"
+    if_fails: "The text view omits or blanks an absent provenance field instead of marking it missing"

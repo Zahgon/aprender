@@ -198,3 +198,10 @@ non_goals:
   - 'NOT a claim that Google Antigravity ships apr support today — see APR-ANTIGRAVITY-INTEGRATION-001 (BYOK/endpoint tracking).'
   - 'NOT a "beat Antigravity" benchmark — Antigravity is a harness apr plugs INTO, not a fourth-pillar incumbent to out-score. The beat framing stays Claude-Code-only (beat-claude-code-parity-v1).'
   - 'NOT project-scale agentic parity — that gap (Arena 0.20) is model/agentic-emission, tracked separately; this contract holds the wire+prompt-portability layer constant so that gap is isolable.'
+
+falsification_tests:
+  - id: FALSIFY-AGY-PARITY-003-T
+    rule: "One tool schema maps losslessly through both wire formats"
+    prediction: "An Edit ToolSchema with a required array, an integer property with a minimum and additionalProperties false round-trips unchanged through the Anthropic and the Gemini tool encodings, and its Anthropic input_schema equals its Gemini parameters. Narrower than the condition: one hand-built schema, with no nested required arrays and no enum"
+    test: "cargo test -p aprender-serve --lib falsify_ir_tool_schema_004"
+    if_fails: "A JSON-Schema feature is dropped or rewritten by one of the two wire encodings"

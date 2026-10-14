@@ -902,3 +902,20 @@ change_log:
       FALSIFY-CODE-PARITY-006, whose three child-process falsifiers were
       measured RED on the pre-fix code (a driver error left stdout empty; a
       repeatedly failing tool and an empty completion exited 0).
+
+falsification_tests:
+  - id: FALSIFY-CODE-PARITY-006-T1
+    rule: "A driver error under -p json still writes exactly one JSON document"
+    prediction: "The driver_error child writes one JSON document to stdout and exits 1; the document has status failed, is_error true, error.kind inference_failed and error.exit_code equal to the real exit code. Narrower than the condition: the three failure exits only, no successful run, and each case drives a scripted child of the test binary rather than a served model"
+    test: "cargo test -p aprender-orchestrate --lib falsify_3775_driver_error_writes_one_json_document"
+    if_fails: "A failing serve child leaves stdout empty, or the document's exit_code disagrees with the process status"
+  - id: FALSIFY-CODE-PARITY-006-T2
+    rule: "A run ending on a failing tool is a failure document with a non-zero exit"
+    prediction: "The tool_error child writes one JSON document and exits 1, with status failed, is_error true, error.kind empty_completion and error.exit_code equal to the real exit code. Narrower than the condition: the three failure exits only, no successful run, and each case drives a scripted child of the test binary rather than a served model"
+    test: "cargo test -p aprender-orchestrate --lib falsify_3775_tool_error_writes_one_json_document"
+    if_fails: "A run whose tools keep failing exits 0 or writes a document without status and error"
+  - id: FALSIFY-CODE-PARITY-006-T3
+    rule: "An empty completion is a failure document with a non-zero exit"
+    prediction: "The empty child writes one JSON document and exits 1, with status failed, is_error true, error.kind empty_completion and error.exit_code equal to the real exit code. Narrower than the condition: the three failure exits only, no successful run, and each case drives a scripted child of the test binary rather than a served model"
+    test: "cargo test -p aprender-orchestrate --lib falsify_3775_empty_completion_is_a_failure_document"
+    if_fails: "An empty completion exits 0 or writes a document without status and error"

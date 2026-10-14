@@ -319,3 +319,10 @@ references:
   - "docs/specifications/aprender-train/ship-two-models-spec.md §5"
   - "Sennrich et al. (2016) arXiv:1508.07909"
   - "Unicode Standard Annex #15 (NFC)"
+
+falsification_tests:
+  - id: INV-BPE-003-T
+    rule: "decode(encode(text)) is byte-exact on held-out documents"
+    prediction: "A BpeTokenizer trained to vocab 512 on the test's training corpus round-trips every one of its 20 held-out Python documents (docstrings, numeric literals, byte strings, whitespace variants, emoji) byte-exactly, so docs_failed is 0. Narrower than the condition: 20 synthetic documents and a 512-entry vocabulary, not the 10K-doc holdout with the shipped tokenizer"
+    test: "cargo test -p apr-cli --test falsify_ship_012_tokenizer_roundtrip falsify_ship_012_tokenizer_roundtrip_byte_exact"
+    if_fails: "The byte-level encoder lost bytes, for example by reintroducing whitespace splitting or dropping the inverse byte map"

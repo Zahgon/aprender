@@ -583,3 +583,75 @@ references:
   - "docs/specifications/aprender-train/ship-two-models-spec.md §5 (AC-SHIP2-003, -011)"
   - "memory/project_ship_two_001_model1_qlora_divergence.md"
   - "Loshchilov & Hutter (2019) arXiv:1711.05101"
+
+falsification_tests:
+  - id: INV-TRAIN-005-T1
+    rule: "A val_loss more than doubling between epochs aborts"
+    prediction: "check_non_divergence(1, [3.5, 7.1], Finetune) returns Divergence with epoch 1, prev 3.5, curr 7.1 and ratio > 2.0. Any other result panics. Finetune regime only; the from-scratch doubling rule is not exercised"
+    test: "cargo test -p aprender-train --lib gate_train_005_aborts_on_doubling_val_loss"
+    if_fails: "The doubling rule or the finetune epoch-0 cap no longer aborts a diverging run"
+  - id: INV-TRAIN-005-T2
+    rule: "Finetune regime: an epoch-0 val_loss above the cap aborts"
+    prediction: "check_non_divergence(0, [31.99], Finetune) returns DivergenceAtEpochZero carrying val_loss 31.99 within 1e-4"
+    test: "cargo test -p aprender-train --lib gate_train_005_aborts_on_epoch_zero_blowup"
+    if_fails: "The epoch-0 guard lets a blown-up first val_loss through"
+  - id: INV-TRAIN-005-T3
+    rule: "From-scratch regime: epoch-0 val_loss up to 2·ln(vocab_size) is allowed"
+    prediction: "With vocab_size 50257 (cap ≈ 21.64), check_non_divergence(0, [18.0], FromScratch) is Ok, and the same trace under Finetune is DivergenceAtEpochZero"
+    test: "cargo test -p aprender-train --lib gate_train_005_from_scratch_permits_near_random_baseline"
+    if_fails: "The from-scratch cap is not regime-aware and rejects a near-random first epoch"
+  - id: INV-TRAIN-005-T4
+    rule: "From-scratch regime: epoch-0 val_loss above 2·ln(vocab_size) aborts"
+    prediction: "With vocab_size 50257, check_non_divergence(0, [25.0], FromScratch) returns DivergenceAtEpochZero with val_loss 25.0; any other result panics"
+    test: "cargo test -p aprender-train --lib gate_train_005_from_scratch_aborts_above_2_ln_vocab"
+    if_fails: "The from-scratch epoch-0 cap is missing or set above 2·ln(vocab_size)"
+  - id: INV-TRAIN-006-T
+    rule: "A fixed seed reproduces the first 100 steps"
+    prediction: "Two TransformerConfig::tiny() trainers with seed 0 give finite losses that agree within 1e-6 at every one of 100 steps, and equal optimizer_state_sha256 afterwards. Narrower than the condition: it compares loss and optimizer state, not grad_norm or lr per step, and in one process, not from the JSONL log"
+    test: "cargo test -p aprender-train --lib falsify_ship_021_seed_0_100_step_reproducibility"
+    if_fails: "Seed plumbing leaks nondeterminism into training (unseeded init, data order or reduction order)"
+  - id: INV-TRAIN-007-T1
+    rule: "A NaN train_loss aborts with numerical instability"
+    prediction: "Validating a step whose train_loss is NaN returns NumericalInstability naming step 42 and field train_loss; any other result panics"
+    test: "cargo test -p aprender-train --lib gate_train_007_aborts_on_nan_train_loss"
+    if_fails: "The per-step finite guard lets a NaN loss continue"
+  - id: INV-TRAIN-007-T2
+    rule: "An infinite grad_norm aborts with numerical instability"
+    prediction: "Validating a step whose grad_norm is infinite returns NumericalInstability"
+    test: "cargo test -p aprender-train --lib gate_train_007_aborts_on_inf_grad_norm"
+    if_fails: "The per-step finite guard checks train_loss only and lets an infinite gradient norm continue"
+  - id: INV-TRAIN-008-T1
+    rule: "Negative tokens_per_sec is rejected"
+    prediction: "StepMetrics with a negative throughput fails validate_finite with ThroughputOutOfRange"
+    test: "cargo test -p aprender-train --lib step_metrics_rejects_negative_throughput"
+    if_fails: "A negative throughput reading passes into the metrics log"
+  - id: INV-TRAIN-008-T2
+    rule: "gpu_util_pct above 100 is rejected"
+    prediction: "StepMetrics with gpu_util_pct over 100 fails validate_finite with ThroughputOutOfRange"
+    test: "cargo test -p aprender-train --lib step_metrics_rejects_gpu_util_over_100"
+    if_fails: "An out-of-range GPU utilisation passes into the metrics log"
+  - id: INV-TRAIN-009-T1
+    rule: "--mode from-scratch applies the whole from-scratch default row"
+    prediction: "Resolved hyperparameters have regime FromScratch with vocab_size 50257, lr_max ≈ 3e-4, warmup_steps 1000 and target_val_loss ≈ 3.0"
+    test: "cargo test -p apr-cli --lib mode_from_scratch_applies_all_four_defaults"
+    if_fails: "A regime flip leaves some hyperparameters at the finetune defaults"
+  - id: INV-TRAIN-009-T2
+    rule: "An explicit --lr wins while the rest of the from-scratch row still applies"
+    prediction: "--mode from-scratch with an explicit lr resolves to regime FromScratch, the given lr, warmup_steps 1000 and target_val_loss 3.0 within 1e-6"
+    test: "cargo test -p apr-cli --lib mode_from_scratch_honors_explicit_lr_override"
+    if_fails: "An explicit override is dropped, or it resets the other regime defaults"
+  - id: INV-TRAIN-009-T3
+    rule: "Finetune is the default mode with its own default row"
+    prediction: "With no --mode, resolved hyperparameters have regime Finetune, lr_max ≈ 5e-5, warmup_steps 100 and target_val_loss ≈ 2.2"
+    test: "cargo test -p apr-cli --lib mode_finetune_is_default_and_matches_contract"
+    if_fails: "The default regime or its default hyperparameters drifted from the contract"
+  - id: INV-TRAIN-010-T1
+    rule: "apr pretrain without --synthetic routes to real compute"
+    prediction: "Parsing pretrain argv through clap with no --synthetic flag gives synthetic == false"
+    test: "cargo test -p apr-cli --lib cli_pretrain_defaults_to_real_compute"
+    if_fails: "A clap default silently turns the absent flag into synthetic=true, so scripted losses get reported as real compute"
+  - id: INV-TRAIN-010-T2
+    rule: "apr pretrain --synthetic routes to the synthetic driver"
+    prediction: "Parsing the same argv with --synthetic appended gives synthetic == true"
+    test: "cargo test -p apr-cli --lib cli_pretrain_synthetic_flag_routes_to_synthetic"
+    if_fails: "The --synthetic flag is ignored"
