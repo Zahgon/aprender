@@ -24593,6 +24593,24 @@ Not done, pending the ruling: moving the 31 fixture files to an obviously synthe
   - kind:code
   notes: 'Branch-only, no PR, until a PR slot. Follow-ups: port the python3 fixture harness in the two case tables; the prompt set''s note at the next recertification; stale comments in four Python drivers; remove the run_python_cell seam.'
   epic: 4741
+- id: PMAT-4803
+  github_issue: 4803
+  item_type: task
+  title: 'bump-equivalence check: a version-only bump reuses saved results'
+  status: planned
+  priority: critical
+  assigned_to: null
+  created: 2026-10-14T11:06:29Z
+  updated: 2026-10-14T11:06:29Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 3998
 - id: PMAT-4806
   github_issue: 4806
   item_type: task

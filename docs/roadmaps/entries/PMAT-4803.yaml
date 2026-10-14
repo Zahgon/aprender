@@ -1,0 +1,18 @@
+- id: PMAT-4803
+  github_issue: 4803
+  item_type: task
+  title: 'bump-equivalence check: a version-only bump reuses saved results'
+  status: planned
+  priority: critical
+  assigned_to: null
+  created: 2026-10-14T11:06:29Z
+  updated: 2026-10-14T11:06:29Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 3998
