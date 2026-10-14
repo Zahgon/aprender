@@ -1060,6 +1060,17 @@ behaviour_test() {
     printf '#!/bin/sh\necho built-pmat\n' > "$built"
     chmod +x "$built"
 
+    # The pv rows build pv into a target dir that belongs to THIS tree (#5351).
+    # An inherited CARGO_TARGET_DIR is shared: a CI runner's target serves every
+    # section of a job, each in its own copy of the repo, and a dev box's serves
+    # every worktree. Whichever tree linked <target>/debug/pv last owns it, so
+    # these rows measured the neighbours' build order, not the pin: two trees
+    # running this check at once on one target failed 12 runs out of 12, at
+    # rows 4, 4b and 4c in turn. Row 4 asserts the private target was the one
+    # used. `local` keeps the export inside this function.
+    local CARGO_TARGET_DIR="$REPO_ROOT/target"
+    export CARGO_TARGET_DIR
+
     # Row 1 — the self-referential case: releasing pmat itself.
     PMAT_BIN=""
     PATH="$td/stalebin:$PATH" verifier_pin_pmat "pmat" "$built"
@@ -1167,6 +1178,14 @@ behaviour_test() {
             printf 'FAIL  pv-pin     resolved pv IS the PATH decoy (%s) — the pin was bypassed\n' "$decoy"
             exit 1
         fi
+        case "$PV" in
+            "$CARGO_TARGET_DIR"/*) ;;
+            *)
+                printf 'FAIL  pv-pin     resolved pv %s is outside this tree'"'"'s target %s —\n' "$PV" "$CARGO_TARGET_DIR"
+                printf '                 these rows would measure another tree'"'"'s build (#5351)\n'
+                exit 1
+                ;;
+        esac
         printf 'ok    pv-pin     resolved pv is %s, NOT the PATH decoy %s\n' "$PV" "$decoy"
     ); pv_row_rc=$?
     if [ "$pv_row_rc" -ne 0 ]; then
