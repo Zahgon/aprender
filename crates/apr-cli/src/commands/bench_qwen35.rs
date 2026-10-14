@@ -45,6 +45,10 @@ fn run_qwen35_session_benchmark(
     for i in 0..config.iterations {
         let (turn, iter_time, ttft) =
             session_timed_turn(&mut session, prompt_tokens, gen_config, tracer, budget_us)?;
+        // Checked per timed turn, not once at the end: a turn served on CPU is
+        // not the GPU number `--backend cuda` asked for, whether or not the
+        // session is back on the GPU by the last turn.
+        require_gpu_session(session.on_gpu(), cuda_required, "served a timed turn on CPU")?;
         let tokens_generated = turn.tokens.len().saturating_sub(prompt_tokens.len());
         iteration_times.push(iter_time);
         total_tokens += tokens_generated;
@@ -54,9 +58,6 @@ fn run_qwen35_session_benchmark(
         bench_log_iter(config, i, iter_time, Some(tokens_generated));
     }
     bench_log_done(config);
-    // The session may also drop to CPU mid-run; a number measured partly on
-    // CPU is not the GPU number `--backend cuda` asked for.
-    require_gpu_session(session.on_gpu(), cuda_required, "fell back to CPU during the run")?;
     calculate_benchmark_stats(iteration_times, total_tokens, first_token_time, config)
 }
 

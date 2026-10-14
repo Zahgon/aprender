@@ -54,10 +54,10 @@
 
     #[test]
     fn qwen35_session_on_cpu_is_refused_only_when_cuda_was_asked_for() {
-        let err = require_gpu_session(false, true, "fell back to CPU during the run")
+        let err = require_gpu_session(false, true, "served a timed turn on CPU")
             .expect_err("a CPU session under --backend cuda must refuse");
         assert!(err.to_string().contains("--backend cuda"), "{err}");
-        assert!(err.to_string().contains("fell back to CPU"), "{err}");
+        assert!(err.to_string().contains("served a timed turn on CPU"), "{err}");
         require_gpu_session(true, true, "x").expect("GPU session under cuda is fine");
         require_gpu_session(false, false, "x").expect("automatic choice keeps the fallback");
     }
