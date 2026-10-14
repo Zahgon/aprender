@@ -69,7 +69,7 @@ fn every_vendored_case_reports_or_is_refused_by_name() {
         }
     }
     assert!(
-        reported >= 20,
+        reported >= 22,
         "only {reported} W3C cases ran; refused:\n{}",
         refused.join("\n")
     );

@@ -187,7 +187,8 @@ fn malformed(shape: &RdfTerm, what: impl Into<String>) -> ShapeError {
     }
 }
 
-/// The shapes of a shapes graph: every node with `sh:targetClass` or `sh:targetNode`, in byte order of its IRI.
+/// The shapes of a shapes graph: every node with `sh:targetClass` or `sh:targetNode`, and every `sh:NodeShape`
+/// that is also an `rdfs:Class` (SHACL §2.1.3.3's implicit class target), in byte order of its IRI.
 /// A node shape without a target selects no focus node, so it matters only as the object of an `sh:node`.
 ///
 /// # Errors
@@ -198,33 +199,32 @@ pub fn shapes(input: &[RdfTriple]) -> Result<Vec<NodeShape>, ShapeError> {
     let (target_class, target_node) = (format!("{SH}targetClass"), format!("{SH}targetNode"));
     let mut roots: BTreeSet<&RdfTerm> = BTreeSet::new();
     for t in input {
-        refuse_target_kind(t, &ix)?;
-        if t.predicate == target_class || t.predicate == target_node {
+        refuse_target_kind(t)?;
+        if t.predicate == target_class
+            || t.predicate == target_node
+            || implicit_class(&ix, &t.subject)
+        {
             roots.insert(&t.subject);
         }
     }
     roots.into_iter().map(|s| node_shape(&ix, s, 0)).collect()
 }
 
-/// The targets outside the subset: `sh:targetSubjectsOf`, `sh:targetObjectsOf`, and SHACL §2.1.3.3's implicit
-/// class target (a node shape that is also an `rdfs:Class` targets its instances).
-fn refuse_target_kind(t: &RdfTriple, ix: &Index<'_>) -> Result<(), ShapeError> {
+/// The targets outside the subset: `sh:targetSubjectsOf` and `sh:targetObjectsOf`.
+fn refuse_target_kind(t: &RdfTriple) -> Result<(), ShapeError> {
     for refused in ["targetSubjectsOf", "targetObjectsOf"] {
         if t.predicate == format!("{SH}{refused}") {
             return Err(unsupported(&t.subject, format!("sh:{refused}")));
         }
     }
-    let node_shape_type = RdfTerm::Iri(format!("{SH}NodeShape"));
-    if t.predicate == RDF_TYPE
-        && t.object == RdfTerm::Iri(RDFS_CLASS.into())
-        && ix.objs(&t.subject, RDF_TYPE).contains(&&node_shape_type)
-    {
-        return Err(unsupported(
-            &t.subject,
-            "an implicit class target (a node shape that is an rdfs:Class)",
-        ));
-    }
     Ok(())
+}
+
+/// SHACL §2.1.3.3: a node shape that is also an `rdfs:Class` targets the instances of itself.
+fn implicit_class(ix: &Index<'_>, s: &RdfTerm) -> bool {
+    let types = ix.objs(s, RDF_TYPE);
+    types.contains(&&RdfTerm::Iri(format!("{SH}NodeShape")))
+        && types.contains(&&RdfTerm::Iri(RDFS_CLASS.into()))
 }
 
 /// The `sh:` keys of `s`, refusing any outside `allowed` by name.
@@ -285,16 +285,27 @@ fn node_shape(ix: &Index<'_>, s: &RdfTerm, depth: usize) -> Result<NodeShape, Sh
         return Err(unsupported(s, "a blank-node node shape"));
     };
     let keys = sh_keys(ix, s, NODE_KEYS, "node shape")?;
-    if depth > 0 && (keys.contains_key("targetClass") || keys.contains_key("targetNode")) {
+    let implicit = implicit_class(ix, s);
+    if depth > 0
+        && (implicit || keys.contains_key("targetClass") || keys.contains_key("targetNode"))
+    {
         // A target on a nested shape is a second, independent shape; validating it once as nested would be wrong.
         return Err(unsupported(
             s,
             "a target on a shape that is also the object of sh:node",
         ));
     }
-    let target_class = match one(s, &keys, "targetClass")? {
-        Some(t) => iri_of(s, "targetClass", t)?,
-        None => String::new(),
+    let target_class = match (one(s, &keys, "targetClass")?, implicit) {
+        // The validator holds one target class per shape.
+        (Some(_), true) => {
+            return Err(unsupported(
+                s,
+                "sh:targetClass beside an implicit class target",
+            ))
+        }
+        (Some(t), false) => iri_of(s, "targetClass", t)?,
+        (None, true) => iri.clone(),
+        (None, false) => String::new(),
     };
     let target_nodes = keys
         .get("targetNode")

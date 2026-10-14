@@ -229,7 +229,8 @@ fn every_term_outside_the_subset_is_refused_by_name() {
         ("_:s sh:targetNode ex:a".into(), "blank-node node shape"),
         (format!("{p}_:p sh:hasValue ex:v"), "sh:hasValue"),
         ("ex:S sh:targetNode ex:a\nex:S sh:or _:l".into(), "sh:or"),
-        ("ex:S a sh:NodeShape\nex:S a rdfs:Class\nex:S sh:property _:p\n_:p sh:path ex:p".into(), "implicit class target"),
+        ("ex:S a sh:NodeShape\nex:S a rdfs:Class\nex:S sh:targetClass ex:C".into(), "sh:targetClass beside an implicit class target"),
+        (format!("{p}_:p sh:node ex:T\nex:T a sh:NodeShape\nex:T a rdfs:Class"), "a target on a shape that is also the object of sh:node"),
         (format!("{p}_:p sh:node ex:T\nex:T sh:property _:q\n_:q sh:path ex:q\n_:q sh:node ex:U"), "nested more than one level"),
         (format!("{p}_:p sh:node ex:T\nex:T sh:targetNode ex:b"), "a target on a shape that is also the object of sh:node"),
     ];
@@ -240,6 +241,17 @@ fn every_term_outside_the_subset_is_refused_by_name() {
             "{text}\n  refused as {e:?}, which does not name {named:?}"
         );
     }
+}
+
+/// SHACL §2.1.3.3: a node shape that is an `rdfs:Class` targets its own instances, subclasses' included.
+#[test]
+fn a_node_shape_that_is_a_class_targets_its_instances() {
+    let r = run(
+        "ex:S a sh:NodeShape\nex:S a rdfs:Class\nex:S sh:property _:p\n_:p sh:path ex:p\n\
+         _:p sh:minCount 1\nex:Sub rdfs:subClassOf ex:S\nex:a a ex:Sub\nex:b a ex:Other",
+    );
+    assert_eq!(r.results.len(), 1, "{:?}", r.results);
+    assert_eq!(r.results[0].focus, ex("a"));
 }
 
 #[test]
