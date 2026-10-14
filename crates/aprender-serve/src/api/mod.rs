@@ -99,6 +99,9 @@ pub(crate) use ollama_handlers::{
 // handlers read it instead of substituting plausible-looking constants.
 mod model_source;
 pub use model_source::{detect_format_from_magic, gguf_qtype_name, ModelSourceInfo};
+// E-2 (#5348): one OpenAI tool-calling task end to end, judged; driven over
+// HTTP by the `serve_agent_task` example.
+pub mod agent_task;
 // PP-LLAMA-001 §12 row 6 / PP-2: `GET /v1/effective-config` — what THIS
 // process resolved, read from the process. NOT `#[cfg(feature = "cuda")]`: the
 // route is unconditional and its JSON shape is identical on every build, or the
