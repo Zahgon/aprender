@@ -53,7 +53,7 @@ fn load_contract() -> ContractRoot {
     let path = contract_path();
     let yaml =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    serde_yaml::from_str(&yaml).unwrap_or_else(|e| {
+    provable_contracts::yaml::from_str(&yaml).unwrap_or_else(|e| {
         panic!(
             "parse {} as apr-mcp-server-v1 contract: {e}",
             path.display()
@@ -63,7 +63,7 @@ fn load_contract() -> ContractRoot {
 
 #[test]
 fn apr_mcp_server_contract_parses() {
-    // Just loading is the assertion — serde_yaml + our ContractRoot shape
+    // Just loading is the assertion — the YAML parser + our ContractRoot shape
     // fails if any required field is missing or mistyped.
     let _ = load_contract();
 }

@@ -32,7 +32,7 @@
 
 use std::path::{Path, PathBuf};
 
-use serde_yaml::{Mapping, Value};
+use crate::yaml::{Mapping, Value};
 
 use super::external_corpora::{is_external_corpora_schema, validate_external_corpora};
 use super::parser::parse_contract_str;
@@ -79,7 +79,7 @@ impl std::fmt::Display for ArtifactKind {
 /// gets the final word.
 #[must_use]
 pub fn classify_artifact(yaml: &str) -> ArtifactKind {
-    let Ok(Value::Mapping(map)) = serde_yaml::from_str::<Value>(yaml) else {
+    let Ok(Value::Mapping(map)) = crate::yaml::from_str::<Value>(yaml) else {
         return ArtifactKind::Contract;
     };
     if map.contains_key("metadata") {
@@ -122,7 +122,7 @@ pub fn validate_artifact(path: &Path) -> Result<(ArtifactKind, Vec<Violation>), 
             Ok((ArtifactKind::Binding, validate_binding_registry(&registry)))
         }
         ArtifactKind::PublishManifest => {
-            let manifest: Value = serde_yaml::from_str(&content)?;
+            let manifest: Value = crate::yaml::from_str(&content)?;
             Ok((
                 ArtifactKind::PublishManifest,
                 validate_publish_manifest(&manifest, path),
@@ -170,7 +170,7 @@ fn find_publish_manifest_schema(path: &Path) -> Option<PathBuf> {
 /// contract declares.
 fn schema_required_fields(schema_path: &Path) -> Option<(Vec<String>, Vec<String>)> {
     let text = std::fs::read_to_string(schema_path).ok()?;
-    let doc: Value = serde_yaml::from_str(&text).ok()?;
+    let doc: Value = crate::yaml::from_str(&text).ok()?;
     let schema = doc.get("schema")?;
     let read = |key: &str| -> Vec<String> {
         schema

@@ -47,7 +47,7 @@ fn load_contract() -> ContractRoot {
     let path = contract_path();
     let yaml =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    serde_yaml::from_str(&yaml).unwrap_or_else(|e| {
+    provable_contracts::yaml::from_str(&yaml).unwrap_or_else(|e| {
         panic!(
             "parse {} as apr-registry-snapshot-v1 contract: {e}",
             path.display()

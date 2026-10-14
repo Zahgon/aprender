@@ -95,7 +95,7 @@ fn plant_refused(shapes: &[NodeShape], arming: &ArmedShapes) -> bool {
     let Some(shape) = shapes.iter().find(|s| s.id == SHAPE) else {
         return false;
     };
-    let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(PLANT) else {
+    let Ok(doc) = crate::yaml::from_str::<crate::yaml::Value>(PLANT) else {
         return false;
     };
     let rungs = gguf::rungs_of("capability-cells-plant", &doc);
@@ -223,7 +223,7 @@ mod tests {
     }
 
     fn shape() -> NodeShape {
-        let doc: serde_yaml::Value = serde_yaml::from_str(
+        let doc: crate::yaml::Value = crate::yaml::from_str(
             "shapes:\n  - id: capability-cells\n    targetClass: model:RequiredModel\n    properties:\n      - {path: model:notRunCell, maxCount: 0}\n      - {path: model:refusedLabel, maxCount: 0}\n",
         )
         .expect("yaml");

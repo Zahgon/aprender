@@ -75,31 +75,31 @@ pub struct Record {
 pub fn load(lean_dir: &Path) -> Result<Record, String> {
     let p = lean_dir.join("formalization.yaml");
     let text = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
-    let doc: serde_yaml::Value =
-        serde_yaml::from_str(&text).map_err(|e| format!("{}: {e}", p.display()))?;
+    let doc: crate::yaml::Value =
+        crate::yaml::from_str(&text).map_err(|e| format!("{}: {e}", p.display()))?;
     Ok(parse(&doc))
 }
 
-fn parse(doc: &serde_yaml::Value) -> Record {
+fn parse(doc: &crate::yaml::Value) -> Record {
     let mut rec = Record {
         unrefined_baseline: doc
             .get("unrefined_baseline")
-            .and_then(serde_yaml::Value::as_u64)
+            .and_then(crate::yaml::Value::as_u64)
             .and_then(|n| usize::try_from(n).ok()),
         ..Record::default()
     };
     let entries = doc
         .get("models")
-        .and_then(serde_yaml::Value::as_sequence)
+        .and_then(crate::yaml::Value::as_sequence)
         .cloned()
         .unwrap_or_default();
     let mut seen = BTreeSet::new();
     for (i, e) in entries.iter().enumerate() {
-        let s = |k: &str| e.get(k).and_then(serde_yaml::Value::as_str).map(str::trim);
+        let s = |k: &str| e.get(k).and_then(crate::yaml::Value::as_str).map(str::trim);
         let rel = |k: &str| {
             e.get("relation")
                 .and_then(|r| r.get(k))
-                .and_then(serde_yaml::Value::as_str)
+                .and_then(crate::yaml::Value::as_str)
                 .map(str::trim)
         };
         let (Some(module), Some(model_of)) = (s("module"), s("model_of")) else {

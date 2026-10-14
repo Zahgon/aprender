@@ -263,9 +263,9 @@ pub fn ladder_of(contract_dir: &Path) -> Ladder {
         let Some(l) = doc.get("ladder") else {
             continue;
         };
-        let decls = l.get("hosts").and_then(serde_yaml::Value::as_sequence);
+        let decls = l.get("hosts").and_then(crate::yaml::Value::as_sequence);
         for h in decls.into_iter().flatten() {
-            if h.get("required").and_then(serde_yaml::Value::as_bool) == Some(true) {
+            if h.get("required").and_then(crate::yaml::Value::as_bool) == Some(true) {
                 out.hosts.push(HostDecl {
                     id: scalar(h.get("id")).unwrap_or_default(),
                     cc: scalar(h.get("cc")).unwrap_or_default(),
@@ -282,17 +282,17 @@ pub fn ladder_of(contract_dir: &Path) -> Ladder {
     out
 }
 
-fn long_rungs_for(v: &serde_yaml::Value) -> LongRungsFor {
+fn long_rungs_for(v: &crate::yaml::Value) -> LongRungsFor {
     let families = v
         .get("families")
-        .and_then(serde_yaml::Value::as_sequence)
+        .and_then(crate::yaml::Value::as_sequence)
         .into_iter()
         .flatten()
         .filter_map(|f| scalar(Some(f)))
         .collect();
     let representatives = v
         .get("representatives")
-        .and_then(serde_yaml::Value::as_mapping)
+        .and_then(crate::yaml::Value::as_mapping)
         .into_iter()
         .flatten()
         .filter_map(|(k, f)| Some((scalar(Some(k))?, scalar(Some(f))?)))

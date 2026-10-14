@@ -70,7 +70,7 @@ pub fn run_sigma_gate(contract_dir: &Path) -> SigmaOutcome {
         let Ok(raw) = std::fs::read_to_string(file) else {
             continue;
         };
-        let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(&raw) else {
+        let Ok(doc) = crate::yaml::from_str::<crate::yaml::Value>(&raw) else {
             continue; // a file that does not parse is the `validate` gate's business, not Σ's
         };
         checked += 1;
@@ -162,14 +162,14 @@ fn baseline_formal_prose(contract_dir: &Path) -> Option<usize> {
 /// PV-ONT-001 — `entity.type` must be one Σ declares.
 fn check_entity_type(
     sigma: &Sigma,
-    doc: &serde_yaml::Value,
+    doc: &crate::yaml::Value,
     stem: &str,
     file: &Path,
 ) -> Vec<LintFinding> {
     let Some(ty) = doc
         .get("entity")
         .and_then(|e| e.get("type"))
-        .and_then(serde_yaml::Value::as_str)
+        .and_then(crate::yaml::Value::as_str)
     else {
         return Vec::new();
     };
@@ -189,11 +189,14 @@ fn check_entity_type(
 /// PV-ONT-002 — every `relations:` key must be a role Σ declares.
 fn check_roles(
     sigma: &Sigma,
-    doc: &serde_yaml::Value,
+    doc: &crate::yaml::Value,
     stem: &str,
     file: &Path,
 ) -> Vec<LintFinding> {
-    let Some(map) = doc.get("relations").and_then(serde_yaml::Value::as_mapping) else {
+    let Some(map) = doc
+        .get("relations")
+        .and_then(crate::yaml::Value::as_mapping)
+    else {
         return Vec::new();
     };
     let mut out = Vec::new();

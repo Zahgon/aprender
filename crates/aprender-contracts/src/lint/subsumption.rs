@@ -316,7 +316,7 @@ mod tests {
         for (sub, sup) in edges {
             y.push_str(&format!("  - sub: {sub}\n    sup: {sup}\n"));
         }
-        serde_yaml::from_str(&y).expect("sigma yaml")
+        crate::yaml::from_str(&y).expect("sigma yaml")
     }
 
     /// `concept_of` names the concept whose IRI is the target and no other; `inherited` totals the instances of

@@ -171,7 +171,7 @@ impl Census {
     fn observe(&mut self, sigma: &Sigma, file: &Path) {
         let Some(doc) = std::fs::read_to_string(file)
             .ok()
-            .and_then(|raw| serde_yaml::from_str::<serde_yaml::Value>(&raw).ok())
+            .and_then(|raw| crate::yaml::from_str::<crate::yaml::Value>(&raw).ok())
         else {
             return;
         };
@@ -196,7 +196,7 @@ impl Census {
         if self.findings.len() == before {
             let w = v
                 .get("world")
-                .and_then(serde_yaml::Value::as_str)
+                .and_then(crate::yaml::Value::as_str)
                 .unwrap_or(DEFAULT_WORLD);
             *self.by_world.entry(w.to_string()).or_default() += 1;
         }
@@ -230,7 +230,7 @@ fn finding(rule: &str, msg: String, stem: &str, file: &Path) -> LintFinding {
 /// Every rule a present `metadata.valid_under` must satisfy.
 fn check_valid_under(
     sigma: &Sigma,
-    v: &serde_yaml::Value,
+    v: &crate::yaml::Value,
     stem: &str,
     file: &Path,
     out: &mut Vec<LintFinding>,
@@ -275,7 +275,7 @@ fn check_valid_under(
 /// PV-ONT-014: the `world:` key names a world Σ declares (or defaults to one that exists).
 fn check_valid_under_world(
     sigma: &Sigma,
-    map: &serde_yaml::Mapping,
+    map: &crate::yaml::Mapping,
     stem: &str,
     file: &Path,
     out: &mut Vec<LintFinding>,
@@ -309,7 +309,7 @@ fn check_valid_under_world(
 
 /// PV-ONT-015: the toolchain map and the host_class/backend/features lists are well-formed.
 fn check_valid_under_qualifiers(
-    map: &serde_yaml::Mapping,
+    map: &crate::yaml::Mapping,
     stem: &str,
     file: &Path,
     out: &mut Vec<LintFinding>,

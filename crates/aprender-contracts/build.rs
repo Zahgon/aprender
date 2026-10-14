@@ -6,6 +6,20 @@ use std::path::{Path, PathBuf};
 // The one key builder, shared with `build_helper::env_key` (#4369).
 include!("src/env_key.rs");
 
+/// The crate's standard YAML options (#5205); `src/yaml.rs` holds the same
+/// set for the library. build.rs keeps its own private copy.
+fn yaml_from_str<T: serde::de::DeserializeOwned>(s: &str) -> Result<T, serde_saphyr::Error> {
+    serde_saphyr::from_str_with_options(
+        s,
+        serde_saphyr::options! {
+            strict_booleans: true,
+            merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary,
+            emit_comments: false,
+            reject_non_finite_typeless_float: false,
+        },
+    )
+}
+
 #[derive(Deserialize)]
 struct BindingFile {
     #[allow(dead_code)]
@@ -76,7 +90,7 @@ fn emit_binding_env(contracts_dir: &Path) {
 
 fn load_binding_file(binding_path: &Path) -> Option<BindingFile> {
     let yaml = std::fs::read_to_string(binding_path).ok()?;
-    serde_yaml::from_str(&yaml).ok()
+    yaml_from_str(&yaml).ok()
 }
 
 fn emit_binding_vars(bindings: &BindingFile, total: &mut u32, implemented: &mut u32) {
@@ -127,7 +141,7 @@ fn emit_contract_file_pre_post(path: &PathBuf, total_pre: &mut usize, total_post
     let Ok(contents) = std::fs::read_to_string(path) else {
         return;
     };
-    let Ok(parsed) = serde_yaml::from_str::<ContractYaml>(&contents) else {
+    let Ok(parsed) = yaml_from_str::<ContractYaml>(&contents) else {
         return;
     };
     for (eq_name, eq) in &parsed.equations {

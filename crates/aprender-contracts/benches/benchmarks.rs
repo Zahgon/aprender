@@ -87,8 +87,9 @@ fn bench_parse_roundtrip(c: &mut Criterion) {
     c.bench_function("contract_yaml_roundtrip", |b| {
         b.iter(|| {
             let contract = parse_contract_str(black_box(FULL_CONTRACT)).unwrap();
-            let yaml = serde_yaml::to_string(&contract).unwrap();
-            let _: serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
+            let yaml = provable_contracts::yaml::to_string(&contract).unwrap();
+            let _: provable_contracts::yaml::Value =
+                provable_contracts::yaml::from_str(&yaml).unwrap();
         });
     });
 }

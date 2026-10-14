@@ -53,16 +53,16 @@ pub fn is_operator_glyph(c: char) -> bool {
 
 /// Collect every `formal:` expression in a raw contract document, with its `prose:` sibling.
 #[must_use]
-pub fn collect_formals(doc: &serde_yaml::Value) -> Vec<FormalExpr> {
+pub fn collect_formals(doc: &crate::yaml::Value) -> Vec<FormalExpr> {
     let mut out = Vec::new();
     walk(doc, String::new(), &mut out);
     out
 }
 
-fn walk(value: &serde_yaml::Value, path: String, out: &mut Vec<FormalExpr>) {
+fn walk(value: &crate::yaml::Value, path: String, out: &mut Vec<FormalExpr>) {
     match value {
-        serde_yaml::Value::Mapping(map) => walk_mapping(map, &path, out),
-        serde_yaml::Value::Sequence(items) => {
+        crate::yaml::Value::Mapping(map) => walk_mapping(map, &path, out),
+        crate::yaml::Value::Sequence(items) => {
             for (i, item) in items.iter().enumerate() {
                 walk(item, format!("{path}[{i}]"), out);
             }
@@ -71,13 +71,13 @@ fn walk(value: &serde_yaml::Value, path: String, out: &mut Vec<FormalExpr>) {
     }
 }
 
-fn walk_mapping(map: &serde_yaml::Mapping, path: &str, out: &mut Vec<FormalExpr>) {
-    if let Some(serde_yaml::Value::String(text)) = map.get("formal") {
+fn walk_mapping(map: &crate::yaml::Mapping, path: &str, out: &mut Vec<FormalExpr>) {
+    if let Some(crate::yaml::Value::String(text)) = map.get("formal") {
         out.push(FormalExpr {
             text: text.clone(),
             prose: map
                 .get("prose")
-                .and_then(serde_yaml::Value::as_bool)
+                .and_then(crate::yaml::Value::as_bool)
                 .unwrap_or(false),
             path: path.to_string(),
         });
@@ -156,8 +156,8 @@ readers:
         .expect("Σ parses")
     }
 
-    fn doc(yaml: &str) -> serde_yaml::Value {
-        serde_yaml::from_str(yaml).expect("fixture parses")
+    fn doc(yaml: &str) -> crate::yaml::Value {
+        crate::yaml::from_str(yaml).expect("fixture parses")
     }
 
     #[test]

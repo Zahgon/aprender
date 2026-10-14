@@ -37,8 +37,8 @@
 //! record takes when its `baseline:` and `target:` have been written the
 //! wrong way round.
 
+use crate::yaml::{Mapping, Value};
 use serde::{Deserialize, Serialize};
-use serde_yaml::{Mapping, Value};
 
 use crate::error::{Severity, Violation};
 

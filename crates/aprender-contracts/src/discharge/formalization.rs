@@ -12,7 +12,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use serde_yaml::Value;
+use crate::yaml::Value;
 
 use super::summary::{self, Summary};
 use super::{escapes, Report, Tree, DEFAULT_AXIOMS};
@@ -45,7 +45,7 @@ pub fn judge(lean_dir: &Path, tree: &Tree, r: &mut Report) {
     let p = lean_dir.join(FILE);
     let doc: Value = match std::fs::read_to_string(&p)
         .map_err(|e| e.to_string())
-        .and_then(|t| serde_yaml::from_str(&t).map_err(|e| e.to_string()))
+        .and_then(|t| crate::yaml::from_str(&t).map_err(|e| e.to_string()))
     {
         Ok(d) => d,
         Err(e) => return r.fail(format!("FORMALIZATION {}: {e}", p.display())),

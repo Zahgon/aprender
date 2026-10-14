@@ -37,10 +37,10 @@ pub type Synonyms = BTreeMap<String, Vec<String>>;
 pub fn synonyms(contract_dir: &Path) -> Synonyms {
     std::fs::read_to_string(contract_dir.join("ontology.yaml"))
         .ok()
-        .and_then(|t| serde_yaml::from_str::<serde_yaml::Value>(&t).ok())
+        .and_then(|t| crate::yaml::from_str::<crate::yaml::Value>(&t).ok())
         .and_then(|d| {
             d.get("llm_context_role_synonyms")
-                .and_then(|m| serde_yaml::from_value::<Synonyms>(m.clone()).ok())
+                .and_then(|m| crate::yaml::from_value::<Synonyms>(m.clone()).ok())
         })
         .unwrap_or_default()
 }

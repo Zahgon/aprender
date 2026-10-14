@@ -98,7 +98,7 @@ pub fn parse_pipeline(path: &Path) -> Result<PipelineContract, ContractError> {
 
 /// Parse a pipeline contract from a YAML string.
 pub fn parse_pipeline_str(yaml: &str) -> Result<PipelineContract, ContractError> {
-    let pipeline: PipelineContract = serde_yaml::from_str(yaml)?;
+    let pipeline: PipelineContract = crate::yaml::from_str(yaml)?;
     Ok(pipeline)
 }
 

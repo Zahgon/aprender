@@ -45,7 +45,7 @@ fn emit_entrypoints(
     g: &mut Graph,
     s: &str,
     rel: &str,
-    v: &serde_yaml::Value,
+    v: &crate::yaml::Value,
     ctx: &Ctx<'_>,
     stats: &mut DocStats,
 ) {
@@ -63,7 +63,7 @@ fn emit_contract_count(
     g: &mut Graph,
     s: &str,
     rel: &str,
-    v: &serde_yaml::Value,
+    v: &crate::yaml::Value,
     ctx: &Ctx<'_>,
     stats: &mut DocStats,
 ) {
@@ -88,7 +88,7 @@ fn emit_frontmatter(
     g: &mut Graph,
     s: &str,
     rel: &str,
-    fm: &serde_yaml::Mapping,
+    fm: &crate::yaml::Mapping,
     ctx: &Ctx<'_>,
     stats: &mut DocStats,
 ) {

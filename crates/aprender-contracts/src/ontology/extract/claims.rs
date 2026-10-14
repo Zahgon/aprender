@@ -245,16 +245,16 @@ fn frontmatter_span(text: &str) -> Option<(usize, usize)> {
 }
 
 /// The frontmatter as a YAML mapping. `None` when there is none; `Err` when it is there and is not a mapping.
-pub fn frontmatter(text: &str) -> Result<Option<serde_yaml::Mapping>, String> {
+pub fn frontmatter(text: &str) -> Result<Option<crate::yaml::Mapping>, String> {
     let Some((start, end)) = frontmatter_span(text) else {
         return Ok(None);
     };
     let body: Vec<&str> = text.lines().skip(start).take(end - 1 - start).collect();
-    let v: serde_yaml::Value =
-        serde_yaml::from_str(&body.join("\n")).map_err(|e| format!("frontmatter: {e}"))?;
+    let v: crate::yaml::Value =
+        crate::yaml::from_str(&body.join("\n")).map_err(|e| format!("frontmatter: {e}"))?;
     match v {
-        serde_yaml::Value::Mapping(m) => Ok(Some(m)),
-        serde_yaml::Value::Null => Ok(Some(serde_yaml::Mapping::new())),
+        crate::yaml::Value::Mapping(m) => Ok(Some(m)),
+        crate::yaml::Value::Null => Ok(Some(crate::yaml::Mapping::new())),
         _ => Err("frontmatter is not a mapping".into()),
     }
 }
@@ -396,31 +396,31 @@ pub fn claim_commands(text: &str) -> Vec<String> {
 }
 
 /// Is a workflow's `on:` on the merge path? `on` may be a string, a list, or a map keyed by event.
-fn on_merge_path(doc: &serde_yaml::Value) -> bool {
+fn on_merge_path(doc: &crate::yaml::Value) -> bool {
     let on = doc
         .get("on")
-        .or_else(|| doc.get(serde_yaml::Value::Bool(true)));
+        .or_else(|| doc.get(crate::yaml::Value::Bool(true)));
     let hit = |s: &str| MERGE_PATH_EVENTS.contains(&s);
     match on {
-        Some(serde_yaml::Value::String(s)) => hit(s),
-        Some(serde_yaml::Value::Sequence(seq)) => seq.iter().filter_map(|v| v.as_str()).any(hit),
-        Some(serde_yaml::Value::Mapping(m)) => m.keys().filter_map(|k| k.as_str()).any(hit),
+        Some(crate::yaml::Value::String(s)) => hit(s),
+        Some(crate::yaml::Value::Sequence(seq)) => seq.iter().filter_map(|v| v.as_str()).any(hit),
+        Some(crate::yaml::Value::Mapping(m)) => m.keys().filter_map(|k| k.as_str()).any(hit),
         _ => false,
     }
 }
 
 /// A step's literal `if: false` (the boolean, or the string `false`).
-fn disabled(step: &serde_yaml::Value) -> bool {
+fn disabled(step: &crate::yaml::Value) -> bool {
     match step.get("if") {
-        Some(serde_yaml::Value::Bool(false)) => true,
-        Some(serde_yaml::Value::String(s)) => s.trim() == "false",
+        Some(crate::yaml::Value::Bool(false)) => true,
+        Some(crate::yaml::Value::String(s)) => s.trim() == "false",
         _ => false,
     }
 }
 
 /// The raw `run:` bodies of the enabled steps of the jobs `keep` accepts, by job name.
-fn job_runs(doc: &serde_yaml::Value, keep: impl Fn(&str) -> bool) -> Vec<&str> {
-    let Some(jobs) = doc.get("jobs").and_then(serde_yaml::Value::as_mapping) else {
+fn job_runs(doc: &crate::yaml::Value, keep: impl Fn(&str) -> bool) -> Vec<&str> {
+    let Some(jobs) = doc.get("jobs").and_then(crate::yaml::Value::as_mapping) else {
         return Vec::new();
     };
     let mut out = Vec::new();
@@ -428,14 +428,14 @@ fn job_runs(doc: &serde_yaml::Value, keep: impl Fn(&str) -> bool) -> Vec<&str> {
         if !name.as_str().is_some_and(&keep) {
             continue;
         }
-        let Some(steps) = job.get("steps").and_then(serde_yaml::Value::as_sequence) else {
+        let Some(steps) = job.get("steps").and_then(crate::yaml::Value::as_sequence) else {
             continue;
         };
         for step in steps {
             if disabled(step) {
                 continue;
             }
-            if let Some(run) = step.get("run").and_then(serde_yaml::Value::as_str) {
+            if let Some(run) = step.get("run").and_then(crate::yaml::Value::as_str) {
                 out.push(run);
             }
         }
@@ -445,7 +445,7 @@ fn job_runs(doc: &serde_yaml::Value, keep: impl Fn(&str) -> bool) -> Vec<&str> {
 
 /// The normalised `run:` lines of one workflow document (empty unless it is on the merge path).
 #[must_use]
-pub fn workflow_run_lines(doc: &serde_yaml::Value) -> BTreeSet<String> {
+pub fn workflow_run_lines(doc: &crate::yaml::Value) -> BTreeSet<String> {
     if !on_merge_path(doc) {
         return BTreeSet::new();
     }
@@ -458,7 +458,7 @@ pub fn workflow_run_lines(doc: &serde_yaml::Value) -> BTreeSet<String> {
 /// #4433: the five fat CI jobs run the job bodies of `ci/sections.yml` through
 /// `scripts/ci/fat_driver.py run --sections '<spec>'`. The spec parts a merge-path workflow names, in order.
 #[must_use]
-pub fn section_specs(doc: &serde_yaml::Value) -> Vec<String> {
+pub fn section_specs(doc: &crate::yaml::Value) -> Vec<String> {
     if !on_merge_path(doc) {
         return Vec::new();
     }
@@ -508,7 +508,7 @@ fn section_selected(name: &str, part: &str) -> bool {
 /// the selected `guard-cargo` runs them all through its one `bash scripts/ci_guards.sh guard-cargo` step. So a
 /// `<X>-steps` job counts as selected when `X` is selected and one of `X`'s steps runs `ci_guards.sh X`.
 #[must_use]
-pub fn section_run_lines(sections: &serde_yaml::Value, specs: &[String]) -> BTreeSet<String> {
+pub fn section_run_lines(sections: &crate::yaml::Value, specs: &[String]) -> BTreeSet<String> {
     let selected = |name: &str| specs.iter().any(|p| section_selected(name, p));
     let runs_manifest = |base: &str| {
         let call = format!("scripts/ci_guards.sh {base}");
@@ -550,14 +550,14 @@ pub fn ci_run_lines(root: &Path) -> BTreeSet<String> {
         let Ok(text) = std::fs::read_to_string(&f) else {
             continue;
         };
-        if let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(&text) {
+        if let Ok(doc) = crate::yaml::from_str::<crate::yaml::Value>(&text) {
             out.extend(workflow_run_lines(&doc));
             specs.extend(section_specs(&doc));
         }
     }
     if let Some(sections) = std::fs::read_to_string(root.join("ci/sections.yml"))
         .ok()
-        .and_then(|t| serde_yaml::from_str::<serde_yaml::Value>(&t).ok())
+        .and_then(|t| crate::yaml::from_str::<crate::yaml::Value>(&t).ok())
     {
         out.extend(section_run_lines(&sections, &specs));
     }
@@ -607,7 +607,7 @@ impl DocStats {
 /// `(stem, entity.ref, raw YAML)` for every contract whose `entity.type` is `ty` and whose `entity.ref` names a
 /// file.
 #[must_use]
-pub fn entity_docs(contract_dir: &Path, ty: &str) -> Vec<(String, String, serde_yaml::Value)> {
+pub fn entity_docs(contract_dir: &Path, ty: &str) -> Vec<(String, String, crate::yaml::Value)> {
     use super::pv_contract::scalar;
     super::pv_contract::documents(contract_dir)
         .into_iter()
@@ -624,10 +624,10 @@ pub fn entity_docs(contract_dir: &Path, ty: &str) -> Vec<(String, String, serde_
 
 /// A frontmatter value as the scalars it holds: a scalar is one, a sequence is each scalar element.
 #[must_use]
-pub fn scalars(v: &serde_yaml::Value) -> Vec<String> {
+pub fn scalars(v: &crate::yaml::Value) -> Vec<String> {
     use super::pv_contract::scalar;
     match v {
-        serde_yaml::Value::Sequence(seq) => seq.iter().filter_map(|x| scalar(Some(x))).collect(),
+        crate::yaml::Value::Sequence(seq) => seq.iter().filter_map(|x| scalar(Some(x))).collect(),
         other => scalar(Some(other)).into_iter().collect(),
     }
 }
@@ -724,7 +724,7 @@ mod tests {
     }
 
     fn wf(yaml: &str) -> BTreeSet<String> {
-        workflow_run_lines(&serde_yaml::from_str(yaml).unwrap())
+        workflow_run_lines(&crate::yaml::from_str(yaml).unwrap())
     }
 
     #[test]
@@ -748,7 +748,7 @@ mod tests {
     #[test]
     fn a_steps_manifest_counts_only_through_its_selected_guard_call() {
         // #4415: guard-cargo-steps is `if: false`; guard-cargo runs it via ci_guards.sh.
-        let sections: serde_yaml::Value = serde_yaml::from_str(
+        let sections: crate::yaml::Value = crate::yaml::from_str(
             "jobs:\n  guard-cargo:\n    steps:\n      - run: bash scripts/ci_guards.sh guard-cargo\n  guard-cargo-steps:\n    if: false\n    steps:\n      - run: make m\n  lone:\n    steps:\n      - run: make lone\n  lone-steps:\n    steps:\n      - run: make orphan\n",
         )
         .unwrap();
@@ -765,18 +765,18 @@ mod tests {
 
     #[test]
     fn a_section_counts_only_when_a_merge_path_fat_job_names_it() {
-        let ci: serde_yaml::Value = serde_yaml::from_str(
+        let ci: crate::yaml::Value = crate::yaml::from_str(
             "on: [pull_request]\njobs:\n  x86:\n    steps:\n      - run: >-\n          python3 scripts/ci/fat_driver.py run\n          --sections 'sov.*,guard-*,determinism[X64]'\n          --results r.json\n",
         )
         .unwrap();
-        let nightly: serde_yaml::Value = serde_yaml::from_str(
+        let nightly: crate::yaml::Value = crate::yaml::from_str(
             "on: [schedule]\njobs:\n  n:\n    steps:\n      - run: python3 scripts/ci/fat_driver.py run --sections 'nightly-only'\n",
         )
         .unwrap();
         let specs = section_specs(&ci);
         assert_eq!(specs, vec!["sov.*", "guard-*", "determinism[X64]"]);
         assert!(section_specs(&nightly).is_empty());
-        let sections: serde_yaml::Value = serde_yaml::from_str(
+        let sections: crate::yaml::Value = crate::yaml::from_str(
             "jobs:\n  guard-tree:\n    steps:\n      - run: make readme\n      - if: false\n        run: make off\n  determinism:\n    steps:\n      - run: make det\n  nightly-only:\n    steps:\n      - run: make nightly\n",
         )
         .unwrap();

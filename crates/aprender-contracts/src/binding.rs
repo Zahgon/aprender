@@ -96,7 +96,7 @@ pub fn parse_binding(path: &Path) -> Result<BindingRegistry, ContractError> {
 
 /// Parse a binding registry from a YAML string.
 pub fn parse_binding_str(yaml: &str) -> Result<BindingRegistry, ContractError> {
-    let registry: BindingRegistry = serde_yaml::from_str(yaml)?;
+    let registry: BindingRegistry = crate::yaml::from_str(yaml)?;
     Ok(registry)
 }
 

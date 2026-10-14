@@ -31,8 +31,8 @@
 //! be re-counted, and an un-re-countable figure is the thing ONT-001 R-10 says
 //! must not be believed.
 
+use crate::yaml::{Mapping, Value};
 use serde::{Deserialize, Serialize};
-use serde_yaml::{Mapping, Value};
 
 use crate::error::{ContractError, Severity, Violation};
 
@@ -103,7 +103,7 @@ pub struct ExternalCorpora {
 ///
 /// [`ContractError::Yaml`] if the text is not a declaration of this shape.
 pub fn parse_external_corpora_str(yaml: &str) -> Result<ExternalCorpora, ContractError> {
-    Ok(serde_yaml::from_str(yaml)?)
+    Ok(crate::yaml::from_str(yaml)?)
 }
 
 /// Does `schema` name the external-corpora family (any version)?
@@ -124,7 +124,7 @@ fn violation(rule: &str, message: String, location: &str) -> Violation {
 /// Validate an external-corpora declaration (rules `EXT-CORPORA-001..009`).
 #[must_use]
 pub fn validate_external_corpora(yaml: &str) -> Vec<Violation> {
-    let doc: Value = match serde_yaml::from_str(yaml) {
+    let doc: Value = match crate::yaml::from_str(yaml) {
         Ok(doc) => doc,
         Err(e) => {
             return vec![violation(

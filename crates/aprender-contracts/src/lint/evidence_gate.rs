@@ -188,8 +188,8 @@ impl Census {
     fn observe(&mut self, sigma: &Sigma, census_sha: Option<&str>, file: &Path) {
         let Some(doc) = std::fs::read_to_string(file)
             .ok()
-            .and_then(|raw| serde_yaml::from_str::<serde_yaml::Value>(&raw).ok())
-            .filter(serde_yaml::Value::is_mapping)
+            .and_then(|raw| crate::yaml::from_str::<crate::yaml::Value>(&raw).ok())
+            .filter(crate::yaml::Value::is_mapping)
         else {
             return;
         };
@@ -210,12 +210,12 @@ impl Census {
         if let Some(t) = doc
             .get("entity")
             .and_then(|e| e.get("type"))
-            .and_then(serde_yaml::Value::as_str)
+            .and_then(crate::yaml::Value::as_str)
         {
             self.entity_types.insert(t.to_string());
         }
         if self.findings.len() == before {
-            if let Some(l) = ev.get("level").and_then(serde_yaml::Value::as_str) {
+            if let Some(l) = ev.get("level").and_then(crate::yaml::Value::as_str) {
                 *self.by_level.entry(l.to_string()).or_default() += 1;
             }
         }
@@ -230,13 +230,13 @@ fn finding(rule: &str, msg: String, stem: &str, file: &Path) -> LintFinding {
 
 /// PV-ONT-017: `v` at `path` must be a mapping whose keys are all in `allowed`. Returns the mapping when it is one.
 fn closed_mapping<'a>(
-    v: &'a serde_yaml::Value,
+    v: &'a crate::yaml::Value,
     path: &str,
     allowed: &[&str],
     stem: &str,
     file: &Path,
     out: &mut Vec<LintFinding>,
-) -> Option<&'a serde_yaml::Mapping> {
+) -> Option<&'a crate::yaml::Mapping> {
     let Some(map) = v.as_mapping() else {
         out.push(finding(
             "PV-ONT-017",
@@ -267,7 +267,7 @@ fn closed_mapping<'a>(
 fn check_evidence(
     sigma: &Sigma,
     census_sha: Option<&str>,
-    ev: &serde_yaml::Value,
+    ev: &crate::yaml::Value,
     stem: &str,
     file: &Path,
     out: &mut Vec<LintFinding>,
@@ -305,7 +305,7 @@ fn check_evidence(
     });
     let command = generated_by
         .and_then(|g| g.get("command"))
-        .and_then(serde_yaml::Value::as_str)
+        .and_then(crate::yaml::Value::as_str)
         .filter(|s| !s.trim().is_empty());
     if matches!(mark, Some("C" | "V")) && command.is_none() {
         out.push(finding(
@@ -320,18 +320,18 @@ fn check_evidence(
     }
     let sha = generated_by
         .and_then(|g| g.get("git_sha"))
-        .and_then(serde_yaml::Value::as_str);
+        .and_then(crate::yaml::Value::as_str);
     check_verified_sha(census_sha, sha, stem, file, out)
 }
 
 /// PV-ONT-018: the level is parsed through [`ProofLevel`] — the one definition — or it is not a level.
 fn check_level(
-    level: Option<&serde_yaml::Value>,
+    level: Option<&crate::yaml::Value>,
     stem: &str,
     file: &Path,
     out: &mut Vec<LintFinding>,
 ) {
-    let ok = level.is_some_and(|l| serde_yaml::from_value::<ProofLevel>(l.clone()).is_ok());
+    let ok = level.is_some_and(|l| crate::yaml::from_value::<ProofLevel>(l.clone()).is_ok());
     if !ok {
         let shown = level.map_or_else(|| "missing".to_string(), |l| format!("{l:?}"));
         out.push(finding(
@@ -345,7 +345,7 @@ fn check_level(
 
 /// PV-ONT-019: the mark, when present, is one of V C A U. Returns it when it is.
 fn check_mark<'a>(
-    mark: Option<&'a serde_yaml::Value>,
+    mark: Option<&'a crate::yaml::Value>,
     stem: &str,
     file: &Path,
     out: &mut Vec<LintFinding>,
@@ -368,12 +368,12 @@ fn check_mark<'a>(
 /// PV-ONT-021: attributed to a Σ agent; `generatedAtTime`, when given, is a non-empty string.
 fn check_attribution(
     sigma: &Sigma,
-    prov: &serde_yaml::Mapping,
+    prov: &crate::yaml::Mapping,
     stem: &str,
     file: &Path,
     out: &mut Vec<LintFinding>,
 ) {
-    match prov.get("wasAttributedTo").and_then(serde_yaml::Value::as_str) {
+    match prov.get("wasAttributedTo").and_then(crate::yaml::Value::as_str) {
         Some(a) if sigma.agents.iter().any(|x| x == a) => {}
         other => out.push(finding(
             "PV-ONT-021",

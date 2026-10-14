@@ -961,8 +961,8 @@ mod tests {
     fn the_resolves_table_is_what_the_contract_declares() {
         let path =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/github-entities-v1.yaml");
-        let doc: serde_yaml::Value =
-            serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let doc: crate::yaml::Value =
+            crate::yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
         let by_class: BTreeMap<String, SnapshotType> = control_types()
             .into_iter()
             .map(|t| (t.root_class.clone(), t))

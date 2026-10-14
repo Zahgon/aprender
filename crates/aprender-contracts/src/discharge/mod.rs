@@ -213,17 +213,17 @@ pub fn load_allowlist(dir: &Path) -> Result<Vec<Allowed>, String> {
         return Ok(Vec::new());
     }
     let text = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
-    let doc: serde_yaml::Value =
-        serde_yaml::from_str(&text).map_err(|e| format!("{}: {e}", p.display()))?;
+    let doc: crate::yaml::Value =
+        crate::yaml::from_str(&text).map_err(|e| format!("{}: {e}", p.display()))?;
     let entries = match &doc {
-        serde_yaml::Value::Null => return Ok(Vec::new()),
-        serde_yaml::Value::Sequence(s) => s,
+        crate::yaml::Value::Null => return Ok(Vec::new()),
+        crate::yaml::Value::Sequence(s) => s,
         _ => return Err(format!("{}: not a list of entries", p.display())),
     };
-    let field = |e: &serde_yaml::Value, k: &str| {
+    let field = |e: &crate::yaml::Value, k: &str| {
         e.get(k).map(|v| match v {
-            serde_yaml::Value::String(s) => s.clone(),
-            other => serde_yaml::to_string(other)
+            crate::yaml::Value::String(s) => s.clone(),
+            other => crate::yaml::to_string(other)
                 .unwrap_or_default()
                 .trim()
                 .to_string(),
@@ -252,8 +252,8 @@ pub struct Formalization {
 
 pub fn load_formalization(dir: &Path) -> Result<Formalization, String> {
     let p = dir.join("formalization.yaml");
-    let strings = |v: Option<&serde_yaml::Value>| -> Vec<String> {
-        v.and_then(serde_yaml::Value::as_sequence)
+    let strings = |v: Option<&crate::yaml::Value>| -> Vec<String> {
+        v.and_then(crate::yaml::Value::as_sequence)
             .map(|s| {
                 s.iter()
                     .filter_map(|x| x.as_str().map(str::to_string))
@@ -261,11 +261,11 @@ pub fn load_formalization(dir: &Path) -> Result<Formalization, String> {
             })
             .unwrap_or_default()
     };
-    let doc: serde_yaml::Value = if p.exists() {
+    let doc: crate::yaml::Value = if p.exists() {
         let text = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
-        serde_yaml::from_str(&text).map_err(|e| format!("{}: {e}", p.display()))?
+        crate::yaml::from_str(&text).map_err(|e| format!("{}: {e}", p.display()))?
     } else {
-        serde_yaml::Value::Null
+        crate::yaml::Value::Null
     };
     let mut axioms = strings(doc.get("status").and_then(|s| s.get("axioms")));
     if axioms.is_empty() {

@@ -242,7 +242,7 @@ commands:
 #[test]
 fn duplicate_key_does_not_blind_the_unknown_key_capture() {
     // The trap this rule was born from: capturing top-level keys through a
-    // strict `serde_yaml::Value` returned "no unknown keys" for any document
+    // strict `crate::yaml::Value` returned "no unknown keys" for any document
     // with a nested duplicate, so `apr-cli-commands-v1.yaml`'s top-level
     // `kind: CLICommandContract` went unreported while 118 identical keys in
     // other files were caught. One silent failure hiding another.
@@ -287,9 +287,9 @@ fn allow_list_matches_the_contract_struct() {
         ensures: vec![clause],
         ..Contract::default()
     };
-    let value = serde_yaml::to_value(contract).expect("Contract must serialize");
+    let value = crate::yaml::to_value(contract).expect("Contract must serialize");
     let mapping = value.as_mapping().expect("Contract serializes to a mapping");
-    let mut serialized: Vec<&str> = mapping.keys().filter_map(serde_yaml::Value::as_str).collect();
+    let mut serialized: Vec<&str> = mapping.keys().filter_map(crate::yaml::Value::as_str).collect();
     serialized.sort_unstable();
     let mut declared: Vec<&str> = CONTRACT_TOP_LEVEL_FIELDS.to_vec();
     declared.sort_unstable();

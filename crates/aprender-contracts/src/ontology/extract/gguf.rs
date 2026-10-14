@@ -196,12 +196,12 @@ impl Cursor<'_> {
 
 /// Read the ladder rungs of a contract document (`ladder.rungs[]`), in file order.
 #[must_use]
-pub fn rungs_of(stem: &str, doc: &serde_yaml::Value) -> Vec<Rung> {
+pub fn rungs_of(stem: &str, doc: &crate::yaml::Value) -> Vec<Rung> {
     let mut out = Vec::new();
     let Some(list) = doc
         .get("ladder")
         .and_then(|l| l.get("rungs"))
-        .and_then(serde_yaml::Value::as_sequence)
+        .and_then(crate::yaml::Value::as_sequence)
     else {
         return out;
     };
@@ -211,7 +211,7 @@ pub fn rungs_of(stem: &str, doc: &serde_yaml::Value) -> Vec<Rung> {
         };
         let strings = |k: &str| -> Vec<String> {
             r.get(k)
-                .and_then(serde_yaml::Value::as_sequence)
+                .and_then(crate::yaml::Value::as_sequence)
                 .map(|s| s.iter().filter_map(|x| scalar(Some(x))).collect())
                 .unwrap_or_default()
         };
@@ -224,7 +224,7 @@ pub fn rungs_of(stem: &str, doc: &serde_yaml::Value) -> Vec<Rung> {
             hosts: strings("hosts"),
             required: r
                 .get("required")
-                .and_then(serde_yaml::Value::as_bool)
+                .and_then(crate::yaml::Value::as_bool)
                 .unwrap_or(false),
             contract: stem.to_string(),
         });
@@ -413,7 +413,7 @@ mod tests {
 
     #[test]
     fn rungs_become_typed_nodes_keyed_by_sha256_and_required_rungs_carry_the_second_class() {
-        let doc: serde_yaml::Value = serde_yaml::from_str(
+        let doc: crate::yaml::Value = crate::yaml::from_str(
             "entity: {type: gguf}\nladder:\n  rungs:\n    - {id: a, sha256: AAAA, arch: qwen2, gguf: a.gguf, backends: [cpu, cuda], required: true}\n    - {id: b, sha256: bbbb, arch: qwen3, gguf: b.gguf, backends: [cpu], hosts: [gx10], required: false}\n",
         )
         .expect("yaml");

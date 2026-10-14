@@ -84,11 +84,11 @@ pub fn read_mapping(root: &Path) -> Result<Option<Mapping>, ReleaseError> {
     }
     let text = std::fs::read_to_string(&path)
         .map_err(|e| input_err(MAPPING_FILE, format!("unreadable: {e}")))?;
-    let v: serde_yaml::Value = serde_yaml::from_str(&text)
+    let v: crate::yaml::Value = crate::yaml::from_str(&text)
         .map_err(|e| input_err(MAPPING_FILE, format!("not YAML: {e}")))?;
     let schema = v
         .get("schema")
-        .and_then(serde_yaml::Value::as_str)
+        .and_then(crate::yaml::Value::as_str)
         .unwrap_or("");
     if schema != MAPPING_SCHEMA {
         return Err(input_err(
@@ -98,7 +98,7 @@ pub fn read_mapping(root: &Path) -> Result<Option<Mapping>, ReleaseError> {
     }
     let engines: Vec<String> = v
         .get("engines")
-        .and_then(serde_yaml::Value::as_sequence)
+        .and_then(crate::yaml::Value::as_sequence)
         .into_iter()
         .flatten()
         .filter_map(|e| e.as_str().map(str::to_string))
@@ -106,11 +106,11 @@ pub fn read_mapping(root: &Path) -> Result<Option<Mapping>, ReleaseError> {
     let mut verbs = BTreeMap::new();
     for e in v
         .get("verbs")
-        .and_then(serde_yaml::Value::as_sequence)
+        .and_then(crate::yaml::Value::as_sequence)
         .into_iter()
         .flatten()
     {
-        let Some(verb) = e.get("verb").and_then(serde_yaml::Value::as_str) else {
+        let Some(verb) = e.get("verb").and_then(crate::yaml::Value::as_str) else {
             continue;
         };
         verbs.insert(verb.to_string(), entry_of(e, &engines));
@@ -120,11 +120,11 @@ pub fn read_mapping(root: &Path) -> Result<Option<Mapping>, ReleaseError> {
 
 /// A verb entry: a top-level `comparator: none` + `reason` answers every engine; otherwise each engine under
 /// `comparators:` is a mapping (a counterpart) or `{none: reason}`. An engine the entry does not name is absent.
-fn entry_of(e: &serde_yaml::Value, engines: &[String]) -> Entry {
+fn entry_of(e: &crate::yaml::Value, engines: &[String]) -> Entry {
     let mut out = engines_of(e, engines);
     out.modes = e
         .get("modes")
-        .and_then(serde_yaml::Value::as_sequence)
+        .and_then(crate::yaml::Value::as_sequence)
         .into_iter()
         .flatten()
         .filter_map(|m| m.as_str().map(str::to_string))
@@ -132,9 +132,9 @@ fn entry_of(e: &serde_yaml::Value, engines: &[String]) -> Entry {
     out
 }
 
-fn engines_of(e: &serde_yaml::Value, engines: &[String]) -> Entry {
-    let text = |v: &serde_yaml::Value| v.as_str().unwrap_or("").to_string();
-    if e.get("comparator").and_then(serde_yaml::Value::as_str) == Some("none") {
+fn engines_of(e: &crate::yaml::Value, engines: &[String]) -> Entry {
+    let text = |v: &crate::yaml::Value| v.as_str().unwrap_or("").to_string();
+    if e.get("comparator").and_then(crate::yaml::Value::as_str) == Some("none") {
         let reason = e.get("reason").map(text).unwrap_or_default();
         return Entry {
             engines: engines
@@ -145,14 +145,17 @@ fn engines_of(e: &serde_yaml::Value, engines: &[String]) -> Entry {
         };
     }
     let mut out = Entry::default();
-    let Some(cmp) = e.get("comparators").and_then(serde_yaml::Value::as_mapping) else {
+    let Some(cmp) = e
+        .get("comparators")
+        .and_then(crate::yaml::Value::as_mapping)
+    else {
         return out;
     };
     for (k, v) in cmp {
         let Some(engine) = k.as_str() else { continue };
         let answer = match v.get("none") {
             Some(reason) => Err(text(reason)),
-            None => Ok(serde_yaml::to_string(v)
+            None => Ok(crate::yaml::to_string(v)
                 .unwrap_or_default()
                 .trim()
                 .to_string()),

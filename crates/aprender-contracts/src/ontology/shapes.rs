@@ -226,7 +226,7 @@ pub type TargetMap = std::collections::BTreeMap<String, String>;
 
 /// Read a contract's `shape:` block with NO Σ map — so a shape without `targetClass` is malformed. The gate
 /// reads Σ and calls [`parse_shape_with`].
-pub fn parse_shape(stem: &str, doc: &serde_yaml::Value) -> Result<Option<NodeShape>, ShapeError> {
+pub fn parse_shape(stem: &str, doc: &crate::yaml::Value) -> Result<Option<NodeShape>, ShapeError> {
     parse_shape_with(stem, doc, &TargetMap::new())
 }
 
@@ -234,7 +234,7 @@ pub fn parse_shape(stem: &str, doc: &serde_yaml::Value) -> Result<Option<NodeSha
 /// target is `targets[entity.type]` (Σ `entity_type_target_class`); an unmapped type is malformed, named.
 pub fn parse_shape_with(
     stem: &str,
-    doc: &serde_yaml::Value,
+    doc: &crate::yaml::Value,
     targets: &TargetMap,
 ) -> Result<Option<NodeShape>, ShapeError> {
     let Some(block) = doc.get("shape") else {
@@ -250,7 +250,7 @@ pub fn parse_shape_with(
 }
 
 /// [`parse_shapes_with`] with no Σ map.
-pub fn parse_shapes(stem: &str, doc: &serde_yaml::Value) -> Result<Vec<NodeShape>, ShapeError> {
+pub fn parse_shapes(stem: &str, doc: &crate::yaml::Value) -> Result<Vec<NodeShape>, ShapeError> {
     parse_shapes_with(stem, doc, &TargetMap::new())
 }
 
@@ -260,7 +260,7 @@ pub fn parse_shapes(stem: &str, doc: &serde_yaml::Value) -> Result<Vec<NodeShape
 /// contract, is malformed.
 pub fn parse_shapes_with(
     stem: &str,
-    doc: &serde_yaml::Value,
+    doc: &crate::yaml::Value,
     targets: &TargetMap,
 ) -> Result<Vec<NodeShape>, ShapeError> {
     let mut out = Vec::new();
@@ -282,7 +282,7 @@ pub fn parse_shapes_with(
         })?;
         let id = map
             .get("id")
-            .and_then(serde_yaml::Value::as_str)
+            .and_then(crate::yaml::Value::as_str)
             .ok_or_else(|| ShapeError::Malformed {
                 shape: stem.to_string(),
                 what: format!("shapes[{i}] has no `id`"),
@@ -294,7 +294,7 @@ pub fn parse_shapes_with(
             });
         }
         let mut body = map.clone();
-        body.remove(serde_yaml::Value::String("id".into()));
+        body.remove(crate::yaml::Value::String("id".into()));
         out.push(parse_node_shape(
             id,
             &body,
@@ -312,7 +312,7 @@ pub fn parse_shapes_with(
 /// does not declare, a blank reason, or a shape that also says `allowEmpty` is malformed.
 fn apply_allow_empty(
     stem: &str,
-    doc: &serde_yaml::Value,
+    doc: &crate::yaml::Value,
     shapes: &mut [NodeShape],
 ) -> Result<(), ShapeError> {
     let Some(v) = doc.get("allow_empty") else {
@@ -352,17 +352,17 @@ fn apply_allow_empty(
 
 /// Σ `entity_type_target_class[entity.type]`, expanded. No entity type is special-cased (v4.16 D-T1 replaced
 /// the `pv-contract`-only rule): a type the map does not carry has no default.
-fn default_target(doc: &serde_yaml::Value, targets: &TargetMap) -> Option<String> {
+fn default_target(doc: &crate::yaml::Value, targets: &TargetMap) -> Option<String> {
     doc.get("entity")
         .and_then(|e| e.get("type"))
-        .and_then(serde_yaml::Value::as_str)
+        .and_then(crate::yaml::Value::as_str)
         .and_then(|t| targets.get(t))
         .map(|c| expand(c))
 }
 
 fn parse_node_shape(
     id: &str,
-    map: &serde_yaml::Mapping,
+    map: &crate::yaml::Mapping,
     default_target: Option<String>,
     depth: usize,
 ) -> Result<NodeShape, ShapeError> {
@@ -375,7 +375,7 @@ fn parse_node_shape(
             });
         }
     }
-    let target_class = match map.get("targetClass").and_then(serde_yaml::Value::as_str) {
+    let target_class = match map.get("targetClass").and_then(crate::yaml::Value::as_str) {
         Some(t) => expand(t),
         None => match (depth, default_target) {
             (0, Some(t)) => t,
@@ -406,7 +406,7 @@ fn parse_node_shape(
                 what: "`ignoredProperties` is not a list".into(),
             })?
             .iter()
-            .filter_map(serde_yaml::Value::as_str)
+            .filter_map(crate::yaml::Value::as_str)
             .map(expand)
             .collect(),
     };
@@ -437,7 +437,7 @@ fn parse_node_shape(
 /// `allowEmpty` is a reason string on a TOP-LEVEL shape; a nested `node` shape has no focus set of its own.
 fn allow_empty_of(
     id: &str,
-    map: &serde_yaml::Mapping,
+    map: &crate::yaml::Mapping,
     depth: usize,
 ) -> Result<Option<String>, ShapeError> {
     let Some(v) = map.get("allowEmpty") else {
@@ -458,7 +458,7 @@ fn allow_empty_of(
 
 fn parse_property(
     shape: &str,
-    pm: &serde_yaml::Mapping,
+    pm: &crate::yaml::Mapping,
     depth: usize,
 ) -> Result<PropertyShape, ShapeError> {
     let malformed = |what: String| ShapeError::Malformed {
@@ -477,10 +477,10 @@ fn parse_property(
                 .ok_or_else(|| malformed(format!("`{k}` is not a non-negative integer"))),
         }
     };
-    let iri_opt = |k: &str| pm.get(k).and_then(serde_yaml::Value::as_str).map(expand);
+    let iri_opt = |k: &str| pm.get(k).and_then(crate::yaml::Value::as_str).map(expand);
     let node_kind = parse_node_kind(
         shape,
-        pm.get("nodeKind").and_then(serde_yaml::Value::as_str),
+        pm.get("nodeKind").and_then(crate::yaml::Value::as_str),
     )?;
     // `sh:in` is TERM equality (SHACL §4.5.1), and a term carries its datatype. The YAML scalar's own type is
     // what gives it one: `in: [true]` is `"true"^^xsd:boolean`, `in: [1]` is `xsd:integer`, `in: [a, b]` is
@@ -493,7 +493,7 @@ fn parse_property(
     let node = parse_nested_node(shape, pm, depth)?;
     let severity = parse_severity(
         shape,
-        pm.get("severity").and_then(serde_yaml::Value::as_str),
+        pm.get("severity").and_then(crate::yaml::Value::as_str),
     )?;
     Ok(PropertyShape {
         path: expand(path),
@@ -511,7 +511,7 @@ fn parse_property(
         less_than_or_equals: iri_opt("lessThanOrEquals"),
         resolves: pm
             .get("resolves")
-            .and_then(serde_yaml::Value::as_str)
+            .and_then(crate::yaml::Value::as_str)
             .map(String::from),
         severity,
     })
@@ -525,7 +525,7 @@ fn malformed_in(shape: &str, what: String) -> ShapeError {
 }
 
 /// A property mapping may carry only the keys of the supported subset.
-fn check_property_keys(shape: &str, pm: &serde_yaml::Mapping) -> Result<(), ShapeError> {
+fn check_property_keys(shape: &str, pm: &crate::yaml::Mapping) -> Result<(), ShapeError> {
     for key in pm.keys() {
         let k = key.as_str().unwrap_or("?");
         if !PROPERTY_KEYS.contains(&k) {
@@ -539,10 +539,10 @@ fn check_property_keys(shape: &str, pm: &serde_yaml::Mapping) -> Result<(), Shap
 }
 
 /// `path`: a single predicate; a SHACL property path expression is outside the subset.
-fn parse_path<'a>(shape: &str, pm: &'a serde_yaml::Mapping) -> Result<&'a str, ShapeError> {
+fn parse_path<'a>(shape: &str, pm: &'a crate::yaml::Mapping) -> Result<&'a str, ShapeError> {
     let path = pm
         .get("path")
-        .and_then(serde_yaml::Value::as_str)
+        .and_then(crate::yaml::Value::as_str)
         .ok_or_else(|| malformed_in(shape, "a property has no `path`".into()))?;
     if path.contains(['/', '|', '^', '*', '+']) && !path.starts_with("http") {
         return Err(ShapeError::Unsupported {
@@ -559,7 +559,7 @@ fn parse_path<'a>(shape: &str, pm: &'a serde_yaml::Mapping) -> Result<&'a str, S
 // `in: ["true"]` accepted `"true"^^xsd:boolean` — which the pinned oracle refuses, and which `make oracle`
 // caught on this row's own shapes (490 results of difference on the real corpus). An entry that expands to
 // an IRI still matches an IRI value, because a `sh:in` over `nodeKind: IRI` is a list of IRIs.
-fn parse_in(shape: &str, pm: &serde_yaml::Mapping) -> Result<Option<Vec<InEntry>>, ShapeError> {
+fn parse_in(shape: &str, pm: &crate::yaml::Mapping) -> Result<Option<Vec<InEntry>>, ShapeError> {
     let Some(v) = pm.get("in") else {
         return Ok(None);
     };
@@ -569,13 +569,13 @@ fn parse_in(shape: &str, pm: &serde_yaml::Mapping) -> Result<Option<Vec<InEntry>
     Ok(Some(seq.iter().map(in_entry).collect()))
 }
 
-fn in_entry(x: &serde_yaml::Value) -> InEntry {
+fn in_entry(x: &crate::yaml::Value) -> InEntry {
     match x {
-        serde_yaml::Value::String(s) => InEntry {
+        crate::yaml::Value::String(s) => InEntry {
             lexical: s.clone(),
             datatype: XSD_STRING_IRI.to_string(),
         },
-        serde_yaml::Value::Number(n) => InEntry {
+        crate::yaml::Value::Number(n) => InEntry {
             lexical: n.to_string(),
             datatype: if n.is_f64() {
                 format!("{XSD_NS}double")
@@ -583,7 +583,7 @@ fn in_entry(x: &serde_yaml::Value) -> InEntry {
                 format!("{XSD_NS}integer")
             },
         },
-        serde_yaml::Value::Bool(b) => InEntry {
+        crate::yaml::Value::Bool(b) => InEntry {
             lexical: b.to_string(),
             datatype: format!("{XSD_NS}boolean"),
         },
@@ -596,9 +596,9 @@ fn in_entry(x: &serde_yaml::Value) -> InEntry {
 
 fn parse_pattern(
     shape: &str,
-    pm: &serde_yaml::Mapping,
+    pm: &crate::yaml::Mapping,
 ) -> Result<Option<(String, regex::Regex)>, ShapeError> {
-    let Some(p) = pm.get("pattern").and_then(serde_yaml::Value::as_str) else {
+    let Some(p) = pm.get("pattern").and_then(crate::yaml::Value::as_str) else {
         return Ok(None);
     };
     let re = regex::Regex::new(p)
@@ -609,7 +609,7 @@ fn parse_pattern(
 /// `node`: one level of nesting is in the subset, deeper is not.
 fn parse_nested_node(
     shape: &str,
-    pm: &serde_yaml::Mapping,
+    pm: &crate::yaml::Mapping,
     depth: usize,
 ) -> Result<Option<Box<NodeShape>>, ShapeError> {
     match pm.get("node") {
@@ -1367,7 +1367,7 @@ mod tests {
     }
 
     fn shape(yaml: &str) -> NodeShape {
-        let doc: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+        let doc: crate::yaml::Value = crate::yaml::from_str(yaml).unwrap();
         parse_shape_with("t", &doc, &pv_map()).unwrap().unwrap()
     }
 
@@ -1395,7 +1395,7 @@ mod tests {
         );
         assert_eq!(shape(BASE).allow_empty, None);
         for bad in ["\"  \"", "true", "[a]"] {
-            let doc: serde_yaml::Value = serde_yaml::from_str(&with(bad)).unwrap();
+            let doc: crate::yaml::Value = crate::yaml::from_str(&with(bad)).unwrap();
             assert!(
                 matches!(
                     parse_shape_with("t", &doc, &pv_map()),
@@ -1405,7 +1405,7 @@ mod tests {
             );
         }
         let nested = "entity: {type: pv-contract}\nshape:\n  properties:\n    - {path: ont:id, node: {allowEmpty: x, properties: []}}\n";
-        let doc: serde_yaml::Value = serde_yaml::from_str(nested).unwrap();
+        let doc: crate::yaml::Value = crate::yaml::from_str(nested).unwrap();
         assert!(matches!(
             parse_shape_with("t", &doc, &pv_map()),
             Err(ShapeError::Malformed { what, .. }) if what.contains("nested node shape")
@@ -1418,7 +1418,7 @@ mod tests {
             format!("entity: {{type: pv-contract}}\n{extra}shapes:\n  - {{id: a, {own}properties: []}}\n  - {{id: b, properties: []}}\n")
         };
         let parse = |yaml: &str| {
-            let doc: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+            let doc: crate::yaml::Value = crate::yaml::from_str(yaml).unwrap();
             parse_shapes_with("t", &doc, &pv_map())
         };
         let got = parse(&list("allow_empty: {a: \"none fit\"}\n", "")).unwrap();
@@ -1506,7 +1506,7 @@ mod tests {
         let r = validate(&g, &[s]);
         assert_eq!(r.results.len(), 1, "{:?}", r.results);
         assert_eq!(r.results[0].component, "node");
-        let doc: serde_yaml::Value = serde_yaml::from_str("entity: {type: pv-contract}\nshape:\n  properties:\n    - {path: ont:x, node: {properties: [{path: ont:y, node: {properties: []}}]}}\n").unwrap();
+        let doc: crate::yaml::Value = crate::yaml::from_str("entity: {type: pv-contract}\nshape:\n  properties:\n    - {path: ont:x, node: {properties: [{path: ont:y, node: {properties: []}}]}}\n").unwrap();
         assert!(matches!(
             parse_shape_with("t", &doc, &pv_map()),
             Err(ShapeError::Unsupported { .. })
@@ -1646,7 +1646,7 @@ mod tests {
             ("entity: {type: pv-contract}\nshape:\n  properties: [{path: 'ont:a/ont:b'}]\n", "path `ont:a/ont:b`"),
             ("entity: {type: pv-contract}\nshape:\n  or: []\n", "or"),
         ] {
-            let doc: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+            let doc: crate::yaml::Value = crate::yaml::from_str(yaml).unwrap();
             match parse_shape_with("t", &doc, &pv_map()) {
                 Err(ShapeError::Unsupported { component, .. }) => assert!(component.starts_with(want), "{component} vs {want}"),
                 other => panic!("{yaml}: expected Unsupported, got {other:?}"),
@@ -1656,13 +1656,13 @@ mod tests {
 
     #[test]
     fn a_shape_with_no_target_and_no_pv_contract_entity_is_malformed() {
-        let doc: serde_yaml::Value = serde_yaml::from_str("shape:\n  properties: []\n").unwrap();
+        let doc: crate::yaml::Value = crate::yaml::from_str("shape:\n  properties: []\n").unwrap();
         assert!(matches!(
             parse_shape_with("t", &doc, &pv_map()),
             Err(ShapeError::Malformed { .. })
         ));
-        let doc: serde_yaml::Value =
-            serde_yaml::from_str("shape:\n  targetClass: ont:Contract\n  properties: []\n")
+        let doc: crate::yaml::Value =
+            crate::yaml::from_str("shape:\n  targetClass: ont:Contract\n  properties: []\n")
                 .unwrap();
         assert_eq!(
             parse_shape_with("t", &doc, &pv_map())
@@ -1694,7 +1694,7 @@ mod tests {
     #[test]
     fn in_entry_types_each_yaml_scalar_by_its_own_kind() {
         let e = |y: &str| {
-            let v: serde_yaml::Value = serde_yaml::from_str(y).expect("yaml");
+            let v: crate::yaml::Value = crate::yaml::from_str(y).expect("yaml");
             let x = in_entry(&v);
             (x.lexical, x.datatype)
         };
