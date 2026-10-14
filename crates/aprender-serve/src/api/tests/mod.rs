@@ -70,9 +70,15 @@ mod chat_stream_route_2375; // aprender#2375(4): POST /v1/chat/completions/strea
 mod apr_model_routes_2609; // aprender#2609: routed endpoints on an AprTransformer server; one condition, one status
 mod effective_config_route_pp2; // PP-LLAMA-001 §12 row 6 / PP-2 / PP-13 / PP-14 / PP-24 / PP-30: GET /v1/effective-config reports residency, not cfg!
 mod stream_mode_pp27; // PP-LLAMA-001 PP-27 / §3: an SSE stream declares live vs replayed, and the terminal chunk carries usage + measured timings
+mod ttft_phases_4954; // aprender#4954: TTFT split by phase (load, prefill, first token, decode); a planted delay moves only its own field
 #[cfg(feature = "gpu")] // create_test_quantized_model is gpu-gated
 mod usage_finish_3718; // aprender#3718: a context-clamped cut is "length", an unfittable prompt is 400
 #[cfg(feature = "gpu")] // create_test_quantized_model is gpu-gated
 mod completions_eog_stop_4339; // aprender#4339: raw /v1/completions stops on EOS and every EOG marker
 #[cfg(feature = "gpu")]
 mod completions_eog_stop_4345; // aprender#4345: the wgpu GpuModel /v1/completions path stops on EOS + EOG too
+mod stream_tool_calls_4918; // aprender#4918: streamed tool calls arrive as delta.tool_calls, finish tool_calls (T1-T12)
+#[cfg(feature = "gpu")] // create_test_quantized_model is gpu-gated
+mod logprobs_4971; // aprender#4971: chat logprobs/top_logprobs honoured on the quantized CPU path, refused 4xx/501 elsewhere (ASOC-INV-021)
+#[cfg(feature = "cuda")]
+mod logprobs_cuda_4971; // aprender#4971: chat logprobs on the dense CUDA backend, direct, through the batch scheduler and on the iteration scheduler (needs a device + tinyllama; SKIP = not_measured)
