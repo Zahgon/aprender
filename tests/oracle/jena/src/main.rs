@@ -5,11 +5,11 @@
 //!   prints `self-test: N/N ok`. The controls act on the comparator's inputs, never on pv, so they prove the harness
 //!   whatever pv does. Six of them need the JVM.
 //! - `jena-oracle run <repo> <pv-shapes.json> --pv <pv>` checks the pins, runs every control, measures the cells and
-//!   writes `tests/oracle/jena/receipt.json`. R-INPUT and the R-RETURN round trip run `<pv> ontology read` (S3).
+//!   writes `tests/oracle/jena/receipt.json`. R-INPUT and the R-RETURN round trip run `<pv> ontology read` (S3);
+//!   R-VALIDATE on S-W3C and R-FEEDBACK run `<pv> ontology validate` (S4), whose refusals count RED, never a skip.
 //!
-//! Exit codes follow the OWL oracle: 0 GREEN, 1 RED, 2 NOT MEASURED, by the contract's `verdict` equation. Until S4
-//! lands, the cells whose pv side needs it are NOT MEASURED, so a run whose every Jena-side check is green
-//! exits 2, never 0. The JVM is `ONT_ORACLE_JAVA`, else `java` on PATH.
+//! Exit codes follow the OWL oracle: 0 GREEN, 1 RED, 2 NOT MEASURED, by the contract's `verdict` equation. A run
+//! with any NOT MEASURED cell exits 2, never 0. The JVM is `ONT_ORACLE_JAVA`, else `java` on PATH.
 
 mod jena;
 mod nt;
@@ -92,7 +92,7 @@ impl Line {
 }
 
 /// The inputs of the contract's `verdict` equation, plus `nm_cell`: a run that would exit 0 while a cell is still
-/// NOT MEASURED (its pv side waits for S4) exits 2.
+/// NOT MEASURED exits 2.
 #[derive(Clone, Copy, Default)]
 struct Facts {
     pins_ok: bool,
@@ -1787,7 +1787,7 @@ impl Run<'_> {
     }
 
     /// Jena on one W3C case against its expected report. A Jena disagreement is a note: W3C decides, and Jena is
-    /// not under test. Returns whether the source shape had to be dropped from the comparison.
+    /// not under test. Returns Jena's report and whether the source shape had to be dropped from the comparison.
     fn w3c_case(
         &mut self,
         j: &Jena,
@@ -1795,7 +1795,7 @@ impl Run<'_> {
         w3c: &Report,
         data: &Path,
         shapes: &Path,
-    ) -> Option<bool> {
+    ) -> Option<(Report, bool)> {
         let tag = case.replace(['/', '#'], "-");
         match j
             .validate(shapes, data, &self.work, &tag)
@@ -1807,7 +1807,7 @@ impl Run<'_> {
                     let lines = d.lines("jena", "w3c").join("; ");
                     self.notes.push(format!("jena≠w3c {case}: {lines}"));
                 }
-                Some(d.degraded > 0)
+                Some((jr, d.degraded > 0))
             }
             Err(e) => {
                 self.line("R-VALIDATE", case, "jena-vs-w3c", V::Nm, e);
@@ -1816,11 +1816,61 @@ impl Run<'_> {
         }
     }
 
-    /// R-VALIDATE and R-FEEDBACK on S-W3C. pv's side waits for S4.
+    /// pv's report on one shapes graph and one data graph: `Ok(Ok)` a report, `Ok(Err)` pv refused or broke its
+    /// promise (RED either way, named), `Err` pv could not be started (NOT MEASURED).
+    fn pv_report(&self, shapes: &Path, data: &Path) -> Result<Result<Report, String>, String> {
+        Ok(match pv::validate(self.pv, shapes, data)? {
+            pv::Validated::Report(t) => report_of(&t).map_err(|e| format!("pv's report: {e}")),
+            pv::Validated::Refused(why) => Err(format!("pv refused: {why}")),
+            pv::Validated::Broken(why) => Err(why),
+        })
+    }
+
+    /// R-VALIDATE (pv's report against W3C's, W3C decides) and R-FEEDBACK (every result carries a message, and a
+    /// shape's declared `sh:message`) on one case. Lines only for a case that does not pass; returns whether both
+    /// did.
+    fn pv_w3c_case(
+        &mut self,
+        case: &str,
+        file: &[Triple],
+        (w3c, jena): (&Report, &Report),
+        (data, shapes): (&Path, &Path),
+    ) -> (bool, bool) {
+        let pr = match self.pv_report(shapes, data) {
+            Ok(r) => r,
+            Err(e) => {
+                self.line("R-VALIDATE", case, "pv-vs-w3c", V::Nm, e);
+                return (false, false);
+            }
+        };
+        let (line, note) =
+            validate_line(case, pr.as_ref().map_err(String::as_str), Some(jena), w3c);
+        self.notes.extend(note);
+        let valid = line.v == V::Green;
+        if !valid {
+            self.lines.push(line);
+        }
+        let Ok(pr) = pr else {
+            return (valid, false);
+        };
+        let faults = report::message_faults(&pr, &declared_messages(file));
+        if !faults.is_empty() {
+            self.line(
+                "R-FEEDBACK",
+                case,
+                "w3c-messages",
+                V::Red,
+                faults.join("; "),
+            );
+        }
+        (valid, valid && faults.is_empty())
+    }
+
+    /// R-VALIDATE and R-FEEDBACK on S-W3C: Jena's report against W3C's (a note when they differ), then pv's.
     fn w3c_cells(&mut self, j: &Jena, suite: &[String]) {
         let mut listed = Vec::new();
         let mut seen = BTreeSet::new();
-        let mut degraded = 0;
+        let (mut degraded, mut valid, mut fed) = (0, 0, 0);
         for rel in suite {
             let t = match j.read(&self.repo.join(rel), None, false) {
                 Ok(t) => t,
@@ -1832,8 +1882,11 @@ impl Run<'_> {
             };
             for (case, w3c, data, shapes) in w3c_cases(rel, &t) {
                 listed.push(case.clone());
-                if let Some(d) = self.w3c_case(j, &case, &w3c, &data, &shapes) {
+                if let Some((jr, d)) = self.w3c_case(j, &case, &w3c, &data, &shapes) {
                     degraded += usize::from(d);
+                    let (v, f) = self.pv_w3c_case(&case, &t, (&w3c, &jr), (&data, &shapes));
+                    valid += usize::from(v);
+                    fed += usize::from(f);
                     seen.insert(case);
                 }
             }
@@ -1842,20 +1895,62 @@ impl Run<'_> {
             self.f.complete = false;
             self.line("R-VALIDATE", "S-W3C", "jena-vs-w3c", V::Nm, e);
         }
-        let pv_side = format!(
-            "S4: pv writes no sh:ValidationReport; {} cases, Jena ran {}, {degraded} compared without source shape",
-            listed.len(),
+        let n = listed.len();
+        let all = |k: usize| if n > 0 && k == n { V::Green } else { V::Red };
+        let detail = format!(
+            "{valid} of {n} cases as W3C expects (Jena ran {}; {degraded} compared without source shape)",
             seen.len()
         );
-        self.line("R-VALIDATE", "S-W3C", "pv-vs-w3c", V::Nm, pv_side);
-        let feedback = "S4: pv's report has no value, source shape or W3C severity".into();
-        self.line(
-            "R-FEEDBACK",
-            "S-W3C+S-CORPUS",
-            "full-tuple",
-            V::Nm,
-            feedback,
+        self.line("R-VALIDATE", "S-W3C", "pv-vs-w3c", all(valid), detail);
+        let detail = format!(
+            "{fed} of {n} cases: full tuple as W3C expects, every result with a message, each declared sh:message carried"
         );
+        self.line("R-FEEDBACK", "S-W3C", "w3c", all(fed), detail);
+    }
+
+    /// R-FEEDBACK on S-CORPUS: pv's report on the corpus against Jena's, every field of the tuple, and its messages.
+    fn corpus_feedback_cell(&mut self, j: &Jena) {
+        let jr = j
+            .validate(&self.ttl_path, &self.nt_path, &self.work, "corpus-feedback")
+            .and_then(|t| report_of(&t));
+        let (jr, pr) = match (jr, self.pv_report(&self.ttl_path, &self.nt_path)) {
+            (Err(e), _) | (_, Err(e)) => {
+                self.f.complete = false;
+                return self.line("R-FEEDBACK", "corpus", "jena-vs-pv", V::Nm, e);
+            }
+            (Ok(jr), Ok(pr)) => (jr, pr),
+        };
+        let pr = match pr {
+            Ok(pr) => pr,
+            Err(e) => return self.line("R-FEEDBACK", "corpus", "jena-vs-pv", V::Red, e),
+        };
+        let d = report::diff(&pr, &jr);
+        let declared = j
+            .read(&self.ttl_path, None, false)
+            .map(|t| declared_messages(&t));
+        let faults = match declared {
+            Ok(m) => report::message_faults(&pr, &m),
+            Err(e) => vec![format!("shapes unread: {e}")],
+        };
+        let v = if d.equal() && faults.is_empty() {
+            V::Green
+        } else {
+            V::Red
+        };
+        let mut why = d.lines("pv", "jena");
+        why.extend(faults);
+        let detail = format!(
+            "pv {} results, jena {}; {} differ{}",
+            pr.results.len(),
+            jr.results.len(),
+            why.len(),
+            if why.is_empty() {
+                String::new()
+            } else {
+                format!(": {}", why[..why.len().min(8)].join("; "))
+            }
+        );
+        self.line("R-FEEDBACK", "corpus", "jena-vs-pv", v, detail);
     }
 
     /// S-SHSH: pv's shapes conform to the SHACL-SHACL graph Jena ships.
@@ -1970,6 +2065,7 @@ fn run(repo: &Path, pv_json: &Path, pv: &Path) -> u8 {
     if let (Some(j), true, Some(Ok(shsh))) = (&j, r.f.pins_ok, &shsh) {
         r.return_cells(j);
         r.corpus_cell(j, pv_pairs.as_ref());
+        r.corpus_feedback_cell(j);
         r.w3c_cells(j, &suite);
         r.w3c_input_cells(j, &suite);
         r.shsh_cell(j, shsh);

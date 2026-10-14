@@ -65,3 +65,37 @@ pub fn blank_nodes(t: &[Triple]) -> usize {
         .collect::<std::collections::BTreeSet<_>>()
         .len()
 }
+
+/// What `pv ontology validate` did with one shapes graph and one data graph.
+pub enum Validated {
+    /// Exit 0 (conforms) or 1 (does not): the report, as N-Triples parsed by the harness.
+    Report(Vec<Triple>),
+    /// Exit 2 or 3: pv refused, naming the term outside its subset. R-VALIDATE counts it RED (FALSIFY-CRUXSHACL-010).
+    Refused(String),
+    /// pv ran and broke the command's promise: another exit code, a signal, or a report that is not N-Triples.
+    Broken(String),
+}
+
+/// Run `pv ontology validate <shapes> <data> --format ntriples`. `Err` only when pv cannot be started.
+pub fn validate(pv: &Path, shapes: &Path, data: &Path) -> Result<Validated, String> {
+    let o = Command::new(pv)
+        .args(["ontology", "validate"])
+        .arg(shapes)
+        .arg(data)
+        .args(["--format", "ntriples"])
+        .output()
+        .map_err(|e| format!("{}: {e}", pv.display()))?;
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    let first = stderr.lines().next().unwrap_or("").to_string();
+    Ok(match o.status.code() {
+        Some(0 | 1) => match String::from_utf8(o.stdout) {
+            Ok(text) => match nt::parse(&text) {
+                Ok(t) => Validated::Report(t),
+                Err(e) => Validated::Broken(format!("pv's report is not N-Triples: {e}")),
+            },
+            Err(e) => Validated::Broken(format!("pv's report is not UTF-8: {e}")),
+        },
+        Some(2 | 3) => Validated::Refused(first),
+        c => Validated::Broken(format!("pv ontology validate exited {c:?}: {first}")),
+    })
+}
