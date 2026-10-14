@@ -1,0 +1,31 @@
+[package]
+name = "aprender-code-eval"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Hermetic, receipted evaluation harness for `apr code` (APR-CODE-EVAL-001)"
+keywords = ["eval", "swe-bench", "pass-at-k", "aprender"]
+categories = ["development-tools"]
+# Not published: the harness is in-tree tooling for the nightly eval (#5288), and a crate
+# name becomes permanent at its first crates.io publish. Reversible.
+publish = false
+
+# Library only (FALSIFY-MONO-011 allows binaries on the listed crates only). The driver
+# that runs it is an `apr` subcommand (#5287).
+[lib]
+name = "aprender_code_eval"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

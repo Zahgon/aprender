@@ -10,6 +10,7 @@ members = [
     "crates/aprender-shell",
     "crates/aprender-tsp",
     "crates/aprender-monte-carlo",
+    "crates/aprender-code-eval",
     "crates/apr-cli",
     "crates/aprender-bench-tokenizer",
     "crates/aprender-bench-compute",

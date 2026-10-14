@@ -98,48 +98,48 @@ falsification_tests:
   - id: FALSIFY-ACE-MET-001
     name: errors_stay_in_denominator
     prediction: "10 tasks, 5 RESOLVED, 3 SANDBOX_ERROR, 2 FAILED gives pass@1 = 0.5, not 5/7."
-    test_harness: "PLANNED (#5285, crate not yet built): unit test falsify_ace_met_001_denominator in the metric module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_met_001_denominator"
     expected_output: "test result: ok"
     if_fails: "Errors are being dropped and the score is inflated."
   - id: FALSIFY-ACE-MET-002
     name: pass_at_k_matches_reference
     prediction: "Against the Chen et al. reference values (n=10, c ∈ {0,1,5,10}, k ∈ {1,5,10}) to 1e-12, k=11 with n=10 is Err, and n=1 gives pass@k = pass@1."
-    test_harness: "PLANNED (#5285, crate not yet built): unit test falsify_ace_met_002_pass_at_k in the metric module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_met_002_pass_at_k"
     expected_output: "test result: ok"
     if_fails: "pass@k is biased or computed with the problem count in the n slot."
   - id: FALSIFY-ACE-MET-003
     name: wilson_reference
     prediction: "x=50, N=164 gives the reference interval to 1e-9; x=0 and x=N stay inside [0, 1] (proptest)."
-    test_harness: "PLANNED (#5285, crate not yet built): unit test falsify_ace_met_003_wilson in the metric module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_met_003_wilson"
     expected_output: "test result: ok"
     if_fails: "The interval is wrong at the edges, where small suites live."
   - id: FALSIFY-ACE-MET-004
     name: refusals
     prediction: "Three planted runs (0 tasks; 10 tasks with 0 executed tests; 10 tasks all EMPTY) each return Err(Refused) and print no percentage."
-    test_harness: "PLANNED (#5285, crate not yet built): unit test falsify_ace_met_004_refusals in the metric module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_met_004_refusals"
     expected_output: "test result: ok"
     if_fails: "The harness prints 0% or 100% for a run that measured nothing."
   - id: FALSIFY-ACE-MET-005
     name: format_conformance
     prediction: "4 FORMAT_ERROR of 20 tasks (n = 1) gives format_conformance = 0.8."
-    test_harness: "PLANNED (#5285, crate not yet built): unit test falsify_ace_met_005_format_conformance in the metric module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_met_005_format_conformance"
     expected_output: "test result: ok"
     if_fails: "Edit-format failures are hidden inside FAILED."
   - id: FALSIFY-ACE-MET-006
     name: post_cutoff_null_when_empty
     prediction: "A suite whose tasks all predate the cutoff reports post_cutoff_pass_at_1 = null, with count 0."
-    test_harness: "PLANNED (#5285, crate not yet built): unit test falsify_ace_met_006_post_cutoff in the metric module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_met_006_post_cutoff"
     expected_output: "test result: ok"
     if_fails: "A contaminated-only run claims a contamination-free 0%."
   - id: FALSIFY-ACE-MET-007
     name: receipt_complete
     prediction: "Removing any one required receipt field makes emit() return Err naming that field (one row per field)."
-    test_harness: "PLANNED (#5285, crate not yet built): unit test falsify_ace_met_007_receipt_fields in the metric module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_met_007_receipt_fields"
     expected_output: "test result: ok"
     if_fails: "A score can be published without saying what model, tasks or harness produced it."
   - id: FALSIFY-ACE-MET-008
     name: counts_reconcile
     prediction: "proptest: for any verdict vector, Σ counts_by_label = |T|·n."
-    test_harness: "PLANNED (#5285, crate not yet built): unit test prop_ace_met_008_counts in the metric module"
+    test_harness: "cargo test -p aprender-code-eval --lib prop_ace_met_008_counts"
     expected_output: "test result: ok"
     if_fails: "A verdict was lost or double counted."

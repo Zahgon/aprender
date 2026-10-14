@@ -435,6 +435,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "aprender-code-eval"
+version = "0.71.2"
+dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "aprender-common"
 version = "0.71.2"
 dependencies = [

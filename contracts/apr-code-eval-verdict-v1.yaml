@@ -94,42 +94,42 @@ falsification_tests:
   - id: FALSIFY-ACE-VER-001
     name: resolved_rule_table
     prediction: "A 12-row case table (F2P all/some/none pass × P2P all/one fail × executed full/partial) gives RESOLVED only on the one all-pass, fully-executed row."
-    test_harness: "PLANNED (#5285, crate not yet built): unit test falsify_ace_ver_001_resolved_table in the verdict module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_ver_001_resolved_table"
     expected_output: "test result: ok"
     if_fails: "The resolved rule is looser than SWE-bench's."
   - id: FALSIFY-ACE-VER-002
     name: empty_output_never_resolved
     prediction: "Empty model output against an all-pass report gives EMPTY, not RESOLVED."
-    test_harness: "PLANNED (#5285, crate not yet built): unit test falsify_ace_ver_002_empty_output in the verdict module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_ver_002_empty_output"
     expected_output: "test result: ok"
     if_fails: "A model that answers nothing can score."
   - id: FALSIFY-ACE-VER-003
     name: zero_executed_never_resolved
     prediction: "A report with status ok, exit 0 and tests_executed=0 gives NO_TESTS."
-    test_harness: "PLANNED (#5285, crate not yet built): unit test falsify_ace_ver_003_zero_executed in the verdict module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_ver_003_zero_executed"
     expected_output: "test result: ok"
     if_fails: "A test runner that collected nothing reads as a pass."
   - id: FALSIFY-ACE-VER-004
     name: timeout_and_error_are_labels
     prediction: "killed_by=timeout gives TIMEOUT and status=sandbox_error gives SANDBOX_ERROR, each with passed tests in the report."
-    test_harness: "PLANNED (#5285, crate not yet built): unit test falsify_ace_ver_004_sandbox_failures in the verdict module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_ver_004_sandbox_failures"
     expected_output: "test result: ok"
     if_fails: "Partial results from a killed run are scored."
   - id: FALSIFY-ACE-VER-005
     name: bad_edit_is_format_error
     prediction: "A search/replace block whose search text is not in the file gives FORMAT_ERROR, and the harness does not fuzzy-apply it."
-    test_harness: "PLANNED (#5285, crate not yet built): unit test falsify_ace_ver_005_format_error in the verdict module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_ver_005_format_error"
     expected_output: "test result: ok"
     if_fails: "The harness repairs the model's edits and credits the model."
   - id: FALSIFY-ACE-VER-006
     name: verdict_total
     prediction: "proptest over arbitrary reports and outputs: verdict never panics and always returns a member of V."
-    test_harness: "PLANNED (#5285, crate not yet built): unit test prop_ace_ver_006_total in the verdict module"
+    test_harness: "cargo test -p aprender-code-eval --lib prop_ace_ver_006_total"
     expected_output: "test result: ok"
     if_fails: "An unexpected report shape crashes the run or escapes the label set."
   - id: FALSIFY-ACE-VER-007
     name: p2p_regression_fails
     prediction: "All F2P pass and one P2P fails gives FAILED."
-    test_harness: "PLANNED (#5285, crate not yet built): unit test falsify_ace_ver_007_p2p_regression in the verdict module"
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_ver_007_p2p_regression"
     expected_output: "test result: ok"
     if_fails: "A fix that breaks other behaviour scores as resolved."
