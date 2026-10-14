@@ -644,6 +644,34 @@ fn cap_max_seq_len(native: Option<usize>) -> Option<usize> {
     Some(chosen)
 }
 
+/// `--plan` output of the CUDA backend: what would run, nothing loaded.
+#[cfg(all(feature = "training", feature = "cuda"))]
+fn print_cuda_plan(
+    teacher_path: &Path,
+    student_path: Option<&Path>,
+    temperature: f64,
+    alpha: f64,
+    epochs: u32,
+    json_output: bool,
+) {
+    if json_output {
+        println!(
+            "{}",
+            serde_json::json!({
+                "backend": "cuda",
+                "plan": true,
+                "teacher": teacher_path.display().to_string(),
+                "student": student_path.map(|p| p.display().to_string()),
+                "temperature": temperature,
+                "alpha": alpha,
+                "epochs": epochs,
+            })
+        );
+    } else {
+        println!("[plan] backend=cuda teacher={}", teacher_path.display());
+    }
+}
+
 #[cfg(all(feature = "training", feature = "cuda"))]
 #[allow(clippy::too_many_arguments)]
 fn run_cuda_backend(
@@ -669,22 +697,14 @@ fn run_cuda_backend(
     use crate::commands::distill_q4k_teacher::RealizarQ4KTeacher;
 
     if plan_only {
-        if json_output {
-            println!(
-                "{}",
-                serde_json::json!({
-                    "backend": "cuda",
-                    "plan": true,
-                    "teacher": teacher_path.display().to_string(),
-                    "student": student_path.map(|p| p.display().to_string()),
-                    "temperature": temperature,
-                    "alpha": alpha,
-                    "epochs": epochs,
-                })
-            );
-        } else {
-            println!("[plan] backend=cuda teacher={}", teacher_path.display());
-        }
+        print_cuda_plan(
+            teacher_path,
+            student_path,
+            temperature,
+            alpha,
+            epochs,
+            json_output,
+        );
         return Ok(());
     }
 
@@ -1801,6 +1821,13 @@ fn run_config_train_real(
     config_path: &Path,
     json_output: bool,
 ) -> Result<bool> {
+    // #4552 train-arch-honesty-v1: the config mode returns before `run`'s
+    // teacher/student refusal, so the real pipeline refuses here, before any
+    // weight is read.
+    for model_id in [&config.teacher.model_id, &config.student.model_id] {
+        super::model_config::refuse_unmodelled_model_path(std::path::Path::new(model_id))?;
+    }
+
     // Only run the real pipeline when the student resolves to a local file.
     // Remote HF ids (`org/model` without local cache) fall through to the
     // stub, matching the existing user-facing "pending_download" path.
@@ -2366,6 +2393,102 @@ fn load_resume_state(output_path: &Path) -> Result<ResumeState> {
 }
 
 /// POST to /generate with retry (up to 3 attempts). Returns None if all retries exhausted.
+/// The "Resuming" line, printed only when earlier records exist.
+fn print_resume_note(resume: &ResumeState) {
+    if !resume.existing_prompts.is_empty() {
+        println!(
+            "  Resuming: {} existing records, {} tokens",
+            resume.existing_prompts.len(),
+            resume.total_tokens
+        );
+    }
+}
+
+/// ALB-111: `true` (and a note unless JSON) when a prompt is over the char cap.
+fn prompt_too_long(prompt_text: &str, max_chars: usize, index: usize, json_output: bool) -> bool {
+    let too_long = prompt_text.len() > max_chars;
+    if too_long && !json_output {
+        eprintln!(
+            "  Skipping prompt {} ({} chars > {} max)",
+            index,
+            prompt_text.len(),
+            max_chars,
+        );
+    }
+    too_long
+}
+
+/// Parse one teacher response and append its JSONL record. `None` when the
+/// completion is shorter than `min_tokens` (the caller counts it as skipped).
+fn write_generated_record(
+    writer: &mut impl std::io::Write,
+    prompt_json: &serde_json::Value,
+    prompt_text: &str,
+    resp: ureq::Response,
+    min_tokens: u32,
+) -> Result<Option<u64>> {
+    let gen_result: serde_json::Value = {
+        let body = resp
+            .into_string()
+            .map_err(|e| CliError::NetworkError(format!("Failed to read response body: {e}")))?;
+        serde_json::from_str(&body)
+            .map_err(|e| CliError::NetworkError(format!("Invalid generate response: {e}")))?
+    };
+
+    let num_tokens = gen_result
+        .get("num_generated")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    let text = gen_result
+        .get("text")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    if num_tokens < u64::from(min_tokens) {
+        return Ok(None);
+    }
+
+    // Write output JSONL record
+    let record = serde_json::json!({
+        "prompt": prompt_text,
+        "completion": text,
+        "tokens": num_tokens,
+        "source": prompt_json.get("source").and_then(|v| v.as_str()).unwrap_or(""),
+        "kind": prompt_json.get("kind").and_then(|v| v.as_str()).unwrap_or(""),
+    });
+    writeln!(
+        writer,
+        "{}",
+        serde_json::to_string(&record)
+            .map_err(|e| CliError::ValidationFailed(format!("JSON serialize error: {e}")))?
+    )?;
+    writer.flush()?;
+    Ok(Some(num_tokens))
+}
+
+/// The every-10-prompts progress line of `run_text_generate`; silent on other prompts.
+fn print_generate_progress(
+    done: usize,
+    total: usize,
+    total_tokens: u64,
+    elapsed_secs: f64,
+    skipped: u64,
+) {
+    if done % 10 != 0 {
+        return;
+    }
+    let tok_per_sec = if elapsed_secs > 0.0 {
+        total_tokens as f64 / elapsed_secs
+    } else {
+        0.0
+    };
+    println!(
+        "  [{}/{}] {} tokens generated ({:.0} tok/s), {} skipped",
+        done, total, total_tokens, tok_per_sec, skipped
+    );
+}
+
 fn send_generate_request(
     url: &str,
     request_body: &str,
@@ -2480,21 +2603,14 @@ fn run_text_generate(
     let prompts_path = std::path::Path::new(&config.synthetic_data.prompts);
     let prompts = read_prompts_jsonl(prompts_path)?;
 
-    if !json_output {
-        output::pipeline_stage("Generating completions", output::StageStatus::Running);
-        output::kv("  Loaded prompts", prompts.len().to_string());
-    }
-
     let output_path = std::path::Path::new(&config.synthetic_data.output);
     let mut resume = load_resume_state(output_path)?;
     let mut skipped_count = 0u64;
 
-    if !resume.existing_prompts.is_empty() && !json_output {
-        println!(
-            "  Resuming: {} existing records, {} tokens",
-            resume.existing_prompts.len(),
-            resume.total_tokens
-        );
+    if !json_output {
+        output::pipeline_stage("Generating completions", output::StageStatus::Running);
+        output::kv("  Loaded prompts", prompts.len().to_string());
+        print_resume_note(&resume);
     }
 
     let output_file = std::fs::OpenOptions::new()
@@ -2524,15 +2640,12 @@ fn run_text_generate(
         }
 
         // ALB-111: Skip pathologically long prompts (55K char prompt caused hours-long prefill)
-        if prompt_text.len() > config.synthetic_data.max_prompt_chars {
-            if !json_output {
-                eprintln!(
-                    "  Skipping prompt {} ({} chars > {} max)",
-                    i,
-                    prompt_text.len(),
-                    config.synthetic_data.max_prompt_chars,
-                );
-            }
+        if prompt_too_long(
+            prompt_text,
+            config.synthetic_data.max_prompt_chars,
+            i,
+            json_output,
+        ) {
             skipped_count += 1;
             continue;
         }
@@ -2548,70 +2661,34 @@ fn run_text_generate(
 
         let (resp, was_skipped) =
             send_generate_request(&generate_url, &request_body, i, json_output);
-        if was_skipped {
-            skipped_count += 1;
-        }
+        skipped_count += u64::from(was_skipped);
         let Some(resp) = resp else {
             continue;
         };
 
-        let gen_result: serde_json::Value = {
-            let body = resp.into_string().map_err(|e| {
-                CliError::NetworkError(format!("Failed to read response body: {e}"))
-            })?;
-            serde_json::from_str(&body)
-                .map_err(|e| CliError::NetworkError(format!("Invalid generate response: {e}")))?
-        };
-
-        let num_tokens = gen_result
-            .get("num_generated")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-
-        let text = gen_result
-            .get("text")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-
-        if num_tokens < u64::from(config.synthetic_data.min_completion_tokens) {
+        let Some(num_tokens) = write_generated_record(
+            &mut writer,
+            prompt_json,
+            prompt_text,
+            resp,
+            config.synthetic_data.min_completion_tokens,
+        )?
+        else {
             skipped_count += 1;
             continue;
-        }
-
-        // Write output JSONL record
-        let record = serde_json::json!({
-            "prompt": prompt_text,
-            "completion": text,
-            "tokens": num_tokens,
-            "source": prompt_json.get("source").and_then(|v| v.as_str()).unwrap_or(""),
-            "kind": prompt_json.get("kind").and_then(|v| v.as_str()).unwrap_or(""),
-        });
-        writeln!(
-            writer,
-            "{}",
-            serde_json::to_string(&record)
-                .map_err(|e| CliError::ValidationFailed(format!("JSON serialize error: {e}")))?
-        )?;
-        writer.flush()?;
+        };
 
         resume.total_tokens += num_tokens;
         resume.generated_count += 1;
 
         // Progress every 10 prompts
-        if (i + 1) % 10 == 0 && !json_output {
-            let elapsed = start_time.elapsed().as_secs_f64();
-            let tok_per_sec = if elapsed > 0.0 {
-                resume.total_tokens as f64 / elapsed
-            } else {
-                0.0
-            };
-            println!(
-                "  [{}/{}] {} tokens generated ({:.0} tok/s), {} skipped",
+        if !json_output {
+            print_generate_progress(
                 i + 1,
                 prompts.len(),
                 resume.total_tokens,
-                tok_per_sec,
-                skipped_count
+                start_time.elapsed().as_secs_f64(),
+                skipped_count,
             );
         }
     }

@@ -57,7 +57,7 @@ proof_obligations:
 falsification_tests:
 - id: FALSIFY-TAH-001
   rule: qwen35 is refused by name at the verb
-  prediction: "`apr finetune <qwen35.apr> -m qlora` and `apr distill --student <qwen35.apr>` exit non-zero, the error contains \"UnsupportedArch\", the arch as given, and \"Gated DeltaNet\"; no training step runs. Two tests measure it: a spelling case table in aprender-train, and in apr-cli a qwen35 .apr fixture through resolve_transformer_config, the resolver `apr finetune` and `apr pretrain --init` share. `apr distill` calls refuse_unmodelled_apr on teacher and student before any read"
+  prediction: "`apr finetune <qwen35.apr> -m qlora` and `apr distill --student <qwen35.apr>` exit non-zero, the error contains \"UnsupportedArch\", the arch as given, and \"Gated DeltaNet\"; no training step runs. Two tests measure it: a spelling case table in aprender-train, and in apr-cli a qwen35 .apr fixture through resolve_transformer_config, the resolver `apr finetune` and `apr pretrain --init` share. `apr distill` calls refuse_unmodelled_apr on teacher and student before any read, and `apr distill --config --stage train` (which returns before that call) refuses both via refuse_unmodelled_model_path; a pacha `<stem>.config.json` beside non-APR weights is checked like `config.json`"
   test: 'cargo test -p aprender-train --lib falsify_tah_001 && cargo test -p apr-cli --lib falsify_tah_001'
   if_fails: the hybrid arch was coerced to a dense family (pretrain_real.rs alias or config.rs preset) and would train the wrong network
 - id: FALSIFY-TAH-002

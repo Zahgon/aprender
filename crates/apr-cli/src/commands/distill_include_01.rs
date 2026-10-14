@@ -625,6 +625,51 @@ mod tests {
             "FALSIFY-APR-DISTILL-TRAIN-011: remote student entered real pipeline; should fall through to stub");
     }
 
+    /// ALB-111: the prompt char cap is exclusive (a prompt AT the cap is kept),
+    /// in both output modes.
+    #[test]
+    fn prompt_too_long_is_strictly_over_the_cap() {
+        for json in [false, true] {
+            assert!(!super::prompt_too_long("abcd", 4, 0, json));
+            assert!(super::prompt_too_long("abcde", 4, 0, json));
+        }
+    }
+
+    /// #4552 train-arch-honesty-v1: `apr distill --config --stage train`
+    /// returns before `run`'s refusal, so the config path refuses a qwen3.5
+    /// teacher or student by name itself, before the real pipeline reads a weight.
+    #[cfg(feature = "training")]
+    #[test]
+    fn falsify_tah_001_distill_config_train_refuses_qwen35() {
+        use std::fs;
+        let workdir = tempfile::tempdir().expect("create tempdir");
+        let hybrid = workdir.path().join("hybrid");
+        fs::create_dir_all(&hybrid).expect("create hybrid");
+        fs::write(hybrid.join("config.json"), r#"{"model_type":"qwen3_5"}"#)
+            .expect("write config.json");
+        let dense = workdir.path().join("student.safetensors");
+        fs::write(&dense, b"never read").expect("write student");
+        let dataset = workdir.path().join("dataset.bin");
+        fs::write(&dataset, b"d").expect("write dataset");
+
+        for (teacher, student) in [(&hybrid, &dense), (&dense, &hybrid)] {
+            let yaml = format!(
+                "teacher:\n  model_id: {t}\nstudent:\n  model_id: {s}\ndataset:\n  path: {ds}\noutput:\n  dir: {out}\n",
+                t = teacher.display(),
+                s = student.display(),
+                ds = dataset.display(),
+                out = workdir.path().join("out").display()
+            );
+            let cfg_path = workdir.path().join("cfg.yaml");
+            fs::write(&cfg_path, yaml).expect("write cfg");
+            let cfg = DistillYamlConfig::load(&cfg_path).expect("load cfg");
+            let msg = super::run_config_train_real(&cfg, &cfg_path, true)
+                .expect_err("qwen3.5 must be refused")
+                .to_string();
+            assert!(msg.contains("UnsupportedArch"), "{msg}");
+        }
+    }
+
     /// FALSIFY-APR-DISTILL-TRAIN-001 (§35 real-pipeline discharge):
     /// after `apr distill --stage train` on local SafeTensors teacher+student,
     /// the saved student tensors MUST differ from the input student by at

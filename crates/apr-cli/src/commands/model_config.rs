@@ -67,6 +67,22 @@ pub(crate) fn refuse_unmodelled_apr(path: &Path) -> Result<()> {
     })
 }
 
+/// #4552: the refusal for any local model path a training verb is handed: an
+/// `.apr` header, a file's sibling `config.json` / `<stem>.config.json`, or a
+/// model directory's `config.json`. A path that does not exist (a remote id)
+/// passes; the verb reports it.
+pub(crate) fn refuse_unmodelled_model_path(path: &Path) -> Result<()> {
+    if path.is_file() {
+        refuse_unmodelled_apr(path)?;
+        for candidate in sibling_config_candidates(path) {
+            refuse_unmodelled_hf_config(&candidate)?;
+        }
+    } else if path.is_dir() {
+        refuse_unmodelled_hf_config(&path.join("config.json"))?;
+    }
+    Ok(())
+}
+
 /// #4552: `Err` naming the missing layer kind if aprender-train does not model
 /// `arch`. `None` (no claim) passes; the other resolvers report it.
 pub(crate) fn refuse_unmodelled_arch(arch: Option<&str>) -> Result<()> {
@@ -139,8 +155,10 @@ pub(crate) fn resolve_transformer_config(
         if let Some(config) = read_apr_architecture(path)? {
             return Ok(config);
         }
-        if let Some(dir) = path.parent() {
-            refuse_unmodelled_hf_config(&dir.join("config.json"))?;
+        // #4552: every config.json the sibling read below may use, the pacha
+        // `<stem>.config.json` included, is checked first.
+        for candidate in sibling_config_candidates(path) {
+            refuse_unmodelled_hf_config(&candidate)?;
         }
         // Attempt 2: a .safetensors / .gguf checkout ships its architecture in
         // a sibling config.json. Before #2417 this was only consulted when the
@@ -549,6 +567,29 @@ mod arch_resolution_tests {
                 "{json}"
             );
         }
+    }
+
+    /// #4552: a pacha-cache `<stem>.config.json` beside a non-APR weight file is
+    /// the config the sibling read uses, so a qwen3.5 claim there is refused
+    /// too, and a dense one still resolves.
+    #[test]
+    fn falsify_tah_001_stem_config_json_beside_weights_is_refused() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let weights = dir.path().join("abc123.safetensors");
+        std::fs::write(&weights, b"not apr").expect("write weights");
+        let cfg = dir.path().join("abc123.config.json");
+        std::fs::write(&cfg, r#"{"model_type":"qwen3_5"}"#).expect("write cfg");
+        let msg = resolve_transformer_config(Some(&weights), None)
+            .expect_err("stem config qwen3.5")
+            .to_string();
+        assert!(msg.contains("UnsupportedArch"), "{msg}");
+        assert!(refuse_unmodelled_model_path(&weights).is_err());
+
+        std::fs::write(&cfg, r#"{"model_type":"qwen2","hidden_size":64,"num_attention_heads":4,"num_key_value_heads":2,"intermediate_size":128,"num_hidden_layers":2,"vocab_size":256}"#)
+            .expect("write cfg");
+        assert!(refuse_unmodelled_model_path(&weights).is_ok());
+        assert!(refuse_unmodelled_model_path(dir.path()).is_ok());
+        assert!(refuse_unmodelled_model_path(&dir.path().join("absent")).is_ok());
     }
 }
 
