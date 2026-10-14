@@ -1,0 +1,18 @@
+- id: PMAT-5317
+  github_issue: 5317
+  item_type: task
+  title: '#5317 row #3574: qwen3.5-9b CUDA parity receipt at 0.71.3'
+  status: planned
+  priority: high
+  assigned_to: null
+  created: 2026-10-14T13:58:35Z
+  updated: 2026-10-14T13:58:35Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 4381
