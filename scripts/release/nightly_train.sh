@@ -137,11 +137,13 @@ caller_error() { printf 'NOT RELEASABLE: nightly-train, caller error: %s\n' "$*"
 # evaluate LANESFILE RAW MODE -> MODE=cand: run ids of green verdict candidates; MODE=final: lanes.tsv rows and
 #   RAW/hist_redage.tsv. RAW holds C, read, runs.tsv, attempts.tsv.
 evaluate() {
-    local c rd
+    local c rd ir
     c="$(cat "$2/C" 2>/dev/null)"; rd="$(cat "$2/read" 2>/dev/null)"
+    # --in-run: the run of the rehearsal itself, still running while it is judged (#5118)
+    ir="$(head -n 1 "$2/inrun.run" 2>/dev/null | cut -f 1)"
     [ -f "$2/attempts.tsv" ] || : > "$2/attempts.tsv"
     [ -f "$2/runs.tsv" ] || : > "$2/runs.tsv"
-    awk -F '\t' -v OFS='\t' -v C="$c" -v RD="${rd:-failed: no read status}" -v MODE="$3" -v HIST="$2/hist_redage.tsv" '
+    awk -F '\t' -v OFS='\t' -v C="$c" -v RD="${rd:-failed: no read status}" -v MODE="$3" -v HIST="$2/hist_redage.tsv" -v IR="$ir" '
     FILENAME == ARGV[1] { split($0, a, ";"); n++; L[n] = a[1]; K[n] = a[2]; CK[n] = a[3]; WF[n] = a[4]; EV[n] = a[5]; RE[n] = a[6]; NEED[n] = (a[7] ~ /^[0-9]+$/ ? a[7] + 0 : 1); next }
     FILENAME == ARGV[2] { AT[$1] = $2; next }
     {
@@ -175,7 +177,11 @@ evaluate() {
         if (pend != "") { WHY = "run " r ": job(s) still running:" pend; return "pending" }
         if (bad != "") { WHY = "run " r ":" bad; return "red" }
         if (tot < NEED[i]) { WHY = "run " r ": " tot " of " NEED[i] " required job(s) present"; return "void" }
-        if (ok == tot) return "green"
+        # #5118: green needs the run itself green too. Its matched jobs can all succeed while an unmatched job, a later
+        #   step or the workflow failed the run. The --in-run run is the exception: it is still running, and its
+        #   conclusion is made up from the lane jobs, which the loops above already judged one by one
+        if (ok == tot && (RCO[r] == "SUCCESS" || (IR != "" && r == IR))) return "green"
+        if (ok == tot) { WHY = "run " r ": its matched job(s) succeeded but the run concluded " (RCO[r] == "" ? "nothing" : tolower(RCO[r])); return (RCO[r] ~ /^(FAILURE|TIMED_OUT|STARTUP_FAILURE)$/ ? "red" : "void") }
         WHY = "run " r ": matched job(s) skipped or cancelled"; return "void"
     }
     function out(i, state, r, att, why) {
@@ -859,6 +865,11 @@ self_test() {
     row all_verdict_lanes_green_is_releasable 0 "RELEASABLE H=$ST_C" "NOT RELEASABLE" -- st_decide "$d"
     d="$tmp/removed"; fixture "$d"; sed -i '/\t201\t/d' "$d/runs.tsv"
     row one_lane_removed_names_it 0 "NOT RELEASABLE: v-b, not_measured" "RELEASABLE H=" -- st_decide "$d"
+    # #5118: every matched job green, the run itself not: the lane is not green
+    d="$tmp/runfail"; fixture "$d"; sed -i "/\t201\t/s/\tCOMPLETED\tSUCCESS\tx\t/\tCOMPLETED\tFAILURE\tx\t/" "$d/runs.tsv"
+    row run_failed_over_green_jobs_is_red 0 "run 201: its matched job(s) succeeded but the run concluded failure" "RELEASABLE H=" -- st_decide "$d"
+    d="$tmp/runcancel"; fixture "$d"; sed -i "/\t201\t/s/\tCOMPLETED\tSUCCESS\tx\t/\tCOMPLETED\tCANCELLED\tx\t/" "$d/runs.tsv"
+    row run_cancelled_over_green_jobs_is_not_green 0 "the run concluded cancelled" "RELEASABLE H=" -- st_decide "$d"
     d="$tmp/other"; fixture "$d"; sed -i "/\t101\t/s/$ST_C/$ST_X/" "$d/runs.tsv"
     row run_on_another_commit_is_not_measured 0 "newest run 101 on bbbbbbbbbb" "RELEASABLE H=" -- st_decide "$d"
     d="$tmp/running"; fixture "$d"; sed -i '/\t101\t/s/\tCOMPLETED\tSUCCESS\tjob-a/\tIN_PROGRESS\t\tjob-a/' "$d/runs.tsv"
@@ -1458,6 +1469,8 @@ m87_any_event_is_a_night	s/select((.event == "schedule" or .event == "workflow_d
 m110_dispatched_night_dropped	s/select((.event == "schedule" or .event == "workflow_dispatch") and /select(.event == "schedule" and /
 m111_lanes_schedule_only	/^dogfood;lab;/s/;\^(schedule|workflow_dispatch)\$;/;^schedule$;/
 m112_lanes_run_pick_schedule_only	s/(\$4 == "schedule" || \$4 == "workflow_dispatch") \&\& \$7 > t/\$4 == "schedule" \&\& \$7 > t/
+m113_run_conclusion_ignored	s/(RCO\[r\] == "SUCCESS" || (IR != "" \&\& r == IR))/1/
+m114_inrun_conclusion_judged	s/ || (IR != "" \&\& r == IR)//
 m88_running_night_counts	s/elif \$r.status != "completed" then/elif false then/
 m89_stale_night_counts	s/>= 86400 then/>= 864000000 then/
 m90_setup_fault_unprinted	s/(pwhy == "" \&\& other != "" ? "setup fault: /(0 ? "setup fault: /
