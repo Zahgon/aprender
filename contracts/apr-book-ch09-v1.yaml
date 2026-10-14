@@ -37,3 +37,15 @@ falsification:
   - condition: "assert!() failure in example"
     severity: P0
     action: reject_chapter
+
+falsification_tests:
+  - id: FALSIFY-BOOK-CH09-001
+    rule: "The chapter example runs to completion and every assert! in it holds"
+    prediction: "cargo run -p aprender-core --example ch09_inference exits 0; any failing assert! panics and the run exits non-zero"
+    test: "cargo run -p aprender-core --example ch09_inference"
+    if_fails: "The chapter's code no longer runs as printed, or one of the results it asserts is wrong"
+  - id: FALSIFY-BOOK-CH09-002
+    rule: "The chapter example imports no pre-monorepo crate name"
+    prediction: "namespace_discipline_in_examples passes: ch09_inference.rs has no 'use <legacy>::', '<legacy> =' or 'cargo install <legacy>' for trueno, realizar, entrenar, batuta, presentar or renacer. It scans the example source, not the chapter prose"
+    test: "cargo test -p aprender-core --test book_contracts namespace_discipline_in_examples"
+    if_fails: "The chapter example teaches a crate name that no longer exists as a published dependency"

@@ -103,3 +103,20 @@ verification:
   local: "mdbook build book 2>&1 | grep -c ERROR | grep -q '^0$'"
   ci: ".github/workflows/book.yml build job succeeds"
   script: "scripts/check_book_build.sh"
+
+falsification_tests:
+  - id: FALSIFY-BOOK-BUILD-001
+    rule: "The book builds with the pinned mdbook"
+    prediction: "mdbook build book exits 0. With create-missing = true in book.toml a SUMMARY.md entry with no file is created rather than refused, so this test does not cover that condition"
+    test: "mdbook build book"
+    if_fails: "The published book cannot be rebuilt from the tree"
+  - id: FALSIFY-BOOK-BUILD-002
+    rule: "No page links to a file that does not exist"
+    prediction: "scripts/check_book_linkcheck.sh counts zero 'File not found:' lines from mdbook-linkcheck --standalone and prints FALSIFY-BOOK-LINKCHECK-001: PASS"
+    test: "bash scripts/check_book_linkcheck.sh"
+    if_fails: "A reader following a link in the book reaches a missing page"
+  - id: FALSIFY-BOOK-BUILD-003
+    rule: "The workflow that publishes the book exists"
+    prediction: ".github/workflows/book.yml is present, so test -f exits 0"
+    test: "test -f .github/workflows/book.yml"
+    if_fails: "Book changes merge but are never built or published"
