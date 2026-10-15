@@ -122,15 +122,20 @@ impl Drop for Fx {
     }
 }
 
-fn measured(mode: &str, set: impl FnOnce(&mut Measure)) -> (Result<String, (u8, String)>, Fx) {
-    let fx = Fx::new(&format!("measure-{mode}"), mode);
+/// `name` is the fixture dir: tests run in parallel, so no two may share one.
+fn measured(
+    name: &str,
+    mode: &str,
+    set: impl FnOnce(&mut Measure),
+) -> (Result<String, (u8, String)>, Fx) {
+    let fx = Fx::new(name, mode);
     let mut a = fx.measure("ladder.yaml", "rungs.json");
     set(&mut a);
     (run(&Sub::Measure(a)), fx)
 }
 
 fn same_as_original(mode: &str, pass: usize, refused: usize) {
-    let (got, fx) = measured(mode, |_| {});
+    let (got, fx) = measured(&format!("measure-{mode}"), mode, |_| {});
     assert_eq!(
         got,
         Ok(format!(
@@ -178,21 +183,25 @@ fn measure_codenull() {
 
 #[test]
 fn measure_off_budget_leaves_room() {
-    let (got, fx) = measured("good", |a| a.max_tokens_thinking = 30_000);
+    let (got, fx) = measured("measure-think", "good", |a| a.max_tokens_thinking = 30_000);
     assert_eq!(got, Ok("cells: 16 row(s), 16 pass, 0 refused\n".to_owned()));
     assert_eq!(fx.out(), golden("measure-think.json"));
 }
 
 #[test]
 fn measure_only_the_inventory_model() {
-    let (got, fx) = measured("good", |a| a.only = Some("inv:m.gguf".to_owned()));
+    let (got, fx) = measured("measure-only-inv", "good", |a| {
+        a.only = Some("inv:m.gguf".to_owned())
+    });
     assert_eq!(got, Ok("cells: 16 row(s), 16 pass, 0 refused\n".to_owned()));
     assert_eq!(fx.out(), golden("measure-good.json"));
 }
 
 #[test]
 fn measure_only_a_rung_id_refuses() {
-    let (got, fx) = measured("good", |a| a.only = Some("4k".to_owned()));
+    let (got, fx) = measured("measure-only-4k", "good", |a| {
+        a.only = Some("4k".to_owned())
+    });
     let why =
         "cells: refused -- --only '4k' names no inventory model; cells are measured per model";
     assert_eq!(got, Err((2, why.to_owned())));
