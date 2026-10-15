@@ -131,7 +131,7 @@ equations:
     lean_theorem: Theorems.Serve_Seed_Determinism
     notes: Measured 2026-10-15 on lambda, qwen2.5-coder-0.5b Q4_K_M, 8 request pairs over /v1/chat/completions
       at greedy and temperature 0.8 with seed 42, up to 96 tokens; every pair was byte-identical on CPU and
-      on the RTX 4090. A body with no backend resident (the legacy demo model) says backend_unreported.
+      on the RTX 4090. On intel (x86_64 CPU, qwen2.5-1.5b Q4_K_M, 4 pairs) every pair was byte-identical too. A body with no backend resident (the legacy demo model) says backend_unreported.
 proof_obligations:
 - id: RESP-INV-001
   type: invariant
