@@ -472,7 +472,7 @@ jobs:
           # SHARDS is the matrix length above; every shard 1..SHARDS must have
           # staged its tier and role files, so a dropped shard is RED here.
           SHARDS=10
-          tiers="" j=() l=() libparts="" integparts=""
+          tiers="" j=() l=() libparts="" integparts="" libuniv=""
           for n in $(seq 1 "$SHARDS"); do
             s="$d/sigma-shard-$n"
             [ -f "$s/tier" ] || { echo "::error::Σ: shard $n staged no tier file"; exit 1; }
@@ -481,7 +481,8 @@ jobs:
             read -r role part parts < "$s/role"
             echo "shard $n: role=$role part=$part/$parts tier=$(cat "$s/tier")"
             case "$role" in
-              lib) j+=(--junit "$s/lib.junit.xml"); libparts="$libparts $part/$parts" ;;
+              lib) j+=(--junit "$s/lib.junit.xml"); libparts="$libparts $part/$parts"
+                   if [ "$part" = 1 ]; then libuniv="$s/lib.list.json"; fi ;;
               integ) l+=(--log "$s/section.log"); integparts="$integparts $part/$parts" ;;
             esac
           done
@@ -503,8 +504,12 @@ jobs:
             exp=$(seq 1 "${p:-0}" | sed "s|\$|/${p:-0}|" | tr '\n' ' ')
             [ -n "$p" ] && [ "$got" = "$exp" ] || { echo "::error::Σ: role $r parts are '$got', want '$exp'"; exit 1; }
           done
+          # The lib universe is listed by lib part 1, on the build it already
+          # made; listing it on shard 1 compiled every lib test binary a
+          # second time (7m26s of extras).
+          [ -f "$libuniv" ] || { echo "::error::Σ: lib part 1 staged no lib.list.json"; exit 1; }
           rc=0
-          python3 scripts/ci/sigma_executed.py nextest --kind "nextest lib ($(( ${#j[@]} / 2 )) lib shards)" "${j[@]}" --list-json "$d/sigma-shard-1/lib.list.json" || rc=1
+          python3 scripts/ci/sigma_executed.py nextest --kind "nextest lib ($(( ${#j[@]} / 2 )) lib shards)" "${j[@]}" --list-json "$libuniv" || rc=1
           python3 scripts/ci/sigma_executed.py explicit --kind "explicit ($(( ${#l[@]} / 2 )) integ shards)" "${l[@]}" --step "Integration tests" --list "$d/sigma-shard-1/explicit.list.txt" || rc=1
           exit "$rc"
 

@@ -103,10 +103,19 @@ parse() {
     printf '%s\n' "${cmds[@]}"
 }
 
+# is_release CMD -- rc 0 when CMD passes --release as a word.
+is_release() {
+    case " $1 " in
+        *" --release "*) return 0 ;;
+    esac
+    return 1
+}
+
 # run DIR [N/M] -- runs the commands in order; with N/M only every M-th command
 # starting at the N-th (round-robin over the sorted list), so M shards cover the
-# list exactly once between them (PACK-001). N and M are validated; a shard that
-# selects zero commands is a refusal, not a pass.
+# list exactly once between them (PACK-001). The --release commands are the
+# exception: they are shard M alone (see below). N and M are validated; a shard
+# that selects zero commands is a refusal, not a pass.
 run() {
     local dir=$1 shard=${2:-1/1} ff=${3:-0} out cmd i=0 total rc n m k=0 sel=0 failed=0 first_fail=""
     local -a cmds
@@ -125,8 +134,21 @@ run() {
     fi
     if [ "$m" -gt 1 ]; then
         local -a mine=()
+        # A --release command builds its own profile from cold: measured 10m22s
+        # of compile on its own, it made its round-robin shard the long pole
+        # (30 min). So the --release commands, when there are any, are the last
+        # shard alone, and the rest round-robin over shards 1..M-1.
+        local rr="$m" solo=0
         for cmd in "${cmds[@]}"; do
-            k=$((k + 1)); sel=$(( (k - 1) % m + 1 ))
+            if is_release "$cmd"; then solo=1; fi
+        done
+        if [ "$solo" -eq 1 ]; then rr=$((m - 1)); fi
+        for cmd in "${cmds[@]}"; do
+            if [ "$solo" -eq 1 ] && is_release "$cmd"; then
+                sel="$m"
+            else
+                k=$((k + 1)); sel=$(( (k - 1) % rr + 1 ))
+            fi
             if [ "$sel" -eq "$n" ]; then mine+=("$cmd"); fi
         done
         if [ "${#mine[@]}" -eq 0 ]; then

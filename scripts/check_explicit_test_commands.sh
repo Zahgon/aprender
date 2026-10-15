@@ -175,6 +175,17 @@ self_test() {
         test "$(bash "$R" --run "$td/p" --shard 1/2 2>/dev/null | grep -E '^(b|c)$' | tr -d '\n')" = "c"
     fact "  ...and 2/2 ran [echo b] (its output lines are exactly: b) -- a command is on ONE shard" \
         test "$(bash "$R" --run "$td/p" --shard 2/2 2>/dev/null | grep -E '^(b|c)$' | tr -d '\n')" = "b"
+    # --release commands are shard M alone; the rest round-robin over 1..M-1.
+    # `--release-notes` is not --release (word match, must-not-match row).
+    frags "$td/rel" '010-a.cmd=echo a\n' '020-r.cmd=echo r --release\n' '030-b.cmd=echo b --release-notes\n' '040-c.cmd=echo c\n'
+    fact "--release: 1/3 ran [a, c]" \
+        test "$(bash "$R" --run "$td/rel" --shard 1/3 2>/dev/null | grep -E '^(a|r|b|c)( |$)' | cut -c1 | tr -d '\n')" = "ac"
+    fact "--release: 2/3 ran [b] (--release-notes is not --release)" \
+        test "$(bash "$R" --run "$td/rel" --shard 2/3 2>/dev/null | grep -E '^(a|r|b|c)( |$)' | cut -c1 | tr -d '\n')" = "b"
+    fact "--release: 3/3 ran [r] alone" \
+        test "$(bash "$R" --run "$td/rel" --shard 3/3 2>/dev/null | grep -E '^(a|r|b|c)( |$)' | cut -c1 | tr -d '\n')" = "r"
+    fact "no --release command: plain round-robin (1/2 of the p fixture is still [true, echo c])" \
+        test "$(bash "$R" --run "$td/p" --shard 1/2 2>/dev/null | grep -E '^(b|c)$' | tr -d '\n')" = "c"
     row 2 "REFUSE --shard with N > M" 'N exceeds M' bash "$R" --run "$td/p" --shard 3/2
     row 2 "REFUSE a shard that selects zero commands (more shards than commands)" 'selects 0 of 3' bash "$R" --run "$td/p" --shard 4/4
     row 2 "REFUSE a malformed --shard" 'must look like N/M' bash "$R" --run "$td/p" --shard x
