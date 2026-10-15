@@ -180,7 +180,9 @@ pub fn thinking_evidence(tmpl: &str) -> (Vec<&'static str>, bool) {
 /// Python's `a // b` (floor division); `None` on a zero divisor or an overflow.
 fn floordiv(a: i128, b: i128) -> Option<i128> {
     let q = a.checked_div(b)?;
-    if a % b != 0 && ((a < 0) != (b < 0)) {
+    // Rust's remainder takes the dividend's sign; Python rounds down where it and b's differ.
+    let r = a % b;
+    if r != 0 && r.signum() != b.signum() {
         q.checked_sub(1)
     } else {
         Some(q)
@@ -293,15 +295,17 @@ pub fn inventory_terms(inspect: &Py, file_bytes: Py) -> Result<Py, String> {
     ]))
 }
 
-fn nvidia_smi() -> Option<(i128, i128)> {
-    let argv: Vec<String> = [
-        "nvidia-smi",
-        "--query-gpu=memory.total,memory.free",
-        "--format=csv,noheader,nounits",
-    ]
-    .iter()
-    .map(|s| (*s).to_owned())
-    .collect();
+/// The original's nvidia-smi query.
+const NVIDIA_SMI: [&str; 3] = [
+    "nvidia-smi",
+    "--query-gpu=memory.total,memory.free",
+    "--format=csv,noheader,nounits",
+];
+
+/// `(total, free)` bytes from the first line of `argv`'s `total, free` MiB output; `None`
+/// where it cannot run or prints anything else (`[N/A]` on a unified-memory GPU).
+fn gpu_mem(argv: &[&str]) -> Option<(i128, i128)> {
+    let argv: Vec<String> = argv.iter().map(|s| (*s).to_owned()).collect();
     let ran = run_with_timeout(&argv, None, 30).ok()?;
     let first = py_splitlines(&ran.stdout).first().copied()?.to_owned();
     let parts: Vec<&str> = first.split(',').collect();
@@ -346,7 +350,7 @@ pub fn meminfo(text: &str) -> Result<(Option<i128>, Option<i128>), String> {
 /// `-> (total_bytes, free_bytes)`: a discrete GPU per nvidia-smi; a unified-memory GPU
 /// (where nvidia-smi says [N/A]) per /proc/meminfo.
 fn gpu_memory() -> Result<(Option<i128>, Option<i128>), String> {
-    if let Some((t, f)) = nvidia_smi() {
+    if let Some((t, f)) = gpu_mem(&NVIDIA_SMI) {
         return Ok((Some(t), Some(f)));
     }
     let Ok(b) = std::fs::read("/proc/meminfo") else {
@@ -1400,9 +1404,57 @@ mod tests {
         );
         let partial = j(r#"{"q.block_count": 28}"#);
         assert_eq!(kv_bytes_per_token_f32(&partial, &Py::str("q")), Ok(None));
-        assert_eq!(floordiv(-7, 2), Some(-4));
-        assert_eq!(floordiv(7, -2), Some(-4));
-        assert_eq!(floordiv(6, 3), Some(2));
+        // A nonzero key_length wins over emb // heads; a zero value_length or interval is absent.
+        let own = j(r#"{"k.block_count": 2, "k.attention.head_count_kv": 1,
+                       "k.attention.key_length": 64, "k.attention.value_length": 0,
+                       "k.attention.head_count": 4, "k.embedding_length": 1024,
+                       "k.full_attention_interval": 0}"#);
+        assert_eq!(kv_bytes_per_token_f32(&own, &Py::str("k")), Ok(Some(1024)));
+        for (emb, heads) in [(1024, 0), (0, 4)] {
+            let md = j(&format!(
+                r#"{{"k.block_count": 2, "k.attention.head_count_kv": 1,
+                    "k.attention.head_count": {heads}, "k.embedding_length": {emb}}}"#
+            ));
+            let got = kv_bytes_per_token_f32(&md, &Py::str("k"));
+            assert_eq!(got, Ok(None), "emb {emb}, heads {heads}");
+        }
+        let huge = j(r#"{"k.block_count": "100000000000000000000",
+                        "k.attention.head_count_kv": "100000000000000000000",
+                        "k.attention.key_length": 1}"#);
+        assert_eq!(
+            kv_bytes_per_token_f32(&huge, &Py::str("k")),
+            Err("OverflowError: a kv-cache term exceeds 128 bits".to_owned())
+        );
+    }
+
+    #[test]
+    fn floordiv_rounds_down_as_python_does() {
+        let cases = [
+            (7, 2, 3),
+            (-7, 2, -4),
+            (7, -2, -4),
+            (-7, -2, 3),
+            (6, 3, 2),
+            (6, -3, -2),
+            (-6, 3, -2),
+            (0, -3, 0),
+            (-1, 5, -1),
+        ];
+        for (a, b, q) in cases {
+            assert_eq!(floordiv(a, b), Some(q), "{a} // {b}");
+        }
+        assert_eq!(floordiv(1, 0), None);
+        assert_eq!(floordiv(i128::MIN, -1), None);
+    }
+
+    #[test]
+    fn gpu_mem_reads_the_first_line_in_mib() {
+        let first = gpu_mem(&["sh", "-c", "echo '24564, 1000'; echo '1, 2'"]);
+        assert_eq!(first, Some((24_564 * MIB, 1_000 * MIB)));
+        assert_eq!(gpu_mem(&["sh", "-c", "echo '[N/A], [N/A]'"]), None);
+        assert_eq!(gpu_mem(&["sh", "-c", "echo 1, 2, 3"]), None);
+        assert_eq!(gpu_mem(&["sh", "-c", "true"]), None);
+        assert_eq!(gpu_mem(&["/nonexistent/nvidia-smi-5225"]), None);
     }
 
     #[test]
@@ -1697,6 +1749,7 @@ mod tests {
         assert_eq!(py_float_arg("1_0.5"), Ok(10.5));
         assert!(py_float_arg("1__0").is_err());
         assert!(py_float_arg("_1").is_err());
+        assert!(py_float_arg("1_").is_err());
         assert!(py_float_arg("nan").is_ok_and(f64::is_nan));
         let r = Runner {
             apr: "apr",

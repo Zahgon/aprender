@@ -38,12 +38,17 @@ fn deadline(d: Duration) -> Instant {
         .unwrap_or(now)
 }
 
+/// The time left before `until`; zero once it has passed.
+fn left(until: Instant) -> Duration {
+    until.saturating_duration_since(Instant::now())
+}
+
 /// Poll `child` until it exits or `until` passes.
 fn wait_until(child: &mut Child, until: Instant) -> Option<ExitStatus> {
     loop {
         match child.try_wait() {
             Ok(Some(status)) => return Some(status),
-            Ok(None) if Instant::now() < until => std::thread::sleep(Duration::from_millis(20)),
+            Ok(None) if !left(until).is_zero() => std::thread::sleep(Duration::from_millis(20)),
             Ok(None) | Err(_) => return None,
         }
     }
@@ -92,21 +97,18 @@ pub fn run_with_timeout(
         });
     }
     let (tx, rx) = mpsc::channel();
-    let mut pending = 0;
     if let Some(p) = child.stdout.take() {
         spawn_reader(p, false, tx.clone());
-        pending += 1;
     }
     if let Some(p) = child.stderr.take() {
         spawn_reader(p, true, tx.clone());
-        pending += 1;
     }
     drop(tx);
+    // Each reader sends once and drops its sender: Disconnected means both pipes are read.
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let mut timed_out = false;
-    while pending > 0 {
-        let left = until.saturating_duration_since(Instant::now());
-        match rx.recv_timeout(left) {
+    loop {
+        match rx.recv_timeout(left(until)) {
             Ok((true, buf)) => err = buf,
             Ok((false, buf)) => out = buf,
             Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -115,7 +117,6 @@ pub fn run_with_timeout(
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
-        pending -= 1;
     }
     let status = if timed_out {
         None
@@ -169,8 +170,8 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 /// Read once more into `buf`; `false` at end of stream.
-fn read_more(s: &mut TcpStream, buf: &mut Vec<u8>) -> std::io::Result<bool> {
-    let mut chunk = [0u8; 16 * 1024];
+fn read_more<R: Read>(s: &mut R, buf: &mut Vec<u8>) -> std::io::Result<bool> {
+    let mut chunk = [0u8; 16_384];
     loop {
         match s.read(&mut chunk) {
             Ok(n) => {
@@ -287,7 +288,7 @@ fn receive(mut s: TcpStream) -> std::io::Result<Resp> {
 }
 
 /// Reads until the blank line that ends the response head; returns its offset in `buf`.
-fn read_head(s: &mut TcpStream, buf: &mut Vec<u8>) -> std::io::Result<usize> {
+fn read_head<R: Read>(s: &mut R, buf: &mut Vec<u8>) -> std::io::Result<usize> {
     loop {
         if let Some(i) = find(buf, b"\r\n\r\n") {
             return Ok(i);
@@ -298,7 +299,7 @@ fn read_head(s: &mut TcpStream, buf: &mut Vec<u8>) -> std::io::Result<usize> {
     }
 }
 
-fn read_chunked(s: &mut TcpStream, mut raw: Vec<u8>) -> std::io::Result<Vec<u8>> {
+fn read_chunked<R: Read>(s: &mut R, mut raw: Vec<u8>) -> std::io::Result<Vec<u8>> {
     loop {
         if let Some(b) = dechunk(&raw) {
             return Ok(b);
@@ -309,7 +310,7 @@ fn read_chunked(s: &mut TcpStream, mut raw: Vec<u8>) -> std::io::Result<Vec<u8>>
     }
 }
 
-fn read_sized(s: &mut TcpStream, mut raw: Vec<u8>, n: usize) -> std::io::Result<Vec<u8>> {
+fn read_sized<R: Read>(s: &mut R, mut raw: Vec<u8>, n: usize) -> std::io::Result<Vec<u8>> {
     while raw.len() < n {
         if !read_more(s, &mut raw)? {
             return Err(invalid("IncompleteRead: body shorter than Content-Length"));
@@ -319,7 +320,7 @@ fn read_sized(s: &mut TcpStream, mut raw: Vec<u8>, n: usize) -> std::io::Result<
     Ok(raw)
 }
 
-fn read_to_close(s: &mut TcpStream, mut raw: Vec<u8>) -> std::io::Result<Vec<u8>> {
+fn read_to_close<R: Read>(s: &mut R, mut raw: Vec<u8>) -> std::io::Result<Vec<u8>> {
     while read_more(s, &mut raw)? {}
     Ok(raw)
 }
@@ -382,7 +383,7 @@ impl Serve {
 
     fn wait_up(&mut self, ceiling_s: i64) -> bool {
         let end = deadline(secs(ceiling_s));
-        while Instant::now() < end && self.alive() {
+        while !left(end).is_zero() && self.alive() {
             let ok = http(self.port, "GET", "/health", None, secs(2))
                 .is_ok_and(|r| (200..300).contains(&r.status));
             if ok {
@@ -399,18 +400,16 @@ impl Serve {
             .map_err(|(e, sending)| urllib_error(&e, sending))
     }
 
-    fn signal_group(&mut self, sig: &str) {
+    /// `kill -s SIG -- -PGID` on the recorded child's group; a failure is the KILL step's to
+    /// cover, which also kills the child itself.
+    fn signal_group(&self, sig: &str) {
         let group = format!("-{}", self.child.id());
-        let sent = Command::new("kill")
+        let _ = Command::new("kill")
             .args(["-s", sig, "--", &group])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success());
-        if !sent {
-            let _ = self.child.kill();
-        }
+            .status();
     }
 }
 
@@ -422,6 +421,7 @@ impl Drop for Serve {
         self.signal_group("TERM");
         if wait_until(&mut self.child, deadline(secs(20))).is_none() {
             self.signal_group("KILL");
+            let _ = self.child.kill();
             let _ = wait_until(&mut self.child, deadline(secs(10)));
         }
     }
@@ -471,22 +471,169 @@ mod tests {
         assert_eq!(dechunk(b"3\r\nab"), None);
     }
 
-    #[test]
-    fn http_reads_a_content_length_body() {
+    /// A listener on 127.0.0.1 that answers every request with `reply`, then closes.
+    fn server(reply: &'static [u8]) -> u16 {
         let l = TcpListener::bind(("127.0.0.1", 0)).expect("bind");
         let port = l.local_addr().expect("addr").port();
-        let server = std::thread::spawn(move || {
-            let (mut c, _) = l.accept().expect("accept");
-            let mut req = [0u8; 4096];
-            let _ = c.read(&mut req);
-            let _ = c.write_all(b"HTTP/1.0 503 Busy\r\nContent-Length: 4\r\n\r\nfull");
+        std::thread::spawn(move || {
+            for c in l.incoming() {
+                let Ok(mut c) = c else { continue };
+                let mut req = [0u8; 4096];
+                let _ = c.read(&mut req);
+                let _ = c.write_all(reply);
+            }
         });
-        let r = http(port, "POST", "/x", Some(b"{}"), secs(5)).expect("a response");
+        port
+    }
+
+    fn get(port: u16) -> Resp {
+        http(port, "POST", "/x", Some(b"{}"), secs(5)).expect("a response")
+    }
+
+    #[test]
+    fn http_reads_a_content_length_body() {
+        let port = server(b"HTTP/1.0 503 Busy\r\nContent-Length: 4\r\n\r\nfull");
         let want = Resp {
             status: 503,
             body: b"full".to_vec(),
         };
-        assert_eq!(r, want);
-        server.join().expect("server thread");
+        assert_eq!(get(port), want);
+    }
+
+    #[test]
+    fn http_finds_its_headers_by_name() {
+        let sized = server(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nX-A: b\r\n\r\nfull");
+        assert_eq!(get(sized).body, b"fu");
+        let chunked = server(
+            b"HTTP/1.1 200 OK\r\nX-A: b\r\nTransfer-Encoding: Chunked\r\n\r\n2\r\nhi\r\n0\r\n\r\n",
+        );
+        assert_eq!(get(chunked).body, b"hi");
+        let to_close = server(b"HTTP/1.1 201 Made\r\nX-A: b\r\n\r\nall of it");
+        assert_eq!(get(to_close).body, b"all of it");
+    }
+
+    #[test]
+    fn a_bad_status_line_is_refused() {
+        for head in ["HTTP/1.1 20 OK", "FTP/1.0 200 OK", "HTTP/1.1 2x0 OK"] {
+            assert!(parse_head(head).is_err(), "{head}");
+        }
+        let (status, headers) = parse_head("HTTP/1.1 200 OK\r\nX-A:  b \r\nnone").expect("ok");
+        assert_eq!(status, 200);
+        assert_eq!(headers, vec![("x-a".to_owned(), "b".to_owned())]);
+    }
+
+    /// A reader that plays back `reads` in order, then reports end of stream.
+    struct Script(Vec<std::io::Result<&'static [u8]>>);
+
+    impl Read for Script {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.0.is_empty() {
+                return Ok(0);
+            }
+            let b = self.0.remove(0)?;
+            buf[..b.len()].copy_from_slice(b);
+            Ok(b.len())
+        }
+    }
+
+    #[test]
+    fn read_more_retries_an_interrupt_only() {
+        let mut buf = Vec::new();
+        let mut s = Script(vec![Err(ErrorKind::Interrupted.into()), Ok(b"ab")]);
+        assert!(read_more(&mut s, &mut buf).expect("retried"));
+        assert_eq!(buf, b"ab");
+        assert!(!read_more(&mut s, &mut buf).expect("end of stream"));
+        let mut s = Script(vec![Err(ErrorKind::TimedOut.into())]);
+        assert!(read_more(&mut s, &mut buf).is_err());
+    }
+
+    #[test]
+    fn bodies_read_on_until_complete() {
+        let got = read_chunked(&mut &b"de\r\n0\r\n\r\n"[..], b"3\r\nabc\r\n2\r\n".to_vec());
+        assert_eq!(got.expect("whole"), b"abcde");
+        assert!(read_chunked(&mut &b""[..], b"3\r\nab".to_vec()).is_err());
+        let got = read_sized(&mut &b"cdef"[..], b"ab".to_vec(), 4);
+        assert_eq!(got.expect("sized"), b"abcd");
+        assert!(read_sized(&mut &b"c"[..], b"ab".to_vec(), 4).is_err());
+        let got = read_to_close(&mut &b"cd"[..], b"ab".to_vec());
+        assert_eq!(got.expect("to close"), b"abcd");
+        let mut buf = b"HTTP/1.1 200 OK\r\n".to_vec();
+        assert_eq!(
+            read_head(&mut &b"X: y\r\n\r\nz"[..], &mut buf).expect("head"),
+            21
+        );
+        assert!(read_head(&mut &b""[..], &mut b"HTTP".to_vec()).is_err());
+    }
+
+    #[test]
+    fn urllib_errors_read_as_python_prints_them() {
+        let timed_out = std::io::Error::from(ErrorKind::TimedOut);
+        assert_eq!(urllib_error(&timed_out, false), "timed out");
+        assert_eq!(urllib_error(&timed_out, true), "<urlopen error timed out>");
+        let refused = std::io::Error::from_raw_os_error(111);
+        assert_eq!(
+            urllib_error(&refused, true),
+            "<urlopen error [Errno 111] Connection refused>"
+        );
+        assert_eq!(
+            urllib_error(&invalid("BadStatusLine"), false),
+            "BadStatusLine"
+        );
+    }
+
+    #[test]
+    fn free_port_is_bindable() {
+        let p = free_port().expect("a port");
+        assert_ne!(p, 0);
+        TcpListener::bind(("127.0.0.1", p)).expect("free");
+    }
+
+    #[test]
+    fn a_huge_deadline_saturates_at_a_century() {
+        assert!(left(deadline(Duration::MAX)) > secs(99 * 365 * 86_400));
+        assert!(left(deadline(secs(5))) <= secs(5));
+    }
+
+    #[test]
+    fn wait_until_stops_at_exit_or_deadline() {
+        let mut slow = Command::new("sleep").arg("5").spawn().expect("sleep");
+        let t = Instant::now();
+        assert!(wait_until(&mut slow, Instant::now()).is_none());
+        assert!(t.elapsed() < secs(2));
+        let _ = slow.kill();
+        let _ = slow.wait();
+        let mut quick = Command::new("sleep").arg("0.2").spawn().expect("sleep");
+        assert!(wait_until(&mut quick, deadline(secs(5))).is_some());
+    }
+
+    fn gone(pid: u32) -> bool {
+        !std::path::Path::new(&format!("/proc/{pid}")).exists()
+    }
+
+    #[test]
+    fn serve_is_up_on_a_2xx_health_and_dies_with_its_group() {
+        let port = server(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+        let s = Serve::start(&argv(&["sleep", "30"]), port, 30).expect("starts");
+        assert!(s.up);
+        let pid = s.child.id();
+        let t = Instant::now();
+        drop(s);
+        assert!(t.elapsed() < secs(10), "TERM to the group ends it");
+        assert!(gone(pid), "reaped");
+    }
+
+    #[test]
+    fn serve_is_not_up_on_a_5xx_or_a_dead_child() {
+        let port = server(b"HTTP/1.1 500 No\r\nContent-Length: 0\r\n\r\n");
+        let t = Instant::now();
+        let s = Serve::start(&argv(&["sleep", "30"]), port, 1).expect("starts");
+        assert!(!s.up);
+        assert!(t.elapsed() < secs(10));
+        drop(s);
+        let t = Instant::now();
+        let port = free_port().expect("a port");
+        let s = Serve::start(&argv(&["true"]), port, 30).expect("starts");
+        assert!(!s.up);
+        assert!(t.elapsed() < secs(10), "a dead child is not waited on");
     }
 }

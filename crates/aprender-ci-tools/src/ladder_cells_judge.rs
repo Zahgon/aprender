@@ -284,6 +284,36 @@ mod tests {
     }
 
     #[test]
+    fn owes_long_by_family_or_representative() {
+        let item = j(r#"{"file": "m.gguf", "arch": "qwen2"}"#);
+        let owes = |long_for: &str| owes_long(&item, &j(long_for));
+        assert_eq!(
+            owes(r#"{"families": [], "representatives": {}}"#),
+            Ok(false)
+        );
+        assert_eq!(owes(r#"{"families": ["qwen2"]}"#), Ok(true));
+        assert_eq!(
+            owes(r#"{"representatives": {"qwen2": "m.gguf"}}"#),
+            Ok(true)
+        );
+        assert_eq!(
+            owes(r#"{"representatives": {"qwen2": "n.gguf"}}"#),
+            Ok(false)
+        );
+        let no_arch = j(r#"{"file": "m.gguf", "arch": null}"#);
+        assert_eq!(owes_long(&no_arch, &j("{}")), Ok(true));
+    }
+
+    #[test]
+    fn positive_int_counts_a_bool() {
+        assert_eq!(positive_int(&Py::Bool(true)), Some(1));
+        assert_eq!(positive_int(&Py::Bool(false)), None);
+        assert_eq!(positive_int(&Py::Int(3)), Some(3));
+        assert_eq!(positive_int(&Py::Int(0)), None);
+        assert_eq!(positive_int(&Py::str("3")), None);
+    }
+
+    #[test]
     fn load_rungs_names_each_fail() {
         let mut why = Vec::new();
         assert_eq!(load_rungs(&Py::None, &mut why), Ok((vec![], None, 1)));
@@ -318,6 +348,16 @@ mod tests {
         let c = j(r#"{"declaimed": [{"arch": "qwen3", "host": "u", "issue": 0}]}"#);
         let (dec, rc) = declaimed(&c, &hosts, &mut why).expect("declaimed");
         assert_eq!((dec.len(), rc), (0, 1));
+        let c = j(
+            r#"{"declaimed": [{"arch": "qwen3", "host": "t", "issue": true,
+                                      "until": "0.72", "why": "slow"}]}"#,
+        );
+        let (dec, rc) = declaimed(&c, &hosts, &mut Vec::new()).expect("declaimed");
+        assert_eq!(
+            (dec.len(), rc),
+            (1, 0),
+            "a bool issue is an int, as in Python"
+        );
         assert_eq!(
             why[0],
             "FAIL  cells.declaimed entry {'arch': 'qwen3', 'host': 'u', 'issue': 0} lacks \
