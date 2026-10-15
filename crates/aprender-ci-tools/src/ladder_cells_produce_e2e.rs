@@ -47,8 +47,10 @@ impl Fx {
         let fake =
             manifest().join("../../scripts/lib/model_ladder_cells_produce_cases/fake_apr.py");
         let apr = dir.join("apr");
+        // A test killed mid-run (a timeout, a mutant that hangs) never drops its Serve, and
+        // the serve has a process group of its own: `timeout` bounds such an orphan.
         let script = format!(
-            "#!/bin/sh\nFAKE_APR_MODE={mode} exec \"{}\" \"$@\"\n",
+            "#!/bin/sh\nFAKE_APR_MODE={mode} exec timeout -s KILL 120 \"{}\" \"$@\"\n",
             fake.display()
         );
         std::fs::write(&apr, script).expect("apr wrapper");
@@ -103,7 +105,7 @@ impl Fx {
             host: None,
             lock_wait: 1800,
             timeout: 60,
-            serve_ceiling: 30,
+            serve_ceiling: 10,
             max_tokens: 64,
             max_tokens_thinking: 1024,
             chars_per_token: 4.5,
