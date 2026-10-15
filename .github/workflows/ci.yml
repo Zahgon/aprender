@@ -399,15 +399,27 @@ jobs:
   # failure, never a pass.
   # ==========================================================================
   # The workspace tests, one shard per job, one role per shard (ci/sections.yml
-  # matrix-pins: extras, examples, 4 lib hash parts, 4 integ round-robin parts),
-  # in parallel on the X64 clean-room pool. The body is ci/sections.yml `workspace-test-shard`.
+  # matrix-pins: extras, examples, 2 libx + 2 liba hash parts, 4 integ round-robin parts),
+  # in parallel on the X64 and ARM64 clean-room pools. The body is ci/sections.yml `workspace-test-shard`.
   workspace-test-shard:
-    runs-on: [self-hosted, Linux, X64, clean-room]   # same pool as x86-main
+    # X64 clean-room pool (same as x86-main) for every role but liba, which runs
+    # on ARM64: ci/arch-divergent-lib-crates.txt names the crates X64 alone owes.
+    runs-on: ${{ fromJSON(matrix.runs_on) }}
     timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        include:
+          - {shard: 1, runs_on: "[self-hosted, Linux, X64, clean-room]"}
+          - {shard: 2, runs_on: "[self-hosted, Linux, X64, clean-room]"}
+          - {shard: 3, runs_on: "[self-hosted, Linux, X64, clean-room]"}
+          - {shard: 4, runs_on: "[self-hosted, Linux, X64, clean-room]"}
+          - {shard: 5, runs_on: "[self-hosted, Linux, ARM64, clean-room]"}
+          - {shard: 6, runs_on: "[self-hosted, Linux, ARM64, clean-room]"}
+          - {shard: 7, runs_on: "[self-hosted, Linux, X64, clean-room]"}
+          - {shard: 8, runs_on: "[self-hosted, Linux, X64, clean-room]"}
+          - {shard: 9, runs_on: "[self-hosted, Linux, X64, clean-room]"}
+          - {shard: 10, runs_on: "[self-hosted, Linux, X64, clean-room]"}
     outputs:
       results: ${{ steps.run.outputs.results }}
     env:
@@ -472,7 +484,7 @@ jobs:
           # SHARDS is the matrix length above; every shard 1..SHARDS must have
           # staged its tier and role files, so a dropped shard is RED here.
           SHARDS=10
-          tiers="" j=() l=() libparts="" integparts="" libuniv=""
+          tiers="" j=() l=() libxparts="" libaparts="" integparts="" libuniv="" armuniv=""
           for n in $(seq 1 "$SHARDS"); do
             s="$d/sigma-shard-$n"
             [ -f "$s/tier" ] || { echo "::error::Σ: shard $n staged no tier file"; exit 1; }
@@ -481,8 +493,10 @@ jobs:
             read -r role part parts < "$s/role"
             echo "shard $n: role=$role part=$part/$parts tier=$(cat "$s/tier")"
             case "$role" in
-              lib) j+=(--junit "$s/lib.junit.xml"); libparts="$libparts $part/$parts"
+              libx) j+=(--junit "$s/lib.junit.xml"); libxparts="$libxparts $part/$parts"
                    if [ "$part" = 1 ]; then libuniv="$s/lib.list.json"; fi ;;
+              liba) j+=(--junit "$s/lib.junit.xml"); libaparts="$libaparts $part/$parts"
+                   if [ "$part" = 1 ]; then armuniv="$s/lib.list.json"; fi ;;
               integ) l+=(--log "$s/section.log"); integparts="$integparts $part/$parts" ;;
             esac
           done
@@ -498,7 +512,7 @@ jobs:
           [ "$first" = full ] || { echo "every shard ran tier '$first': the lib/explicit Σ is not owed"; exit 0; }
           # Each role's parts are exactly 1..PARTS, once each. The id-level Σ
           # below would also catch a missing part, but this names it.
-          for want in lib:"$libparts" integ:"$integparts"; do
+          for want in libx:"$libxparts" liba:"$libaparts" integ:"$integparts"; do
             r=${want%%:*} got=$(printf '%s\n' ${want#*:} | sort -t/ -k1,1n | tr '\n' ' ')
             p=$(printf '%s\n' ${want#*:} | head -1 | cut -d/ -f2)
             exp=$(seq 1 "${p:-0}" | sed "s|\$|/${p:-0}|" | tr '\n' ' ')
@@ -507,8 +521,12 @@ jobs:
           # The lib universe is listed by lib part 1, on the build it already
           # made; listing it on shard 1 compiled every lib test binary a
           # second time (7m26s of extras).
-          [ -f "$libuniv" ] || { echo "::error::Σ: lib part 1 staged no lib.list.json"; exit 1; }
+          [ -f "$libuniv" ] || { echo "::error::Σ: libx part 1 staged no lib.list.json"; exit 1; }
+          [ -f "$armuniv" ] || { echo "::error::Σ: liba part 1 staged no lib.list.json"; exit 1; }
           rc=0
+          # liba runs every crate NOT in the divergent list on ARM64; that is only
+          # sound if those crates list identical ids on both arches. Prove it here.
+          python3 scripts/ci/sigma_executed.py arch-equal --x64-list "$libuniv" --arm-list "$armuniv" --divergent ci/arch-divergent-lib-crates.txt || rc=1
           python3 scripts/ci/sigma_executed.py nextest --kind "nextest lib ($(( ${#j[@]} / 2 )) lib shards)" "${j[@]}" --list-json "$libuniv" || rc=1
           python3 scripts/ci/sigma_executed.py explicit --kind "explicit ($(( ${#l[@]} / 2 )) integ shards)" "${l[@]}" --step "Integration tests" --list "$d/sigma-shard-1/explicit.list.txt" || rc=1
           exit "$rc"

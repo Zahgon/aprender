@@ -1,0 +1,14 @@
+# Workspace crates whose lib test set differs between X64 and ARM64 (cfg(target_arch)
+# tests: avx2 parity on X64, neon on ARM64). Measured at 1626bacfdb with
+# `cargo nextest list --workspace --lib` on both arches: 71 of 78 lib binaries list the
+# identical ids, these seven do not. They run on X64 only (workspace-test-shard role
+# `libx`); every other crate runs on ARM64 (role `liba`). The verdict job re-proves the
+# split on every run (scripts/ci/sigma_executed.py arch-equal), so a crate that grows an
+# arch-specific test fails there until it is added here.
+aprender-cgp
+aprender-contracts
+aprender-core
+aprender-orchestrate
+aprender-profile
+aprender-serve
+aprender-zram-core
