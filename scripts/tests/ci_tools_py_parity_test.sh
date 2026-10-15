@@ -39,7 +39,7 @@ set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT" || exit 1
 PY="${PYTHON:-python3}"
-EXPECTED_CASES=220
+EXPECTED_CASES=221
 
 BIN="${CI_TOOLS_BIN:-}"
 if [[ -z "$BIN" ]]; then
@@ -779,6 +779,7 @@ lcp "measure noneedle" noneedle -- "${MEA[@]}" --rungs "$RJ"
 lcp "measure noclose" noclose -- "${MEA[@]}" --rungs "$RJ"
 lcp "measure refuse" refuse -- "${MEA[@]}" --rungs "$RJ"
 lcp "measure undercount" undercount -- "${MEA[@]}" --rungs "$RJ"
+lcp "measure codenull (code reports a null backend, #4986)" codenull -- "${MEA[@]}" --rungs "$RJ"
 lcp "measure off budget leaves room" good -- "${MEA[@]}" --rungs "$RJ" --max-tokens-thinking 30000
 lcp "measure --only a rung id (refuses, 2)" good -- "${MEA[@]}" --rungs "$RJ" --only 4k
 lcp "measure --only inv:model" good -- "${MEA[@]}" --rungs "$RJ" --only inv:m.gguf
