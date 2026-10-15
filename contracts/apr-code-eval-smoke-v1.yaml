@@ -1,0 +1,96 @@
+# apr-code-eval-smoke-v1 — the SMOKE suite of the apr code eval ontology (APR-CODE-EVAL-001).
+#
+# Every nightly runs `smoke` first: eight hand-written tasks, two per kind, small enough to
+# validate in minutes. If the harness cannot validate them, or two seeded runs of them do
+# not agree, no model score that night means anything.
+metadata:
+  version: "1.0.0"
+  created: "2026-10-15"
+  author: PAIML Engineering
+  kind: kernel
+  registry: true
+  description: |
+    The `smoke` suite of the `apr code` eval (epic #5281, E2 #5283, E7 #5288): the manifest
+    crates/aprender-code-eval/suites/smoke/tasks.jsonl and its environment table
+    envs.json, loaded by contracts/apr-code-eval-task-v1.yaml and run by
+    contracts/apr-code-eval-harness-v1.yaml.
+  references:
+    - "docs/specifications/apr-code-eval-v1.md §3 (smoke: all four kinds, 8 tasks, 2 per kind, hand-written in-repo, MIT; every nightly runs it first), §8 (two seeded runs of smoke are byte-identical apart from timing)"
+    - "SWE-bench (2024) — every instance is validated against its gold patch in its image before it is scored"
+name: apr-code-eval-smoke
+version: "1.0.0"
+status: PROPOSED
+scope: "the smoke suite of the apr code eval (tickets #5283, #5288)"
+description: |
+  tasks(d) loads eight tasks, two of each kind, and envs() gives each exactly one
+  environment, all on one pinned image. Every gold edit applies as a unified diff and
+  changes its snapshot. Each task's FAIL_TO_PASS and PASS_TO_PASS lists name exactly the
+  tests of its hidden file. Two runs with one seed write receipts equal apart from timing.
+
+equations:
+  ACE-SMK-001:
+    description: "Eight tasks, two per kind, one environment each, one image"
+    formula: "#tasks = 8;  ∀ k ∈ {repo, function, edit, terminal}. #{t : kind(t) = k} = 2;  dom(envs) = ids(tasks);  #{image(e) : e ∈ envs} = 1"
+  ACE-SMK-002:
+    description: "Every gold edit applies and changes the snapshot"
+    formula: "∀ t. adapt(udiff, gold(t), snapshot(t)) = Applied(f) ∧ f ≠ snapshot(t)"
+  ACE-SMK-003:
+    description: "The test lists name exactly the hidden tests"
+    formula: "∀ t. f2p(t) ∪ p2p(t) = tests(hidden(t)) ∧ f2p(t) ∩ p2p(t) = ∅"
+  ACE-SMK-004:
+    description: "Two seeded runs are the same run"
+    formula: "seed(a) = seed(b) ∧ agent(a) = agent(b) ⇒ same_run(a, b)"
+
+proof_obligations:
+  - id: ACE-SMK-PO-001
+    type: invariant
+    property: "The manifest covers every kind twice and every task has its pinned environment (ACE-SMK-001)"
+    formal: "∀ k. #{t : kind(t) = k} = 2 ∧ dom(envs) = ids(tasks)"
+  - id: ACE-SMK-PO-002
+    type: invariant
+    property: "No gold edit is a no-op or fails to apply (ACE-SMK-002)"
+    formal: "∀ t. gold_tree(t) ≠ snapshot(t)"
+  - id: ACE-SMK-PO-003
+    type: invariant
+    property: "No hidden test is unlisted and no listed test is missing (ACE-SMK-003)"
+    formal: "∀ t. f2p(t) ∪ p2p(t) = tests(hidden(t))"
+  - id: ACE-SMK-PO-004
+    type: invariant
+    property: "Receipts of two seeded runs started at different times are byte-identical without timing; one task answered differently is another run (ACE-SMK-004)"
+    formal: "same_run(a, b) ∧ ¬ same_run(a, c)"
+  - id: ACE-SMK-PO-005
+    type: invariant
+    property: "In the real sandbox the suite validates and two seeded runs are the same run (ACE-SMK-001..004)"
+    formal: "evaluate(smoke) ≠ Err ∧ same_run(a, b)"
+
+falsification_tests:
+  - id: FALSIFY-ACE-SMK-001
+    name: eight_tasks_two_per_kind_one_image
+    prediction: "8 tasks, 2 of each kind, env ids equal task ids, one image, every task has Cargo.toml and tests/hidden.rs."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_smk_001"
+    expected_output: "test result: ok"
+    if_fails: "A kind is missing from the self-test, or a task would run on another image or none."
+  - id: FALSIFY-ACE-SMK-002
+    name: every_gold_applies_and_changes_the_snapshot
+    prediction: "Each gold diff applies under the harness's gold format and changes the tree; terminal golds change solve.sh."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_smk_002"
+    expected_output: "test result: ok"
+    if_fails: "Gold validation refuses the suite before any model runs."
+  - id: FALSIFY-ACE-SMK-003
+    name: test_lists_name_exactly_the_hidden_tests
+    prediction: "Sorted f2p ∪ p2p equals the sorted #[test] names of tests/hidden.rs for every task; no name is in both."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_smk_003"
+    expected_output: "test result: ok"
+    if_fails: "A listed test that does not exist reads as NO_TESTS, or an unlisted test is never judged."
+  - id: FALSIFY-ACE-SMK-004
+    name: two_seeded_runs_are_byte_identical
+    prediction: "Two fake-engine runs, seed 7, started a day apart: full bytes differ, bytes without timing are equal, pass@1 0.5; a run answering one task differently is not the same run."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_smk_004"
+    expected_output: "test result: ok"
+    if_fails: "Two nights of the same model on the same seed disagree, so a nightly delta is noise."
+  - id: FALSIFY-ACE-SMK-005
+    name: validates_and_repeats_in_the_real_sandbox
+    prediction: "With docker and the pinned image, evaluate validates all eight tasks (null fails, gold resolves three times) and two seeded runs are the same run."
+    test_harness: "cargo test -p aprender-code-eval --lib -- --ignored falsify_ace_smk_005"
+    expected_output: "test result: ok"
+    if_fails: "The self-test does not pass in the sandbox every nightly uses."

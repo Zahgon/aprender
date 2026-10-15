@@ -13,6 +13,7 @@
 //! - [`prompt`]: one driver request → one chat prompt for a single-turn model (ACE-PRM).
 //! - [`contamination`]: a canary and a 13-gram manifest overlap → flagged tasks in the receipt (ACE-CON).
 //! - [`gap`]: one receipt → its failing tasks, worst first, as the nightly comment (ACE-GAP).
+//! - [`smoke`]: the eight-task harness self-test suite every nightly runs first (ACE-SMK).
 
 pub mod contamination;
 pub mod driver;
@@ -24,5 +25,6 @@ pub mod prompt;
 pub mod receipt;
 pub mod runner;
 pub mod sandbox;
+pub mod smoke;
 pub mod task;
 pub mod verdict;

@@ -1,0 +1,82 @@
+{
+  "smoke-fn-saturating-sum": {
+    "image": "rust@sha256:c0a38f5662afdb298898da1d70b909af4bda4e0acff2dc52aea6360a9b9c6956",
+    "command": [
+      "sh",
+      "-c",
+      "CARGO_HOME=/work/.cargo RUSTC_BOOTSTRAP=1 cargo test --offline --quiet --test hidden -- --test-threads=1 -Z unstable-options --format json > report.json"
+    ],
+    "report_path": "report.json",
+    "report_format": "libtest_json"
+  },
+  "smoke-fn-run-length": {
+    "image": "rust@sha256:c0a38f5662afdb298898da1d70b909af4bda4e0acff2dc52aea6360a9b9c6956",
+    "command": [
+      "sh",
+      "-c",
+      "CARGO_HOME=/work/.cargo RUSTC_BOOTSTRAP=1 cargo test --offline --quiet --test hidden -- --test-threads=1 -Z unstable-options --format json > report.json"
+    ],
+    "report_path": "report.json",
+    "report_format": "libtest_json"
+  },
+  "smoke-edit-fizzbuzz": {
+    "image": "rust@sha256:c0a38f5662afdb298898da1d70b909af4bda4e0acff2dc52aea6360a9b9c6956",
+    "command": [
+      "sh",
+      "-c",
+      "CARGO_HOME=/work/.cargo RUSTC_BOOTSTRAP=1 cargo test --offline --quiet --test hidden -- --test-threads=1 -Z unstable-options --format json > report.json"
+    ],
+    "report_path": "report.json",
+    "report_format": "libtest_json"
+  },
+  "smoke-edit-leap-year": {
+    "image": "rust@sha256:c0a38f5662afdb298898da1d70b909af4bda4e0acff2dc52aea6360a9b9c6956",
+    "command": [
+      "sh",
+      "-c",
+      "CARGO_HOME=/work/.cargo RUSTC_BOOTSTRAP=1 cargo test --offline --quiet --test hidden -- --test-threads=1 -Z unstable-options --format json > report.json"
+    ],
+    "report_path": "report.json",
+    "report_format": "libtest_json"
+  },
+  "smoke-repo-config-comments": {
+    "image": "rust@sha256:c0a38f5662afdb298898da1d70b909af4bda4e0acff2dc52aea6360a9b9c6956",
+    "command": [
+      "sh",
+      "-c",
+      "CARGO_HOME=/work/.cargo RUSTC_BOOTSTRAP=1 cargo test --offline --quiet --test hidden -- --test-threads=1 -Z unstable-options --format json > report.json"
+    ],
+    "report_path": "report.json",
+    "report_format": "libtest_json"
+  },
+  "smoke-repo-word-frequency": {
+    "image": "rust@sha256:c0a38f5662afdb298898da1d70b909af4bda4e0acff2dc52aea6360a9b9c6956",
+    "command": [
+      "sh",
+      "-c",
+      "CARGO_HOME=/work/.cargo RUSTC_BOOTSTRAP=1 cargo test --offline --quiet --test hidden -- --test-threads=1 -Z unstable-options --format json > report.json"
+    ],
+    "report_path": "report.json",
+    "report_format": "libtest_json"
+  },
+  "smoke-term-sort-inbox": {
+    "image": "rust@sha256:c0a38f5662afdb298898da1d70b909af4bda4e0acff2dc52aea6360a9b9c6956",
+    "command": [
+      "sh",
+      "-c",
+      "CARGO_HOME=/work/.cargo RUSTC_BOOTSTRAP=1 cargo test --offline --quiet --test hidden -- --test-threads=1 -Z unstable-options --format json > report.json"
+    ],
+    "report_path": "report.json",
+    "report_format": "libtest_json"
+  },
+  "smoke-term-manifest": {
+    "image": "rust@sha256:c0a38f5662afdb298898da1d70b909af4bda4e0acff2dc52aea6360a9b9c6956",
+    "command": [
+      "sh",
+      "-c",
+      "CARGO_HOME=/work/.cargo RUSTC_BOOTSTRAP=1 cargo test --offline --quiet --test hidden -- --test-threads=1 -Z unstable-options --format json > report.json"
+    ],
+    "report_path": "report.json",
+    "report_format": "libtest_json"
+  }
+}
