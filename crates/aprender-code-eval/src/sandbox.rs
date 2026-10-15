@@ -229,7 +229,9 @@ pub fn environment(spec: &RunSpec) -> BTreeMap<&'static str, String> {
 
 /// Runs the task command, then prints the report between the markers and keeps its exit
 /// code. The command arrives as `"$@"`, so nothing is interpolated into the script.
-const WRAPPER: &str = r#"cp -a /task/. /work/ && cd /work || exit 125
+/// `cp -R`, never `cp -a`: with `--cap-drop ALL` root cannot chown, so preserving the
+/// host owner fails every run with exit 125 before a test starts.
+const WRAPPER: &str = r#"cp -R /task/. /work/ && cd /work || exit 125
 "$@"; rc=$?
 printf '%s\n' "$APR_EVAL_BEGIN"; cat "$APR_EVAL_REPORT" 2>/dev/null; printf '\n%s\n' "$APR_EVAL_END"
 exit $rc"#;

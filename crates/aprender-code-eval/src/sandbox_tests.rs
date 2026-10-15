@@ -386,7 +386,7 @@ fn falsify_ace_sbx_008_clean_slate() {
         .any(|a| a == "--rm" || a.starts_with("--restart")));
     let tail = &argv[opts.len() + 1..];
     assert_eq!(&tail[..2], ["sh", "-c"]);
-    assert!(tail[2].starts_with("cp -a /task/. /work/"));
+    assert!(tail[2].starts_with("cp -R /task/. /work/"));
     assert_eq!(
         &tail[3..],
         ["sh", "cargo", "test", "--", "-Z", "unstable-options"]
