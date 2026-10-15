@@ -950,12 +950,11 @@ mod tests {
 
     #[test]
     fn unicode_escapes_join_surrogate_pairs() {
-        assert_eq!(load(r#""é😀""#), Py::str("é😀"));
-        assert_eq!(load(r#""􏿿""#), Py::str("\u{10ffff}"));
-        assert_eq!(load(r#""AB""#), Py::str("AB"));
-        // A high surrogate before a non-low `\u` keeps both escapes, each read alone.
-        assert_eq!(load(r#""\ud83dA""#), Py::str("\u{fffd}A"));
-        assert_eq!(load(r#""\ud83dA""#), Py::str("\u{fffd}A"));
+        assert_eq!(load(r#""\u00e9\ud83d\ude00""#), Py::str("é😀"));
+        assert_eq!(load(r#""\udbff\udfff""#), Py::str("\u{10ffff}"));
+        assert_eq!(load(r#""\u0041\u0042""#), Py::str("AB"));
+        // A high surrogate before a non-low escape keeps both, each read alone.
+        assert_eq!(load(r#""\ud83d\u0041""#), Py::str("\u{fffd}A"));
         assert_eq!(load(r#""\ud83dxxdc00""#), Py::str("\u{fffd}xxdc00"));
         assert_eq!(
             loads(r#""\uzzzz""#),

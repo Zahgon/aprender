@@ -1595,6 +1595,9 @@ mod tests {
             Err("TypeError: unhashable type: 'dict'".to_owned())
         );
         assert_eq!(backend_name(&Py::Int(1)), Ok(Py::None));
+        assert_eq!(backend_name(&Py::str("gpu")), Ok(Py::str("cuda")));
+        assert_eq!(backend_name(&Py::str("cpu")), Ok(Py::str("cpu")));
+        assert_eq!(backend_name(&Py::str("tpu")), Ok(Py::None));
     }
 
     #[test]
