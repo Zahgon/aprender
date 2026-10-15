@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use aprender_code_eval::contamination::{canary_prefix, flag_overlap, Contamination, NgramIndex};
 use aprender_code_eval::driver::{Agent, Budget, Config, Reply, Request};
 use aprender_code_eval::edit::EditFormat;
+use aprender_code_eval::gap;
 use aprender_code_eval::harness::evaluate;
 use aprender_code_eval::prompt::render;
 use aprender_code_eval::receipt::{self, Apr, Backend, Model, Run, Sampling, Sandbox};
@@ -45,6 +46,7 @@ pub(crate) struct EvalArgs {
     pub cutoff: Option<String>,
     pub train_corpus: Vec<PathBuf>,
     pub canary_probe: bool,
+    pub gaps: Option<PathBuf>,
 }
 
 /// Greedy decoding: the run is seeded, so sampling must not add noise.
@@ -168,6 +170,15 @@ pub(crate) fn load_envs(json: &str) -> Result<BTreeMap<String, TaskEnv>, String>
     serde_json::from_str(json).map_err(|e| format!("environments: {e}"))
 }
 
+/// #5288: write the ranked failing-task list of `receipt` to `path` and return how many
+/// tasks it lists. A receipt the gap engine refuses (ACE-GAP-004) writes nothing.
+pub(crate) fn write_gaps(receipt: &receipt::Receipt, path: &Path) -> Result<usize, String> {
+    let gaps = gap::of_receipt(receipt).map_err(|e| format!("gaps: {e}"))?;
+    std::fs::write(path, gap::render(receipt, &gaps))
+        .map_err(|e| format!("gaps: {}: {e}", path.display()))?;
+    Ok(gaps.len())
+}
+
 /// Run the eval and write the receipt.
 pub(crate) fn run(args: &EvalArgs) -> Result<(), CliError> {
     let fail = |m: String| CliError::Aprender(format!("code eval: {m}"));
@@ -272,6 +283,10 @@ pub(crate) fn run(args: &EvalArgs) -> Result<(), CliError> {
     .map_err(|e| fail(e.to_string()))?;
     receipt.contamination = contamination;
     std::fs::write(&args.receipt, receipt.to_bytes()).map_err(|e| fail(e.to_string()))?;
+    if let Some(path) = &args.gaps {
+        let failing = write_gaps(&receipt, path).map_err(fail)?;
+        eprintln!("code eval: {failing} failing tasks → {}", path.display());
+    }
     eprintln!(
         "code eval: {} → {} (schema {})",
         args.suite,

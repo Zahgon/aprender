@@ -458,6 +458,7 @@ fn dispatch_code_subcommand(action: &CodeCommands) -> Result<(), CliError> {
         cutoff,
         train_corpus,
         canary_probe,
+        gaps,
     } = action;
     let args = commands::code_eval_run::EvalArgs {
         tasks: tasks.to_path_buf(),
@@ -477,6 +478,7 @@ fn dispatch_code_subcommand(action: &CodeCommands) -> Result<(), CliError> {
         cutoff: cutoff.as_ref().map(ToString::to_string),
         train_corpus: train_corpus.iter().map(|f| f.to_path_buf()).collect(),
         canary_probe: *canary_probe,
+        gaps: gaps.as_ref().map(|g| g.to_path_buf()),
     };
     commands::code_eval_run::run(&args)
 }

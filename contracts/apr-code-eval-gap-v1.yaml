@@ -1,0 +1,100 @@
+# apr-code-eval-gap-v1 — the GAP node of the apr code eval ontology (APR-CODE-EVAL-001).
+#
+# A nightly pass rate says how much failed, not what. Each night posts its receipt and one
+# list of failing tasks, worst first, so the next fix starts from the task that fails most.
+# The list is read off the receipt alone, and it never reads as "nothing failed" when
+# nothing was measured.
+metadata:
+  version: "1.0.0"
+  created: "2026-10-15"
+  author: PAIML Engineering
+  kind: kernel
+  registry: true
+  description: |
+    Ranked gap list for the `apr code` eval (epic #5281, ticket #5288): one receipt
+    (contracts/apr-code-eval-receipt-v1.yaml) becomes the list of tasks whose final
+    attempt is not RESOLVED, worst first, rendered as the nightly comment of spec §10.
+  references:
+    - "docs/specifications/apr-code-eval-v1.md §7 (receipt), §10 (each night posts the receipt and one ranked list of failing tasks)"
+    - "SWE-bench (2024) — per-instance resolved / unresolved lists published with each run"
+name: apr-code-eval-gap
+version: "1.0.0"
+status: PROPOSED
+scope: "ranked failing-task list of the apr code eval nightly (ticket #5288)"
+description: |
+  rank(rows) takes each (task, sample) at its final attempt, lists every task with a
+  non-resolved final sample once with its failure count and labels, and orders the list
+  by failures descending, then task id. of_receipt(r) refuses a receipt with no rows,
+  another schema, a duplicated or zero attempt, or label counts that disagree with its
+  rows. render(r, gaps) carries no timing field.
+
+equations:
+  ACE-GAP-001:
+    description: "A sample counts by its final attempt only"
+    formula: "final(t, s) = verdict(t, s, max_a attempts(t, s));  t ∈ gaps ⟺ ∃ s. final(t, s) ≠ resolved"
+  ACE-GAP-002:
+    description: "Every failing task once; counts reconcile"
+    formula: "failures(t) = #{s : final(t, s) ≠ resolved} = Σ_v labels(t, v);  Σ_t failures(t) + #{(t, s) : final = resolved} = #{(t, s)}"
+  ACE-GAP-003:
+    description: "Worst first, independent of row order"
+    formula: "i < j ⇒ failures(g_i) > failures(g_j) ∨ (failures(g_i) = failures(g_j) ∧ id(g_i) < id(g_j));  rank(π(rows)) = rank(rows)"
+  ACE-GAP-004:
+    description: "A receipt that cannot be trusted is refused, never ranked"
+    formula: "per_task = ∅ ∨ schema ≠ v1 ∨ dup(t, s, a) ∨ a = 0 ∨ ∃ v. counts(v) ≠ #{r : v(r) = v} ⇒ of_receipt = Err"
+  ACE-GAP-005:
+    description: "The comment carries no timing field"
+    formula: "same_run(a, b) ⇒ render(a) = render(b);  gaps = ∅ ⇒ render states no failing task, with no table"
+
+proof_obligations:
+  - id: ACE-GAP-PO-001
+    type: invariant
+    property: "A retry that fixes a sample removes it from the list; a retry that breaks one lists it under the retry's label (ACE-GAP-001)"
+    formal: "final(t, s) = resolved ⇒ s ∉ failures(t)"
+  - id: ACE-GAP-PO-002
+    type: invariant
+    property: "Failures plus resolved finals equal the samples, and no gap carries a RESOLVED label (ACE-GAP-002)"
+    formal: "∀ g. resolved ∉ dom(labels(g)) ∧ Σ_v labels(g, v) = failures(g) ≥ 1"
+  - id: ACE-GAP-PO-003
+    type: invariant
+    property: "Any permutation of the rows ranks the same list (ACE-GAP-003)"
+    formal: "∀ π. rank(π(rows)) = rank(rows)"
+  - id: ACE-GAP-PO-004
+    type: invariant
+    property: "Each of the five planted defects is refused by kind (ACE-GAP-004)"
+    formal: "defect ∈ {empty, schema, dup, zero, counts} ⇒ of_receipt = Err(kind(defect))"
+  - id: ACE-GAP-PO-005
+    type: invariant
+    property: "Changing started_at, wall_s and wall_ms leaves the comment byte-identical (ACE-GAP-005)"
+    formal: "∀ x ∈ {started_at, wall_s, wall_ms}. render(a[x ↦ x']) = render(a)"
+
+falsification_tests:
+  - id: FALSIFY-ACE-GAP-001
+    name: final_attempt_only
+    prediction: "A task fixed on retry is absent; a task that went FORMAT_ERROR then TIMEOUT is listed once under TIMEOUT, with the rows out of attempt order."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_gap_001"
+    expected_output: "test result: ok"
+    if_fails: "The list blames a task the retry already fixed, or names the wrong failure."
+  - id: FALSIFY-ACE-GAP-002
+    name: complete_and_reconciled
+    prediction: "Of three tasks × 3 samples, the all-resolved task is absent, the other two each appear once, labels sum to failures, and failures + resolved = 9."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_gap_002"
+    expected_output: "test result: ok"
+    if_fails: "A failing task drops out of the list or a failure is counted twice."
+  - id: FALSIFY-ACE-GAP-003
+    name: worst_first_and_order_free
+    prediction: "2-failure z ranks before 1-failure b before 1-failure m; reversed or rotated rows rank the same list."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_gap_003"
+    expected_output: "test result: ok"
+    if_fails: "The nightly ranking changes with row order, so two identical nights disagree."
+  - id: FALSIFY-ACE-GAP-004
+    name: untrusted_receipts_refused
+    prediction: "No rows, schema v0, a duplicated attempt, attempt 0 and a counts_by_label that moves one FAILED to RESOLVED each return a GapError."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_gap_004"
+    expected_output: "test result: ok"
+    if_fails: "An empty or tampered receipt posts a gap list that reads as a measured result."
+  - id: FALSIFY-ACE-GAP-005
+    name: render_has_no_timing
+    prediction: "The comment opens with suite, backend and pass@1, lists a then c in rank order, omits the resolved task, is identical after a start-time and wall-time change, and says No failing tasks with no table on an all-resolved run."
+    test_harness: "cargo test -p aprender-code-eval --lib falsify_ace_gap_005"
+    expected_output: "test result: ok"
+    if_fails: "Two identical nights post different comments, or a clean night posts an empty table."

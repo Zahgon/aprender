@@ -1071,6 +1071,10 @@ pub enum CodeCommands {
         /// Ask the model to complete the suite canary and record whether it could
         #[arg(long)]
         canary_probe: bool,
+        /// Also write the ranked list of failing tasks (markdown) here, worst first
+        /// (#5288)
+        #[arg(long, value_name = "FILE")]
+        gaps: Option<OutputPath>,
     },
 }
 

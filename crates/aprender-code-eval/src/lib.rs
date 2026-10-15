@@ -12,10 +12,12 @@
 //! - [`harness`]: a task set, a runner and a model → a validated suite run and its receipt (ACE-HAR).
 //! - [`prompt`]: one driver request → one chat prompt for a single-turn model (ACE-PRM).
 //! - [`contamination`]: a canary and a 13-gram manifest overlap → flagged tasks in the receipt (ACE-CON).
+//! - [`gap`]: one receipt → its failing tasks, worst first, as the nightly comment (ACE-GAP).
 
 pub mod contamination;
 pub mod driver;
 pub mod edit;
+pub mod gap;
 pub mod harness;
 pub mod metric;
 pub mod prompt;

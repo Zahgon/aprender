@@ -205,3 +205,79 @@ fn a_planted_leak_is_flagged_from_the_corpus_files() {
     assert_ne!(sha_a, sha_b, "the digest names the corpus");
     assert!(corpus_overlap(&[dir.path().join("absent")], set.tasks()).is_err());
 }
+
+fn receipt_json(rows: &[(&str, &str)]) -> receipt::Receipt {
+    let labels = [
+        "RESOLVED",
+        "FAILED",
+        "FORMAT_ERROR",
+        "EMPTY",
+        "TIMEOUT",
+        "SANDBOX_ERROR",
+        "NO_TESTS",
+    ];
+    let counts: serde_json::Map<String, serde_json::Value> = labels
+        .iter()
+        .map(|l| {
+            let c = rows.iter().filter(|(_, v)| v == l).count();
+            ((*l).to_string(), c.into())
+        })
+        .collect();
+    let per_task: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|(id, v)| {
+            serde_json::json!({"id": id, "sample": 0, "attempt": 1, "verdict": v,
+                "tests_executed": 1, "tests_passed": 0, "f2p_passed": 0, "p2p_failed": 0,
+                "edit_format_ok": true, "tokens_in": 1, "tokens_out": 1, "turns": 1,
+                "wall_ms": 5, "report_sha256": null})
+        })
+        .collect();
+    let metrics = serde_json::json!({"tasks": rows.len(), "n": 1, "pass_at_1": 0.5,
+        "pass_at_k": null, "wilson95": [0.1, 0.9], "format_conformance": 1.0,
+        "post_cutoff_pass_at_1": null, "post_cutoff_tasks": 0, "counts_by_label": counts});
+    serde_json::from_value(serde_json::json!({
+        "schema": receipt::SCHEMA, "suite": "smoke", "task_set_digest": "d",
+        "model": {"path": "m.gguf", "sha256": "a", "quant": "Q4_K_M", "backend": "cpu"},
+        "apr": {"version": "0.71.3", "git_sha": "b"}, "harness_git_sha": "c",
+        "sandbox": {"engine_version": "docker", "image_digests": {}}, "seed": 0,
+        "sampling": {"temperature": 0.0, "top_p": 1.0, "n": 1, "max_tokens": 8, "max_turns": 1},
+        "started_at": "t", "wall_s": 1.0, "per_task": per_task, "counts_by_label": counts,
+        "metrics": {"attempt_1": metrics, "attempt_2": metrics}
+    }))
+    .expect("a receipt deserializes")
+}
+
+/// #5288: `--gaps FILE` parses, is off by default, and writes the ranked list.
+#[test]
+fn gaps_flag_writes_the_ranked_list() {
+    let mut args = EVAL.to_vec();
+    args.extend(["--gaps", "g.md"]);
+    let Commands::Code {
+        action: Some(CodeCommands::Eval { gaps, .. }),
+        ..
+    } = *parse(&args).expect("parses").command
+    else {
+        panic!("expected apr code eval");
+    };
+    assert_eq!(gaps.map(|g| g.to_path_buf()), Some(PathBuf::from("g.md")));
+    let Commands::Code {
+        action: Some(CodeCommands::Eval { gaps, .. }),
+        ..
+    } = *parse(EVAL).expect("parses").command
+    else {
+        panic!("expected apr code eval");
+    };
+    assert!(gaps.is_none(), "off by default");
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let out = dir.path().join("gaps.md");
+    let r = receipt_json(&[("a", "FAILED"), ("b", "RESOLVED"), ("c", "TIMEOUT")]);
+    assert_eq!(write_gaps(&r, &out).expect("writes"), 2);
+    let text = std::fs::read_to_string(&out).expect("reads");
+    assert!(text.contains("| 1 | `a` | 1 / 1 | FAILED 1 |"), "{text}");
+    assert!(text.contains("| 2 | `c` | 1 / 1 | TIMEOUT 1 |"), "{text}");
+
+    let empty = dir.path().join("empty.md");
+    assert!(write_gaps(&receipt_json(&[]), &empty).is_err());
+    assert!(!empty.exists(), "a refused receipt writes nothing");
+}
