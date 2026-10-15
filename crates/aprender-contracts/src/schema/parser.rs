@@ -177,7 +177,7 @@ fn top_level_key_written(yaml: &str, key: &str) -> bool {
     use serde::de::IgnoredAny;
     use std::collections::BTreeMap;
 
-    serde_yaml::from_str::<BTreeMap<String, IgnoredAny>>(yaml)
+    crate::yaml::from_str_lenient::<BTreeMap<String, IgnoredAny>>(yaml)
         .is_ok_and(|map| map.contains_key(key))
 }
 
