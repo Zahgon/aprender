@@ -43,6 +43,7 @@
             usage: Default::default(),
             constraint_refusal: None,
             model_digest: None,
+            determinism: crate::commands::run::determinism_cpu_fixture(),
         };
         let _debug = format!("{:?}", result);
         assert_eq!(result.tokens_generated, Some(5));
@@ -155,6 +156,7 @@
             usage: Default::default(),
             constraint_refusal: None,
             model_digest: None,
+            determinism: crate::commands::run::determinism_cpu_fixture(),
         };
         let cloned = result.clone();
         assert_eq!(result.text, cloned.text);

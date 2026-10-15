@@ -28,6 +28,7 @@
             usage: Default::default(),
             constraint_refusal: None,
             model_digest: None,
+            determinism: crate::commands::run::determinism_cpu_fixture(),
         };
 
         let json = build_chrome_trace_events(&result, "model.gguf", 16, true);
@@ -62,6 +63,7 @@
             usage: Default::default(),
             constraint_refusal: None,
             model_digest: None,
+            determinism: crate::commands::run::determinism_cpu_fixture(),
         };
 
         let json = build_chrome_trace_events(&result, "empty.gguf", 0, false);
@@ -85,6 +87,7 @@
             usage: Default::default(),
             constraint_refusal: None,
             model_digest: None,
+            determinism: crate::commands::run::determinism_cpu_fixture(),
         };
 
         let json = build_chrome_trace_events(&result, "model.gguf", 10, false);
@@ -108,6 +111,7 @@
             usage: Default::default(),
             constraint_refusal: None,
             model_digest: None,
+            determinism: crate::commands::run::determinism_cpu_fixture(),
         };
 
         let json = build_chrome_trace_events(&result, "my-model.gguf", 64, true);
@@ -131,6 +135,7 @@
             usage: Default::default(),
             constraint_refusal: None,
             model_digest: None,
+            determinism: crate::commands::run::determinism_cpu_fixture(),
         };
 
         let json = build_chrome_trace_events(&result, "model.gguf", 10, false);
@@ -164,6 +169,7 @@
             usage: Default::default(),
             constraint_refusal: None,
             model_digest: None,
+            determinism: crate::commands::run::determinism_cpu_fixture(),
         };
 
         let json = build_chrome_trace_events(&result, "model.gguf", 10, false);
@@ -187,6 +193,7 @@
             usage: Default::default(),
             constraint_refusal: None,
             model_digest: None,
+            determinism: crate::commands::run::determinism_cpu_fixture(),
         };
         let json = build_chrome_trace_events(&result, "m.gguf", 1, false);
         assert_eq!(json["displayTimeUnit"], "ms");
@@ -210,6 +217,7 @@
             usage: Default::default(),
             constraint_refusal: None,
             model_digest: None,
+            determinism: crate::commands::run::determinism_cpu_fixture(),
         };
         // Just ensure no panic; file creation is best-effort
         print_chrome_trace(&result, "test-model.gguf", 32, false, None);
@@ -246,6 +254,7 @@
             usage: Default::default(),
             constraint_refusal: None,
             model_digest: None,
+            determinism: crate::commands::run::determinism_cpu_fixture(),
         };
         print_chrome_trace(&result, "test-model.gguf", 32, false, Some(&target));
 
@@ -279,6 +288,7 @@
             usage: Default::default(),
             constraint_refusal: None,
             model_digest: None,
+            determinism: crate::commands::run::determinism_cpu_fixture(),
         };
         print_benchmark_results(&result, "model.gguf", "text", 100);
     }
@@ -298,6 +308,7 @@
             usage: Default::default(),
             constraint_refusal: None,
             model_digest: None,
+            determinism: crate::commands::run::determinism_cpu_fixture(),
         };
         print_benchmark_results(&result, "model.gguf", "json", 50);
     }
@@ -317,6 +328,7 @@
             usage: Default::default(),
             constraint_refusal: None,
             model_digest: None,
+            determinism: crate::commands::run::determinism_cpu_fixture(),
         };
         print_benchmark_results(&result, "model.gguf", "text", 10);
     }

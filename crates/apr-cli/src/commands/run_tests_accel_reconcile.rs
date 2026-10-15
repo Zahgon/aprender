@@ -66,6 +66,7 @@ fn a_forced_accelerator_that_ran_on_cpu_is_refused() {
         usage: Default::default(),
         constraint_refusal: None,
         model_digest: None,
+        determinism: crate::commands::run::determinism_cpu_fixture(),
     };
 
     let err = reconcile_accelerator(true, &result)
@@ -156,6 +157,7 @@ fn gpu_result(used_gpu: Option<bool>) -> RunResult {
         usage: Default::default(),
         constraint_refusal: None,
         model_digest: None,
+        determinism: crate::commands::run::determinism_cpu_fixture(),
     }
 }
 

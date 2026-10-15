@@ -16,6 +16,7 @@ fn contract_result(text: &str) -> RunResult {
         usage: RunUsage::default(),
         constraint_refusal: None,
         model_digest: None,
+        determinism: crate::commands::run::determinism_cpu_fixture(),
     }
 }
 
@@ -235,4 +236,68 @@ fn response_contract_the_model_digest_is_sha256sum_of_the_file_and_none_for_a_di
             .expect("join"),
         None
     );
+}
+
+/// #3720 seed determinism: what each run promises. A CPU run is promised and echoes the seed
+/// only when it sampled; a GPU run or an unreported backend says why it is not promised.
+#[test]
+fn response_contract_determinism_case_table() {
+    use crate::commands::run::determinism;
+    let opts = |temperature: f32, top_k: usize, seed: u64| RunOptions {
+        temperature,
+        top_k,
+        seed,
+        ..RunOptions::default()
+    };
+    let rows: Vec<(&str, RunOptions, Option<bool>, bool, Option<u64>, Option<&str>)> = vec![
+        ("cpu greedy t=0", opts(0.0, 40, 42), Some(false), true, None, None),
+        ("cpu greedy top_k=1", opts(0.7, 1, 42), Some(false), true, None, None),
+        ("cpu sampled", opts(0.7, 40, 42), Some(false), true, Some(42), None),
+        ("gpu greedy", opts(0.0, 40, 42), Some(true), false, None, Some("gpu_not_guaranteed")),
+        ("gpu sampled", opts(0.7, 40, 7), Some(true), false, Some(7), Some("gpu_not_guaranteed")),
+        ("unreported", opts(0.7, 40, 9), None, false, Some(9), Some("backend_unreported")),
+    ];
+    for (label, o, used_gpu, deterministic, seed, reason) in rows {
+        let d = determinism(&o, used_gpu);
+        assert_eq!(
+            (d.deterministic, d.seed, d.reason),
+            (deterministic, seed, reason),
+            "{label}"
+        );
+        // A run that is not promised always says why; a promised one never carries a reason.
+        assert_eq!(d.deterministic, d.reason.is_none(), "{label}");
+    }
+}
+
+/// The promise reaches the document, on `--json` and the stream's final event alike.
+#[test]
+fn response_contract_the_document_carries_the_determinism_promise() {
+    let mut result = contract_result("4");
+    result.determinism = crate::commands::run::determinism(
+        &RunOptions {
+            temperature: 0.7,
+            top_k: 40,
+            seed: 42,
+            ..RunOptions::default()
+        },
+        Some(true),
+    );
+    let doc = final_document(&result, "m.gguf", 16, false, None);
+    assert_eq!(
+        doc["determinism"],
+        serde_json::json!({"deterministic": false, "seed": 42, "reason": "gpu_not_guaranteed"})
+    );
+    let cpu = final_document(&contract_result("4"), "m", 1, false, None);
+    assert_eq!(
+        cpu["determinism"],
+        serde_json::json!({"deterministic": true, "seed": null, "reason": null})
+    );
+
+    let mut buf = Vec::new();
+    write_stream_output(&mut buf, &result, "m.gguf", 8, false).expect("write");
+    let out = String::from_utf8(buf).expect("utf8");
+    let last: serde_json::Value =
+        serde_json::from_str(out.lines().last().expect("final")).expect("json");
+    assert_eq!(last["event"], "final");
+    assert_eq!(last["determinism"]["reason"], "gpu_not_guaranteed");
 }

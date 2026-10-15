@@ -24,6 +24,7 @@
             usage: Default::default(),
             constraint_refusal: None,
             model_digest: None,
+            determinism: crate::commands::run::determinism_cpu_fixture(),
         }
     }
 

@@ -301,6 +301,9 @@ pub(crate) struct RunResult {
     /// loaded, computed for a machine-readable run only. `None` for a text run, or a path that is
     /// not one file (a model directory).
     pub model_digest: Option<String>,
+    /// #3720: whether a repeat of this run (same model, prompt, seed and sampling parameters)
+    /// is promised byte-identical output, and why not when it is not.
+    pub determinism: Determinism,
 }
 
 /// Resolve a user-supplied model argument into a [`ModelSource`].
@@ -396,7 +399,60 @@ pub(crate) fn run_model(source: &str, options: &RunOptions) -> Result<RunResult>
         usage: output.usage,
         constraint_refusal: output.constraint_refusal,
         model_digest: digest.and_then(|hashing| hashing.join().ok().flatten()),
+        determinism: determinism(options, output.used_gpu),
     })
+}
+
+/// #3720: the determinism promise of one run. `deterministic` is true only where a repeat
+/// run is measured byte-identical; otherwise `reason` names why, so two outputs never
+/// silently differ.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Determinism {
+    /// A repeat with the same model, prompt, seed and sampling parameters gives the same bytes.
+    pub deterministic: bool,
+    /// The seed the sampler drew from, or `None` for greedy decoding (no draw).
+    pub seed: Option<u64>,
+    /// Why the run is not deterministic; `None` iff `deterministic`.
+    pub reason: Option<&'static str>,
+}
+
+impl Determinism {
+    pub(crate) fn to_json(self) -> serde_json::Value {
+        serde_json::json!({
+            "deterministic": self.deterministic,
+            "seed": self.seed,
+            "reason": self.reason,
+        })
+    }
+}
+
+/// #3720: greedy decoding (temperature 0, or top-k 1) draws nothing; sampled decoding draws
+/// from an RNG seeded with `--seed`, which the document echoes. The CPU path is promised. A GPU
+/// run repeated byte-identically on the one GPU measured (RTX 4090), but nothing proves its
+/// kernels reduce in a fixed order on every device, so it is not promised; neither is a run
+/// whose backend was not reported.
+pub(crate) fn determinism(options: &RunOptions, used_gpu: Option<bool>) -> Determinism {
+    let sampled = options.temperature > 0.0 && options.top_k != 1;
+    let reason = match used_gpu {
+        Some(false) => None,
+        Some(true) => Some("gpu_not_guaranteed"),
+        None => Some("backend_unreported"),
+    };
+    Determinism {
+        deterministic: reason.is_none(),
+        seed: sampled.then_some(options.seed),
+        reason,
+    }
+}
+
+/// Test fixtures: a greedy CPU run's promise.
+#[cfg(test)]
+pub(crate) fn determinism_cpu_fixture() -> Determinism {
+    Determinism {
+        deterministic: true,
+        seed: None,
+        reason: None,
+    }
 }
 
 /// #3720: hash the model file on its own thread: sha256, lower-case hex, the value `sha256sum`

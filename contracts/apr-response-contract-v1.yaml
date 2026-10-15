@@ -94,6 +94,26 @@ equations:
     - a client can lock a served answer to the exact model file and apr build
     lean_theorem: Theorems.Serve_Model_Identity
     notes: The apr-cli-owned routers (wgpu, the APR CPU and SafeTensors fallback servers) do not carry it yet.
+  seed_determinism:
+    formula: |
+      forall run r of apr run with a machine-readable output mode:
+        D.determinism.deterministic = (backend(r) = cpu)
+        D.determinism.seed = seed(r)  when r sampled (temperature > 0 and top_k != 1), else null
+        not D.determinism.deterministic  ==>  D.determinism.reason in {gpu_not_guaranteed, backend_unreported}
+    domain: apr run --json / --stream
+    codomain: whether a repeat of the run is promised byte-identical output
+    invariants:
+    - A promised run carries no reason; a run that is not promised always names why
+    - The seed is echoed exactly when the run drew from the seeded RNG
+    preconditions:
+    - the same model file, prompt, seed and sampling parameters
+    postconditions:
+    - a consumer never meets two different answers to the same promised run without being told
+    lean_theorem: Theorems.Seed_Determinism
+    notes: Measured 2026-10-15 on lambda, two models (qwen2.5-coder-0.5b Q4_K_M, qwen2.5-0.5b IQ4_XS), 12
+      run pairs at greedy and temperature 0.7/0.9 with a seed, up to 128 tokens; every pair was byte-identical
+      on CPU and on the RTX 4090. The GPU is still not promised, because no device-independent proof of a
+      fixed reduction order exists; gx10, intel and apr serve are not measured yet.
 proof_obligations:
 - id: RESP-INV-001
   type: invariant
@@ -120,6 +140,11 @@ proof_obligations:
   property: every apr serve response names the served file's sha256; completion bodies name the build too
   formal: "∀ h ∈ responses(m): digest_header(h) = sha256(m) ∧ (completion(h) ⇒ model_digest(h) = sha256(m))"
   applies_to: serve_model_identity
+- id: RESP-INV-006
+  type: invariant
+  property: a run says whether its repeat is promised byte-identical, and why not when it is not
+  formal: "deterministic(D) = (backend = cpu) ∧ (¬deterministic(D) ⇒ reason(D) ≠ null) ∧ (sampled(r) ⇒ seed(D) = seed(r)) ∧ (¬sampled(r) ⇒ seed(D) = null)"
+  applies_to: seed_determinism
 enforcement:
   cli_error_envelope:
     description: Every CliError variant maps to a kind, a status and its exit code
@@ -140,6 +165,10 @@ enforcement:
   serve_model_identity_named:
     description: apr serve sends x-apr-model-digest on every response and the identity in completion bodies
     check: model_identity_3720::FALSIFY-RESP-005
+    severity: ERROR
+  seed_determinism_declared:
+    description: apr run --json and the stream final event say whether a repeat is promised
+    check: run_tests_response_contract::FALSIFY-RESP-006
     severity: ERROR
 falsification_tests:
 - id: FALSIFY-RESP-001
@@ -191,3 +220,13 @@ falsification_tests:
     identified_hands_the_router_the_served_identity
   file: crates/aprender-serve/src/api/tests/model_identity_3720.rs
   if_fails: a served answer cannot be traced to the model file or apr build that produced it
+- id: FALSIFY-RESP-006
+  rule: A run never silently differs
+  prediction: a CPU run is deterministic and echoes the seed only when it sampled; a GPU run says
+    gpu_not_guaranteed and an unreported backend says backend_unreported; the json document and the
+    stream final event carry the promise
+  test: |
+    response_contract_determinism_case_table
+    response_contract_the_document_carries_the_determinism_promise
+  file: crates/apr-cli/src/commands/run_tests_response_contract.rs
+  if_fails: two runs of the same model, prompt and seed differ and nothing told the consumer

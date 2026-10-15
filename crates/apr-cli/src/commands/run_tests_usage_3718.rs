@@ -16,6 +16,7 @@ fn result_with(usage: RunUsage) -> RunResult {
         usage,
         constraint_refusal: None,
         model_digest: None,
+        determinism: crate::commands::run::determinism_cpu_fixture(),
     }
 }
 

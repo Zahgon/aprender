@@ -733,6 +733,8 @@ fn run_result_json(
         "model_digest": result.model_digest,
         "apr_version": env!("CARGO_PKG_VERSION"),
         "apr_git_sha": env!("APR_GIT_SHA"),
+        // #3720: whether a repeat run is promised the same bytes, and why not.
+        "determinism": result.determinism.to_json(),
         "text": result.text,
         "tokens": tokens_json,
         "tokens_generated": tokens_generated,
