@@ -212,7 +212,7 @@ fn batched_equals_per_token_rows(
     let mut gpu = Qwen35CudaModel::with_max_seq_len(&qwen, executor, n + 2).expect("gpu model");
     // The per-token side runs the FLOAT GEMVs. The budgets above say "same
     // arithmetic, different summation order", and that holds only against the
-    // float pair; since #3513 a built model decodes with DP4A on sm_89, whose
+    // float pair; since #3513 a built model decodes Q6_K with DP4A on sm_89, whose
     // int8 activation alone reads cosine 0.99990 here (argmax unchanged). That
     // choice is measured on its own in `qwen35_cuda_gemv_pair_ab_*`.
     gpu.pin_reference_gemv();

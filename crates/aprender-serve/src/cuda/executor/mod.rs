@@ -362,6 +362,18 @@ mod tests_q5k_ggml;
 #[cfg(test)]
 mod tests_q8_activation_staleness;
 
+// Launch witness (#3513): which kernel modules a run actually compiled.
+#[cfg(test)]
+impl CudaExecutor {
+    /// Sorted cache keys of every kernel module compiled so far. A module is
+    /// compiled on its first launch, so this says which kernels ran.
+    pub(crate) fn compiled_module_keys(&self) -> Vec<String> {
+        let mut keys: Vec<String> = self.modules.keys().cloned().collect();
+        keys.sort();
+        keys
+    }
+}
+
 // FALSIFY (#5303): the batched MWV Q4_K and Q6_K GEMVs are bitwise the single-row ones, row by row
 #[cfg(test)]
 mod tests_batched_mwv;

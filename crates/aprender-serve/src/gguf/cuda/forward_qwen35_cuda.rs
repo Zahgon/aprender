@@ -617,16 +617,18 @@ impl<'a> Qwen35CudaModel<'a> {
         }
 
         // NO GEMV pin (#3513): this architecture runs whatever Q4_K/Q6_K
-        // variants `GpuProfile::detect` picked, DP4A on sm_89, like a dense
-        // decode. Until #3513 it pinned the float kernels. That pin's reason,
+        // variants `GpuProfile::detect` picked, like a dense decode. On sm_89
+        // that is float MWV Q4_K (`auto_q4k`, every GPU) with half-warp DP4A
+        // Q6_K. Until #3513 it pinned both to float MWV. That pin's reason,
         // "DP4A is catastrophic through the recurrence", was the stale Q8_1
         // activation of #4258, now fixed. Measured on the RTX 4090 (release,
-        // eager, 5x64 interleaved, `qwen35_cuda_gemv_pair_ab_*`), DP4A decodes
-        // 0.8B at 0.911x and 4B at 0.821x the float pair's ms/tok. Teacher-forced
-        // against the CPU over four prompts x 49 steps
+        // eager, 5x64 interleaved, `qwen35_cuda_gemv_pair_ab_*`), the profile's
+        // pair decodes 0.8B at 0.945x and 4B at 0.924x the float pin's ms/tok.
+        // Teacher-forced against the CPU over four prompts x 49 steps
         // (`qwen35_cuda_both_gemv_pairs_match_cpu_teacher_forced_*`), every
-        // argmax disagreement of either pair is where the CPU's top-2 logits are
-        // inside 0.1: a near-tie, not lost precision.
+        // argmax disagreement of any pair is where the CPU's top-2 logits are
+        // inside 0.1: a near-tie, not lost precision. The launch witness is
+        // `qwen35_cuda_default_decode_launches_the_profiles_gemvs`.
 
         let mut layers = Vec::with_capacity(model.layers.len());
         for (il, layer) in model.layers.iter().enumerate() {

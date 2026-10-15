@@ -972,7 +972,7 @@ fn qwen35_cuda_attention_ops_match_cpu_given_the_same_inputs() {
         // Q8_K and is itself ~3e-3 from exact, so it cannot be the reference a
         // 1e-3 bar is written against. See COSINE_FLOOR and the parity-floor
         // test. These are not this ticket's kernels, but they are the GEMV variants
-        // the constructor keeps (DP4A on sm_89 since #3513), so this is where a
+        // the constructor keeps (DP4A Q6_K on sm_89 since #3513), so this is where a
         // regression in that choice shows up first.
         let q_full_e = exact_gemv(&a.attn_q, &normed_g);
         let k_e = exact_gemv(&a.attn_k, &normed_g);
@@ -1259,6 +1259,58 @@ fn qwen35_cuda_a_fresh_model_keeps_the_profiles_gemv_variants() {
         gpu.gemv_variants(),
         detected,
         "Qwen35CudaModel::new must keep the GEMV variants GpuProfile::detect picked (#3513)"
+    );
+}
+
+/// Launch witness for #3513: a model built the ordinary way, decoding the
+/// ordinary way, LAUNCHES the GEMV kernels of the variants
+/// `GpuProfile::detect` picked, and not the float pair the constructor used to
+/// pin. On sm_89 the profile is float MWV Q4_K (`auto_q4k`, every GPU) with
+/// half-warp DP4A Q6_K, so the pin's footprint is `mwv_q6k_gemv_*`.
+/// `qwen35_cuda_gemv_pair_ab_*` pick their pair explicitly, so they cannot say
+/// which pair a default build runs; the executor compiles a kernel module on
+/// its first launch, so the module cache can.
+#[test]
+fn qwen35_cuda_default_decode_launches_the_profiles_gemvs() {
+    use crate::cuda::gpu_profile::{Q4kVariant, Q6kVariant};
+    let executor = qwen35_cuda_fixture_or_skip!();
+    let q4k = match executor.gpu_profile.q4k {
+        Q4kVariant::Mwv => "mwv_q4k_gemv_",
+        Q4kVariant::HwDp4a => "hw_dp4a_q4k_gemv_",
+        other => panic!("no launch witness for Q4_K {other:?}; add its module key"),
+    };
+    let (q6k, pinned_q6k) = match executor.gpu_profile.q6k {
+        Q6kVariant::HwDp4a => ("hw_dp4a_q6k_gemv_", "mwv_q6k_gemv_"),
+        other => {
+            eprintln!("SKIP: Q6_K is {other:?}, which the float pin would not change");
+            return;
+        },
+    };
+    let mapped = crate::gguf::MappedGGUFModel::from_path(MODEL_PATH).expect("map the GGUF");
+    let base = load_cpu_model(&mapped);
+    let qwen =
+        Qwen35Model::from_model_and_layers(&base, &mapped.model, mapped.data()).expect("qwen35");
+
+    let mut gpu = Qwen35CudaModel::new(&qwen, executor).expect("build the CUDA model");
+    let mut state = gpu.new_state().expect("device state");
+    for (pos, &token) in PROMPT.iter().enumerate() {
+        gpu.forward_single(token, &mut state, pos)
+            .expect("decode step");
+    }
+
+    let keys = gpu.executor.compiled_module_keys();
+    let ran = |prefix: &str| keys.iter().any(|k| k.starts_with(prefix));
+    eprintln!(
+        "[launch witness] compiled GEMV modules: {:?}",
+        keys.iter()
+            .filter(|k| k.contains("gemv"))
+            .collect::<Vec<_>>()
+    );
+    assert!(ran(q4k), "default decode never launched {q4k}*: {keys:?}");
+    assert!(ran(q6k), "default decode never launched {q6k}*: {keys:?}");
+    assert!(
+        !ran(pinned_q6k),
+        "default decode launched {pinned_q6k}*, the float pin's Q6_K: {keys:?}"
     );
 }
 
@@ -1846,9 +1898,10 @@ fn qwen35_cuda_graph_decode_is_token_identical_to_eager_4b() {
 /// (`pin_float_gemv`) went in for correctness, and #4258 removed that reason, so
 /// the remaining question is throughput. This measures it, on one model and one
 /// GPU in one process: eager greedy decode (the production path; the graph is
-/// opt-in) under the float pair and under the DP4A pair, interleaved over
+/// opt-in) under the float pair (the old pin), the default pair (float Q4_K, DP4A Q6_K:
+/// what `GpuProfile::detect` picks on sm_89) and the all-DP4A pair, interleaved over
 /// `ROUNDS` so a neighbour's load hits both, and the CPU greedy tokens as the
-/// reference both must reproduce.
+/// reference all must reproduce.
 ///
 /// It prints `[aprender#3513]` lines with the median ms/tok of each pair and the
 /// first step at which each diverges from the CPU. It asserts only what makes
@@ -1889,16 +1942,17 @@ fn qwen35_gemv_pair_ab(path: &str, executor: crate::cuda::CudaExecutor) {
     gpu.set_decode_graph(false);
     let pairs = [
         ("float", Q4kVariant::Mwv, Q6kVariant::Mwv),
+        ("default", Q4kVariant::Mwv, Q6kVariant::HwDp4a),
         ("dp4a", Q4kVariant::HwDp4a, Q6kVariant::HwDp4a),
     ];
-    // Warm both pairs once (module load, first-touch allocations).
+    // Warm every pair once (module load, first-touch allocations).
     for &(_, q4k, q6k) in &pairs {
         gpu.executor_mut().gpu_profile.q4k = q4k;
         gpu.executor_mut().gpu_profile.q6k = q6k;
         let _ = qwen35_greedy(&mut gpu, &LONG_PROMPT, 8);
     }
-    let mut ms: [Vec<f64>; 2] = [Vec::new(), Vec::new()];
-    let mut toks: [Option<Vec<u32>>; 2] = [None, None];
+    let mut ms: [Vec<f64>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    let mut toks: [Option<Vec<u32>>; 3] = [None, None, None];
     for _ in 0..ROUNDS {
         for (i, &(name, q4k, q6k)) in pairs.iter().enumerate() {
             gpu.executor_mut().gpu_profile.q4k = q4k;
@@ -1916,20 +1970,22 @@ fn qwen35_gemv_pair_ab(path: &str, executor: crate::cuda::CudaExecutor) {
         v.sort_by(f64::total_cmp);
         v[v.len() / 2]
     };
-    let (float_ms, dp4a_ms) = (median(&mut ms[0]), median(&mut ms[1]));
+    let med: Vec<f64> = ms.iter_mut().map(median).collect();
     for (i, &(name, _, _)) in pairs.iter().enumerate() {
         let out = toks[i].as_ref().expect("measured");
         let first_diff = out.iter().zip(&cpu).position(|(a, b)| a != b);
         eprintln!(
             "[aprender#3513] {path}: {name} median {:.3} ms/tok over {ROUNDS}x{STEPS}; \
              first divergence from the CPU at step {first_diff:?} (CPU top-2 margin there {:?})",
-            if i == 0 { float_ms } else { dp4a_ms },
+            med[i],
             first_diff.map(|s| margin[s]),
         );
     }
     eprintln!(
-        "[aprender#3513] {path}: dp4a/float = {:.3}x ms/tok (below 1 = DP4A faster)",
-        dp4a_ms / float_ms
+        "[aprender#3513] {path}: default/float = {:.3}x, dp4a/float = {:.3}x ms/tok \
+         (below 1 = faster than the float pin)",
+        med[1] / med[0],
+        med[2] / med[0]
     );
 }
 
@@ -2024,9 +2080,10 @@ fn qwen35_teacher_forced_both_pairs(path: &str, executor: crate::cuda::CudaExecu
     let mut gpu = Qwen35CudaModel::with_max_seq_len(&qwen, executor, 8 + STEPS + 1)
         .expect("build the CUDA model");
     gpu.set_decode_graph(false);
-    let mut real_total = [0usize; 2];
+    let mut real_total = [0usize; 3];
     for (i, (name, q4k, q6k)) in [
         ("float", Q4kVariant::Mwv, Q6kVariant::Mwv),
+        ("default", Q4kVariant::Mwv, Q6kVariant::HwDp4a),
         ("dp4a", Q4kVariant::HwDp4a, Q6kVariant::HwDp4a),
     ]
     .into_iter()
@@ -2045,8 +2102,8 @@ fn qwen35_teacher_forced_both_pairs(path: &str, executor: crate::cuda::CudaExecu
     }
     assert_eq!(
         real_total,
-        [0, 0],
-        "a GEMV pair disagreed with the CPU where the CPU was not near a tie (float, dp4a)"
+        [0, 0, 0],
+        "a GEMV pair disagreed with the CPU where the CPU was not near a tie (float, default, dp4a)"
     );
 }
 
