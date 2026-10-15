@@ -61,13 +61,13 @@ falsification_tests:
   rule: "pv's results equal the reference as a multiset of the full tuple"
   prediction: "on S-W3C and S-CORPUS, pv's results and the reference's, keyed by (focus, path, value, source-shape key, component IRI, severity), are equal multisets"
   test: >-
-    jena-oracle (tests/oracle/jena/), cell R-FEEDBACK, comparator full-tuple (tests/oracle/jena/src/report.rs), through `pv ontology validate`. 2026-10-14 at branch commit 4d80785c24: S-CORPUS GREEN, 569 results each side, 0 differ; S-W3C RED, 17 of 35 equal to W3C, the other 18 refused by name (tests/oracle/jena/receipt.json). The comparator is proven by FALSIFY-CRUXSHACL-013..019 and 021.
+    jena-oracle (tests/oracle/jena/), cell R-FEEDBACK, comparator full-tuple (tests/oracle/jena/src/report.rs), through `pv ontology validate`. 2026-10-14 at branch commit 8028766293: S-CORPUS GREEN, 569 results each side, 0 differ; S-W3C RED, 17 of 35 equal to W3C, the other 18 refused by name (tests/oracle/jena/receipt.json). The comparator is proven by FALSIFY-CRUXSHACL-013..019 and 021.
   if_fails: "rule 'pv's results equal the reference as a multiset of the full tuple' is violated — pv reports a different focus, path, value, shape, component or severity than the other engine"
 - id: FALSIFY-CRUX-R-04-002
   rule: "every result has a message, and a declared sh:message appears in it"
   prediction: "no result in pv's report has an empty message, and every result of a shape that declares sh:message carries that text"
   test: >-
-    jena-oracle (tests/oracle/jena/), cell R-FEEDBACK case S-W3C, the message comparator (control feedback/message, FALSIFY-CRUXSHACL-020). RED 2026-10-14 at branch commit 4d80785c24 only by refusal: every result in the 17 of 35 cases pv runs has a message and carries each declared sh:message; the 18 refused cases count RED (tests/oracle/jena/receipt.json).
+    jena-oracle (tests/oracle/jena/), cell R-FEEDBACK case S-W3C, the message comparator (control feedback/message, FALSIFY-CRUXSHACL-020). RED 2026-10-14 at branch commit 8028766293 only by refusal: every result in the 17 of 35 cases pv runs has a message and carries each declared sh:message; the 18 refused cases count RED (tests/oracle/jena/receipt.json).
   if_fails: "rule 'every result has a message, and a declared sh:message appears in it' is violated — pv reports what failed but not why"
 
 proof_obligations:

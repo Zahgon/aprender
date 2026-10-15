@@ -62,13 +62,13 @@ falsification_tests:
   rule: "on W3C's core suite pv matches W3C's expected report"
   prediction: "every core/ case: pv's sh:conforms and result count equal W3C's; a refused case is RED and named"
   test: >-
-    jena-oracle (tests/oracle/jena/), cell R-VALIDATE case S-W3C, comparator pv-vs-w3c, through `pv ontology validate`. RED 2026-10-14 at branch commit 4d80785c24: 17 of the 35 vendored W3C core cases (tests/oracle/w3c/, pinned by tests/oracle/jena/w3c.sha256) as W3C expects; the other 18 are refused by name (exit 3, file, shape and term), and a refusal counts RED. No case pv runs disagrees with W3C. Jena ran all 35 with no jena≠w3c (tests/oracle/jena/receipt.json). Not yet every case in the core/ manifests.
+    jena-oracle (tests/oracle/jena/), cell R-VALIDATE case S-W3C, comparator pv-vs-w3c, through `pv ontology validate`. RED 2026-10-14 at branch commit 8028766293: 17 of the 35 vendored W3C core cases (tests/oracle/w3c/, pinned by tests/oracle/jena/w3c.sha256) as W3C expects; the other 18 are refused by name (exit 3, file, shape and term), and a refusal counts RED. No case pv runs disagrees with W3C. Jena ran all 35 with no jena≠w3c (tests/oracle/jena/receipt.json). Not yet every case in the core/ manifests.
   if_fails: "rule 'on W3C's core suite pv matches W3C's expected report' is violated — pv's SHACL Core subset reaches a different verdict than the W3C test suite"
 - id: FALSIFY-CRUX-R-03-002
   rule: "on the shipped corpus pv matches Jena"
   prediction: "contracts/contracts.nt with contracts/shapes.ttl: pv and Jena report the same sh:conforms and the same number of results"
   test: >-
-    jena-oracle (tests/oracle/jena/), cell R-VALIDATE case corpus, comparator jena-vs-pv. GREEN 2026-10-14 at branch commit 4d80785c24: Jena 569 results, pv 569, 0 pairs differ (tests/oracle/jena/receipt.json). The 2026-10-09 RED (Jena 743, pv 730, every extra an sh:closed result on an rdf:type value, aprender#4837) is gone: pv admits rdf:type on a closed shape only when sh:ignoredProperties lists it, and shapes.ttl lists it.
+    jena-oracle (tests/oracle/jena/), cell R-VALIDATE case corpus, comparator jena-vs-pv. GREEN 2026-10-14 at branch commit 8028766293: Jena 569 results, pv 569, 0 pairs differ (tests/oracle/jena/receipt.json). The 2026-10-09 RED (Jena 743, pv 730, every extra an sh:closed result on an rdf:type value, aprender#4837) is gone: pv admits rdf:type on a closed shape only when sh:ignoredProperties lists it, and shapes.ttl lists it.
   if_fails: "rule 'on the shipped corpus pv matches Jena' is violated — pv and Jena disagree on the contracts pv ships"
 - id: FALSIFY-CRUX-R-03-003
   rule: "pv's shapes graph is well-formed SHACL"

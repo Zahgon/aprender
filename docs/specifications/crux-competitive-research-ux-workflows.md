@@ -1374,7 +1374,7 @@ The self-test saw 26 of 26 controls. The run exits 1 on the R-VALIDATE RED of
   and each story's work ticket change in one commit. That flip waits for this
   receipt on `main`.
 
-### 14.10 pv validates: the S4 run (measured 2026-10-14 on branch commit `4d80785c24`; receipt `tests/oracle/jena/receipt.json`)
+### 14.10 pv validates: the S4 run (measured 2026-10-14 on branch commit `8028766293`; receipt `tests/oracle/jena/receipt.json`)
 
 pv was built from that commit. For R-VALIDATE and R-FEEDBACK the harness runs
 `pv ontology validate SHAPES DATA --format ntriples` and compares the report

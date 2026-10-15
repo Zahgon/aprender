@@ -4,42 +4,42 @@
       "case": "contracts.nt",
       "cell": "R-RETURN",
       "comparator": "riot-vs-ntparse",
-      "detail": "35022 triples; []",
+      "detail": "35028 triples; []",
       "verdict": "GREEN"
     },
     {
       "case": "shapes.ttl",
       "cell": "R-RETURN",
       "comparator": "riot",
-      "detail": "4713 triples, no WARN",
+      "detail": "4739 triples, no WARN",
       "verdict": "GREEN"
     },
     {
       "case": "contracts/contracts.nt",
       "cell": "R-INPUT",
       "comparator": "pv-vs-riot",
-      "detail": "riot 35022 triples, pv 35022 triples, isomorphic; pv 0 blank nodes",
+      "detail": "riot 35028 triples, pv 35028 triples, isomorphic; pv 0 blank nodes",
       "verdict": "GREEN"
     },
     {
       "case": "roundtrip contracts/contracts.nt",
       "cell": "R-RETURN",
       "comparator": "riot-roundtrip",
-      "detail": "riot 35022 triples, pv 35022 triples, isomorphic",
+      "detail": "riot 35028 triples, pv 35028 triples, isomorphic",
       "verdict": "GREEN"
     },
     {
       "case": "contracts/shapes.ttl",
       "cell": "R-INPUT",
       "comparator": "pv-vs-riot",
-      "detail": "riot 4713 triples (4712 distinct), pv 4712 triples, isomorphic; pv 1730 blank nodes",
+      "detail": "riot 4739 triples (4738 distinct), pv 4738 triples, isomorphic; pv 1739 blank nodes",
       "verdict": "GREEN"
     },
     {
       "case": "roundtrip contracts/shapes.ttl",
       "cell": "R-RETURN",
       "comparator": "riot-roundtrip",
-      "detail": "riot 4713 triples (4712 distinct), pv 4712 triples, isomorphic",
+      "detail": "riot 4739 triples (4738 distinct), pv 4738 triples, isomorphic",
       "verdict": "GREEN"
     },
     {
@@ -67,22 +67,155 @@
       "case": "corpus",
       "cell": "R-VALIDATE",
       "comparator": "jena-vs-pv",
-      "detail": "jena 662 results (conforms Some(false)), pv 569; 92 pairs differ: https://ont.paiml.dev/v1alpha1/csv/csv-train closed jena+1; https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.0 closed jena+1; https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.1 closed jena+1; https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.10 closed jena+1; https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.11 closed jena+1; https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.12 closed jena+1; https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.13 closed jena+1; https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.14 closed jena+1",
+      "detail": "jena 569 results (conforms Some(false)), pv 569; 0 pairs differ: ",
+      "verdict": "GREEN"
+    },
+    {
+      "case": "corpus",
+      "cell": "R-FEEDBACK",
+      "comparator": "jena-vs-pv",
+      "detail": "pv 569 results, jena 569; 0 differ",
+      "verdict": "GREEN"
+    },
+    {
+      "case": "node/class-001",
+      "cell": "R-VALIDATE",
+      "comparator": "w3c",
+      "detail": "refused: pv refused: error: tests/oracle/w3c/node/class-001.ttl: shape http://datashapes.org/sh/tests/core/node/class-001.test#TestShape uses unsupported sh:class on a node shape",
+      "verdict": "RED"
+    },
+    {
+      "case": "node/class-002",
+      "cell": "R-VALIDATE",
+      "comparator": "w3c",
+      "detail": "refused: pv refused: error: tests/oracle/w3c/node/class-002.ttl: shape http://datashapes.org/sh/tests/core/node/class-002.test#TestShape uses unsupported sh:class on a node shape",
+      "verdict": "RED"
+    },
+    {
+      "case": "node/class-003",
+      "cell": "R-VALIDATE",
+      "comparator": "w3c",
+      "detail": "refused: pv refused: error: tests/oracle/w3c/node/class-003.ttl: shape http://datashapes.org/sh/tests/core/node/class-001.test#TestShape uses unsupported sh:class on a node shape",
+      "verdict": "RED"
+    },
+    {
+      "case": "node/datatype-001",
+      "cell": "R-VALIDATE",
+      "comparator": "w3c",
+      "detail": "refused: pv refused: error: tests/oracle/w3c/node/datatype-001.ttl: shape http://datashapes.org/sh/tests/core/node/datatype-001.test#TestShape uses unsupported sh:datatype on a node shape",
+      "verdict": "RED"
+    },
+    {
+      "case": "node/datatype-002",
+      "cell": "R-VALIDATE",
+      "comparator": "w3c",
+      "detail": "refused: pv refused: error: tests/oracle/w3c/node/datatype-002.ttl: shape http://datashapes.org/sh/tests/core/node/datatype-002.test#TestShape uses unsupported sh:datatype on a node shape",
+      "verdict": "RED"
+    },
+    {
+      "case": "node/in-001",
+      "cell": "R-VALIDATE",
+      "comparator": "w3c",
+      "detail": "refused: pv refused: error: tests/oracle/w3c/node/in-001.ttl: shape http://datashapes.org/sh/tests/core/node/in-001.test#TestShape uses unsupported sh:in on a node shape",
+      "verdict": "RED"
+    },
+    {
+      "case": "node/maxLength-001",
+      "cell": "R-VALIDATE",
+      "comparator": "w3c",
+      "detail": "refused: pv refused: error: tests/oracle/w3c/node/maxLength-001.ttl: shape http://datashapes.org/sh/tests/core/node/maxLength-001.test#TestShape uses unsupported sh:maxLength on a node shape",
+      "verdict": "RED"
+    },
+    {
+      "case": "node/minLength-001",
+      "cell": "R-VALIDATE",
+      "comparator": "w3c",
+      "detail": "refused: pv refused: error: tests/oracle/w3c/node/minLength-001.ttl: shape http://datashapes.org/sh/tests/core/node/minLength-001.test#TestShape uses unsupported sh:minLength on a node shape",
+      "verdict": "RED"
+    },
+    {
+      "case": "node/node-001",
+      "cell": "R-VALIDATE",
+      "comparator": "w3c",
+      "detail": "refused: pv refused: error: tests/oracle/w3c/node/node-001.ttl: shape http://datashapes.org/sh/tests/core/node/node-001.test#TestClass uses unsupported sh:node on a node shape",
+      "verdict": "RED"
+    },
+    {
+      "case": "node/nodeKind-001",
+      "cell": "R-VALIDATE",
+      "comparator": "w3c",
+      "detail": "refused: pv refused: error: tests/oracle/w3c/node/nodeKind-001.ttl: shape http://datashapes.org/sh/tests/core/node/nodeKind-001.test#IRITestShape uses unsupported sh:nodeKind on a node shape",
+      "verdict": "RED"
+    },
+    {
+      "case": "node/pattern-001",
+      "cell": "R-VALIDATE",
+      "comparator": "w3c",
+      "detail": "refused: pv refused: error: tests/oracle/w3c/node/pattern-001.ttl: shape http://datashapes.org/sh/tests/core/node/pattern-001.test#TestShape uses unsupported sh:pattern on a node shape",
+      "verdict": "RED"
+    },
+    {
+      "case": "node/pattern-002",
+      "cell": "R-VALIDATE",
+      "comparator": "w3c",
+      "detail": "refused: pv refused: error: tests/oracle/w3c/node/pattern-002.ttl: shape http://datashapes.org/sh/tests/core/node/pattern-002.test#TestShape uses unsupported sh:flags on a node shape",
+      "verdict": "RED"
+    },
+    {
+      "case": "property/datatype-002",
+      "cell": "R-VALIDATE",
+      "comparator": "w3c",
+      "detail": "refused: pv refused: error: tests/oracle/w3c/property/datatype-002.ttl: the language-tagged literal \"A\"@en: the validator's terms carry no language tag",
+      "verdict": "RED"
+    },
+    {
+      "case": "property/datatype-003",
+      "cell": "R-VALIDATE",
+      "comparator": "w3c",
+      "detail": "refused: pv refused: error: tests/oracle/w3c/property/datatype-003.ttl: shape http://datashapes.org/sh/tests/core/property/datatype-003.test#TestShape-value uses unsupported sh:or on a property shape",
+      "verdict": "RED"
+    },
+    {
+      "case": "property/datatype-ill-formed",
+      "cell": "R-VALIDATE",
+      "comparator": "w3c",
+      "detail": "refused: pv refused: error: tests/oracle/w3c/property/datatype-ill-formed-shapes.ttl: shape http://example.org/shacl-test/s uses unsupported sh:datatype on a node shape",
+      "verdict": "RED"
+    },
+    {
+      "case": "property/node-001",
+      "cell": "R-VALIDATE",
+      "comparator": "w3c",
+      "detail": "refused: pv refused: error: tests/oracle/w3c/property/node-001.ttl: shape _:b0 uses unsupported a blank-node node shape",
+      "verdict": "RED"
+    },
+    {
+      "case": "property/nodeKind-001",
+      "cell": "R-VALIDATE",
+      "comparator": "w3c",
+      "detail": "refused: pv refused: error: tests/oracle/w3c/property/nodeKind-001.ttl: shape _:b3 uses unsupported sh:nodeKind <http://www.w3.org/ns/shacl#BlankNode>",
+      "verdict": "RED"
+    },
+    {
+      "case": "property/pattern-002",
+      "cell": "R-VALIDATE",
+      "comparator": "w3c",
+      "detail": "refused: pv refused: error: tests/oracle/w3c/property/pattern-002.ttl: shape http://datashapes.org/sh/tests/core/property/pattern-002.test#TestShape-property uses unsupported sh:flags on a property shape",
       "verdict": "RED"
     },
     {
       "case": "S-W3C",
       "cell": "R-VALIDATE",
       "comparator": "pv-vs-w3c",
-      "detail": "S4: pv writes no sh:ValidationReport; 35 cases, Jena ran 35, 1 compared without source shape",
-      "verdict": "NOT MEASURED"
+      "detail": "17 of 35 cases as W3C expects (Jena ran 35; 1 compared without source shape)",
+      "verdict": "RED"
     },
     {
-      "case": "S-W3C+S-CORPUS",
+      "case": "S-W3C",
       "cell": "R-FEEDBACK",
-      "comparator": "full-tuple",
-      "detail": "S4: pv's report has no value, source shape or W3C severity",
-      "verdict": "NOT MEASURED"
+      "comparator": "w3c",
+      "detail": "17 of 35 cases: full tuple as W3C expects, every result with a message, each declared sh:message carried",
+      "verdict": "RED"
     },
     {
       "case": "S-W3C",
@@ -290,12 +423,12 @@
   "exit": 1,
   "git": {
     "dirty": "false",
-    "head": "c818b43593f5cfdc0bda37a5f6cd222d9ff7b0e4"
+    "head": "8028766293998c45005edd443ee8e4bf5e0e5171"
   },
   "inputs": {
-    "/home/noah/la711b-s3j-logs/shapes.json": "e5e6fd93d798a0d71545dbfed66bc2fbff964e801d04a96709a36a64c3bcf301",
-    "contracts/contracts.nt": "b2ffb8d49cbf9f9eeb6cb6d515d9f26cbc99fd19fb041a092c08839ec5233333",
-    "contracts/shapes.ttl": "5cebba7778468ada8add468b5f3258ee9574e9e213ca7c4da1ca138ed69aaa7d",
+    "contracts/contracts.nt": "443f91773261e394861e3929fa725ec8eb15c792f1c80909dc4ff860de0b1ac1",
+    "contracts/shapes.ttl": "1c4ed3fcfdeb995efa724c75b4fc7443f83cd49c513806d803749ab8d0d9e695",
+    "shapes.json": "ecb03affb5f37801f8aa0ff1eeb5ca0fc2475058132d253e9aec6bdaf4d02a9d",
     "tests/oracle/jena/controls/escapes-langtags.ttl": "eb0d1bc68c99f6c94991848817a7c802332824a88456b975958763638b5ad918",
     "tests/oracle/jena/controls/syntax-error-line-7.ttl": "e156d0b2a2920a5241f0e887c191fe4484ffcc79c44c00d9d1fc292f4a4f85e3",
     "tests/oracle/jena/w3c.sha256": "76a244d914b56888edf08956d8f82bdc624854b25bf94ac2c9a447fbfd8356a0"
@@ -308,104 +441,11 @@
     "version": "5.6.0",
     "zip_sha256": "fb26f8753ed3c4f8e04607a60d9605e18cf6e22143a47fc7334dcd87f655d888"
   },
-  "notes": [
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/csv/csv-train closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.0 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.1 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.10 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.11 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.12 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.13 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.14 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.15 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.16 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.17 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.18 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.19 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.2 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.20 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.21 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.22 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.23 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.24 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.25 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.26 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.27 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.28 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.29 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.3 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.30 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.31 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.32 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.33 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.34 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.35 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.36 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.37 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.38 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.39 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.4 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.40 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.5 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.6 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.7 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.8 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.kernels.9 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.0 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.1 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.10 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.11 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.12 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.13 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.14 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.15 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.16 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.17 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.18 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.19 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.2 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.20 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.21 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.22 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.23 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.24 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.25 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.26 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.27 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.28 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.29 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.3 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.30 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.31 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.32 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.33 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.34 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.35 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.36 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.37 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.38 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.4 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.5 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.6 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.7 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.8 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/kreg/kernel-registry-v1.ops.9 closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/llm/claude-md closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/model/4a75ee8031b3fbe0b17e1706a248aabbf158420c06f082bc29a89e2103d4057e closed jena+2",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/parity-receipt/evidence%2Fparity%2Fl0-1%2Fgx10%2Fqwen2.5-coder-1.5b-instruct-q4_k_m.json closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/parity-receipt/evidence%2Fparity%2Fl0-1%2Fgx10%2Fqwen2.5-coder-7b-instruct-q4_k_m.json closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/parity-receipt/evidence%2Fparity%2Fl0-1%2Flambda%2Fqwen2.5-1.5b-instruct-q4_k_m.json closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/parity-receipt/evidence%2Fparity%2Fl0-1%2Flambda%2Fqwen2.5-coder-1.5b-instruct-q4_k_m.json closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/parity-receipt/evidence%2Fparity%2Fl0-1%2Flambda%2Fqwen2.5-coder-7b-instruct-q4_k_m.json closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/parity-receipt/evidence%2Fparity%2Fl0-1b%2Fgx10%2Fqwen2.5-coder-1.5b-instruct-q4_k_m.json closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/parity-receipt/evidence%2Fparity%2Fl0-1b%2Fgx10%2Fqwen2.5-coder-7b-instruct-q4_k_m.json closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/readme/readme-root closed jena+1",
-    "corpus jena≠pv: https://ont.paiml.dev/v1alpha1/refusal/refusal-receipt-v1.refusals.0 closed jena+1"
-  ],
+  "notes": [],
   "pv": {
-    "sha256": "8b4f4fe13ed019ebae14a59a1a48581ad305753572b0de2fdb8ca61488039943",
+    "sha256": "f78a130470c683df34fb84bf934faefa45bcdb8715cff744b1abeaac6f83eb8d",
     "version": "pv 0.71.3 (v0.71.3+no-git) (aprender provable-contracts verifier)"
   },
   "schema": "crux-shacl-jena-receipt/1",
-  "utc": 1791987112
+  "utc": 1792018355
 }
