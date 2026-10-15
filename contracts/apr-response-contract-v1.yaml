@@ -113,7 +113,25 @@ equations:
     notes: Measured 2026-10-15 on lambda, two models (qwen2.5-coder-0.5b Q4_K_M, qwen2.5-0.5b IQ4_XS), 12
       run pairs at greedy and temperature 0.7/0.9 with a seed, up to 128 tokens; every pair was byte-identical
       on CPU and on the RTX 4090. The GPU is still not promised, because no device-independent proof of a
-      fixed reduction order exists; gx10, intel and apr serve are not measured yet.
+      fixed reduction order exists; gx10 and intel are not measured yet (apr serve is measured under serve_seed_determinism).
+  serve_seed_determinism:
+    formula: |
+      forall completion body b of apr serve given one model file:
+        b.determinism.deterministic = (compute_class = cpu)
+        not b.determinism.deterministic  ==>  b.determinism.reason in {gpu_not_guaranteed, backend_unreported}
+    domain: chat.completion / text_completion bodies of apr serve
+    codomain: whether a repeat of the request is promised byte-identical output
+    invariants:
+    - The promise is read off the backend the router dispatches to (compute_class_from_residency)
+    - The request's seed is the client's own input, so the body does not echo it
+    preconditions:
+    - the same model file, request body, seed and sampling parameters
+    postconditions:
+    - a client never meets two different answers to the same promised request without being told
+    lean_theorem: Theorems.Serve_Seed_Determinism
+    notes: Measured 2026-10-15 on lambda, qwen2.5-coder-0.5b Q4_K_M, 8 request pairs over /v1/chat/completions
+      at greedy and temperature 0.8 with seed 42, up to 96 tokens; every pair was byte-identical on CPU and
+      on the RTX 4090. A body with no backend resident (the legacy demo model) says backend_unreported.
 proof_obligations:
 - id: RESP-INV-001
   type: invariant
@@ -145,6 +163,11 @@ proof_obligations:
   property: a run says whether its repeat is promised byte-identical, and why not when it is not
   formal: "deterministic(D) = (backend = cpu) ∧ (¬deterministic(D) ⇒ reason(D) ≠ null) ∧ (sampled(r) ⇒ seed(D) = seed(r)) ∧ (¬sampled(r) ⇒ seed(D) = null)"
   applies_to: seed_determinism
+- id: RESP-INV-007
+  type: invariant
+  property: a served completion says whether its repeat is promised byte-identical, and why not when it is not
+  formal: "∀ b ∈ completions: (deterministic(b) ⇒ class = cpu) ∧ (class = cpu ⇒ deterministic(b)) ∧ (¬deterministic(b) ⇒ reason(b) ≠ null)"
+  applies_to: serve_seed_determinism
 enforcement:
   cli_error_envelope:
     description: Every CliError variant maps to a kind, a status and its exit code
@@ -169,6 +192,10 @@ enforcement:
   seed_determinism_declared:
     description: apr run --json and the stream final event say whether a repeat is promised
     check: run_tests_response_contract::FALSIFY-RESP-006
+    severity: ERROR
+  serve_seed_determinism_declared:
+    description: apr serve completion bodies say whether a repeat is promised
+    check: model_identity_3720::FALSIFY-RESP-007
     severity: ERROR
 falsification_tests:
 - id: FALSIFY-RESP-001
@@ -230,3 +257,13 @@ falsification_tests:
     response_contract_the_document_carries_the_determinism_promise
   file: crates/apr-cli/src/commands/run_tests_response_contract.rs
   if_fails: two runs of the same model, prompt and seed differ and nothing told the consumer
+- id: FALSIFY-RESP-007
+  rule: A served completion never silently differs
+  prediction: a CPU-resident server promises a repeat; a CUDA or wgpu one says gpu_not_guaranteed and one with
+    no backend resident says backend_unreported; only completion bodies carry it
+  test: |
+    serve_determinism_case_table
+    a_completion_body_names_what_produced_it
+    only_a_completion_object_is_stamped
+  file: crates/aprender-serve/src/api/tests/model_identity_3720.rs
+  if_fails: two answers to the same request and seed differ and nothing told the client

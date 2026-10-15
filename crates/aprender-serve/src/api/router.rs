@@ -376,10 +376,14 @@ pub fn create_router_with_config(state: AppState, config: RouterConfig) -> Route
     // carries it. A server given no identity sends none.
     if let Some(identity) = state.model_identity().cloned() {
         if let Ok(header) = axum::http::HeaderValue::from_str(&identity.digest) {
-            let identity = std::sync::Arc::new((identity, header));
+            let determinism = serve_determinism(compute_class_from_residency(&state));
+            let identity = std::sync::Arc::new((identity, header, determinism));
             router = router.layer(axum::middleware::from_fn(move |request, next| {
                 let identity = std::sync::Arc::clone(&identity);
-                async move { stamp_model_identity(&identity.0, identity.1.clone(), request, next).await }
+                async move {
+                    stamp_model_identity(&identity.0, identity.1.clone(), &identity.2, request, next)
+                        .await
+                }
             }));
         }
     }
@@ -397,6 +401,7 @@ const IDENTIFIED_OBJECTS: [&str; 2] = ["chat.completion", "text_completion"];
 async fn stamp_model_identity(
     identity: &ModelIdentity,
     header: axum::http::HeaderValue,
+    determinism: &serde_json::Value,
     request: axum::http::Request<axum::body::Body>,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
@@ -422,7 +427,7 @@ async fn stamp_model_identity(
     };
     let stamped = serde_json::from_slice::<serde_json::Value>(&raw)
         .ok()
-        .and_then(|value| with_model_identity(value, identity))
+        .and_then(|value| with_model_identity(value, identity, determinism))
         .and_then(|value| serde_json::to_vec(&value).ok());
     let Some(stamped) = stamped else {
         return axum::response::Response::from_parts(parts, axum::body::Body::from(raw));
@@ -431,11 +436,27 @@ async fn stamp_model_identity(
     axum::response::Response::from_parts(parts, axum::body::Body::from(stamped))
 }
 
-/// #3720: `value` with the identity fields added, when it is a completion object;
-/// `None` (leave the body byte-identical) for anything else.
+/// #3720: whether a repeat of a completion is promised byte-identical, from the backend
+/// the server dispatches to (`compute_class_from_residency`). The CPU path is promised. A
+/// GPU one repeated byte-identically on the one GPU measured (RTX 4090), but nothing proves
+/// its kernels reduce in a fixed order on every device, so it is not promised; neither is a
+/// server with no backend resident. The same rule `apr run --json` states. A request's
+/// `seed` is the client's own input, so the body does not echo it.
+fn serve_determinism(compute_class: &str) -> serde_json::Value {
+    let reason = match compute_class {
+        "cpu" => None,
+        "cuda" | "wgpu" => Some("gpu_not_guaranteed"),
+        _ => Some("backend_unreported"),
+    };
+    serde_json::json!({ "deterministic": reason.is_none(), "reason": reason })
+}
+
+/// #3720: `value` with the identity fields and the determinism promise added, when it is
+/// a completion object; `None` (leave the body byte-identical) for anything else.
 fn with_model_identity(
     mut value: serde_json::Value,
     identity: &ModelIdentity,
+    determinism: &serde_json::Value,
 ) -> Option<serde_json::Value> {
     let object = value.get("object").and_then(serde_json::Value::as_str)?;
     if !IDENTIFIED_OBJECTS.contains(&object) {
@@ -445,6 +466,7 @@ fn with_model_identity(
     body.insert("model_digest".into(), identity.digest.clone().into());
     body.insert("apr_version".into(), identity.apr_version.clone().into());
     body.insert("apr_git_sha".into(), identity.apr_git_sha.clone().into());
+    body.insert("determinism".into(), determinism.clone());
     Some(value)
 }
 

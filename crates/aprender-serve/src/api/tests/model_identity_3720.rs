@@ -1,7 +1,8 @@
 //! #3720: `apr serve` names the model that answered. Every response carries
 //! `x-apr-model-digest` (the sha256 `sha256sum` prints for the served file), and a
 //! completion body carries `model_digest`, `apr_version` and `apr_git_sha`. A server
-//! that was given no identity claims none.
+//! that was given no identity claims none. The body also says whether a repeat is promised
+//! byte-identical: `determinism`, from the backend the server dispatches to.
 
 use axum::{
     body::Body,
@@ -89,20 +90,31 @@ async fn a_completion_body_names_what_produced_it() {
     assert_eq!(v["model_digest"], "ab".repeat(32));
     assert_eq!(v["apr_version"], "0.71.0");
     assert_eq!(v["apr_git_sha"], "deadbeef");
+    // The demo state's legacy model is on no backend `compute_class_from_residency`
+    // names, so nothing is promised and the body says why.
+    assert_eq!(compute_class_from_residency(&AppState::demo().expect("demo")), "unknown");
+    assert_eq!(
+        v["determinism"],
+        serde_json::json!({"deterministic": false, "reason": "backend_unreported"}),
+        "{v}"
+    );
     assert!(v["choices"].is_array(), "the completion itself is untouched: {v}");
 
     let bare = json(send(app(None), "POST", "/v1/chat/completions", Some(chat())).await).await;
     assert!(bare.get("model_digest").is_none(), "no identity, no claim: {bare}");
+    assert!(bare.get("determinism").is_none(), "no identity, no claim: {bare}");
 }
 
 #[test]
 fn only_a_completion_object_is_stamped() {
     let id = identity();
+    let det = serve_determinism("cpu");
     for object in ["chat.completion", "text_completion"] {
-        let v = with_model_identity(serde_json::json!({"object": object, "id": "x"}), &id)
+        let v = with_model_identity(serde_json::json!({"object": object, "id": "x"}), &id, &det)
             .expect("a completion is stamped");
         assert_eq!(v["model_digest"], "ab".repeat(32));
         assert_eq!(v["id"], "x");
+        assert_eq!(v["determinism"], det);
     }
     for other in [
         serde_json::json!({"object": "list", "data": []}),
@@ -110,6 +122,22 @@ fn only_a_completion_object_is_stamped() {
         serde_json::json!({"status": "healthy"}),
         serde_json::json!(["chat.completion"]),
     ] {
-        assert!(with_model_identity(other.clone(), &id).is_none(), "{other}");
+        assert!(with_model_identity(other.clone(), &id, &det).is_none(), "{other}");
+    }
+}
+
+/// Each backend `compute_class_from_residency` can name, and what the body promises for it.
+#[test]
+fn serve_determinism_case_table() {
+    for (class, deterministic, reason) in [
+        ("cpu", true, serde_json::Value::Null),
+        ("cuda", false, "gpu_not_guaranteed".into()),
+        ("wgpu", false, "gpu_not_guaranteed".into()),
+        ("unknown", false, "backend_unreported".into()),
+    ] {
+        let d = serve_determinism(class);
+        assert_eq!(d["deterministic"], deterministic, "{class}");
+        assert_eq!(d["reason"], reason, "{class}");
+        assert!(d.get("seed").is_none(), "{class}: the request's seed is the client's own");
     }
 }
