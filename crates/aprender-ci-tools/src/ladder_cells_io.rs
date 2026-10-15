@@ -478,8 +478,20 @@ mod tests {
         std::thread::spawn(move || {
             for c in l.incoming() {
                 let Ok(mut c) = c else { continue };
-                let mut req = [0u8; 4096];
-                let _ = c.read(&mut req);
+                // Drain the whole request: closing with bytes unread resets the connection,
+                // and the client may send its headers and body in two segments.
+                let _ = c.set_read_timeout(Some(std::time::Duration::from_millis(50)));
+                let mut req = Vec::new();
+                let mut buf = [0u8; 4096];
+                while let Ok(n) = c.read(&mut buf) {
+                    if n == 0 {
+                        break;
+                    }
+                    req.extend_from_slice(&buf[..n]);
+                    if req.windows(4).any(|w| w == b"\r\n\r\n") && req.ends_with(b"{}") {
+                        break;
+                    }
+                }
                 let _ = c.write_all(reply);
             }
         });
