@@ -26,17 +26,33 @@ sovereign-ci:
     coverage_on: 'tag'
 
 # A matrix job becomes one section per pinned combination. workspace-test-shard
-# runs as THREE shards, each its own ci.yml job on its own runner: as one shard
-# it took 5358 s of x86-main and was the release critical path. nextest's hash
-# partition N/3 and the explicit runner's round-robin N/3 each cover their list
-# exactly once between the shards; the cross-shard Σ fan-in in the workspace-test
-# verdict job checks that by id. determinism keeps both arches; x86-main runs
-# [X64], the determinism fat job runs [ARM64] + the compare.
+# runs as TEN shards, each its own ci.yml job on its own runner: as one shard
+# it took 5358 s of x86-main and was the release critical path. Each shard has
+# ONE role, so no shard carries two phases end to end (as three mixed shards
+# they measured 35/34/45 min on merge-queue run 38681921622: lib ~12-14 min plus
+# integration ~13-20 min plus once-only steps, each on the same box):
+#   extras   -- the once-only steps (GPU crates, compute, Σ universes, guards,
+#               the whole quick tier); always shard 1, since steps key on it
+#   examples -- `cargo build --examples` alone (631 s on that run)
+#   lib      -- nextest `--partition hash:PART/PARTS` over the workspace lib tests
+#   integ    -- the explicit-command runner's round-robin `--shard PART/PARTS`
+# Within a role the PART/PARTS split covers its list exactly once; the
+# cross-shard Σ fan-in in the workspace-test verdict job checks that by id, and
+# it reads each shard's role from the shard's own staged `role` file.
+# determinism keeps both arches; x86-main runs [X64], the determinism fat job
+# runs [ARM64] + the compare.
 matrix-pins:
   workspace-test-shard:
-    - {shard: 1, shards: 3}
-    - {shard: 2, shards: 3}
-    - {shard: 3, shards: 3}
+    - {shard: 1, shards: 10, role: extras, part: 1, parts: 1}
+    - {shard: 2, shards: 10, role: examples, part: 1, parts: 1}
+    - {shard: 3, shards: 10, role: lib, part: 1, parts: 4}
+    - {shard: 4, shards: 10, role: lib, part: 2, parts: 4}
+    - {shard: 5, shards: 10, role: lib, part: 3, parts: 4}
+    - {shard: 6, shards: 10, role: lib, part: 4, parts: 4}
+    - {shard: 7, shards: 10, role: integ, part: 1, parts: 4}
+    - {shard: 8, shards: 10, role: integ, part: 2, parts: 4}
+    - {shard: 9, shards: 10, role: integ, part: 3, parts: 4}
+    - {shard: 10, shards: 10, role: integ, part: 4, parts: 4}
   determinism:
     - {arch: X64}
     - {arch: ARM64}
@@ -58,24 +74,27 @@ jobs:
   # integration list were ONE serial job, so five gx10 + three yoga clean-room
   # runners sat idle while a merge-queue entry waited on a single box (measured
   # over 24 h: intel 15 / gx10 6 / yoga 5 of 27 workspace-tests; gx10 mean 16 min,
-  # intel 18, intel worst 51 under contention). This job is now a 3-way matrix:
-  # nextest `--partition hash:N/3` splits the lib tests by stable hash, and the
-  # explicit-command runner takes every 3rd fragment (`--shard N/3`). The once-only
-  # steps (GPU crates, compute, quick tier, guards) run on shard 1. Each shard
-  # owns its cargo state (registry + target parent keyed by PR_OR_REF-sN, see the
-  # env below): the test-binary compile is therefore repeated per shard, and it is
-  # cheap because codegen comes from the shared sccache (measured ~1 min on a warm
-  # cache vs 13 min of test execution, which is the part that now runs 3-wide).
+  # intel 18, intel worst 51 under contention). This job is now a 10-way matrix
+  # with one role per shard (see matrix-pins above): four lib shards split the
+  # lib tests by nextest's stable hash (`--partition hash:PART/4`), four integ
+  # shards take every 4th explicit fragment (`--shard PART/4`), one shard builds
+  # the examples, and shard 1 runs the once-only steps (GPU crates, compute,
+  # Σ universes, quick tier, guards). Each shard owns its cargo state (registry +
+  # target parent keyed by PR_OR_REF-sN, see the env below): the test-binary
+  # compile is therefore repeated per shard, with codegen from the shared sccache.
+  # The integration phase is compile-bound (run 38681921622: 520/941/794 s of
+  # cargo compile vs 219/183/212 s of test run per third), so it gets as many
+  # shards as the lib tests.
   # The check-run every consumer reads -- branch protection, `gate`, the BSE-17
   # reuse lookup by check_name -- is the fan-in job `workspace-test` below, which
   # fails unless every shard passed.
   workspace-test-shard:
-    name: workspace-test-shard (${{ matrix.shard }}/${{ matrix.shards }})
+    name: workspace-test-shard (${{ matrix.shard }}/${{ matrix.shards }} ${{ matrix.role }})
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
-        shards: [3]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        shards: [10]
     # PMAT-3138 (#3138): arch-neutral -- intel, yoga OR gx10. Measured 2026-09-12 on
     # gx10 with this image and env, --no-fail-fast: step 1 (59k tests) 10.6 min vs
     # 34.5 on intel, step 2 (102 tree readers) 6.7 vs 27.4, the over-the-cap
@@ -116,6 +135,9 @@ jobs:
       PR_OR_REF: ${{ github.event.pull_request.number || github.ref_name }}-s${{ matrix.shard }}
       SHARD: ${{ matrix.shard }}
       SHARDS: ${{ matrix.shards }}
+      ROLE: ${{ matrix.role }}
+      PART: ${{ matrix.part }}
+      PARTS: ${{ matrix.parts }}
     steps:
       - name: Pre-checkout ownership restore (EACCES self-heal)
         # Five-whys: the end-of-job "Fix file ownership" step is
@@ -470,7 +492,7 @@ jobs:
           git update-ref refs/remotes/origin/main "$base"
           printf 'refinement base: %s base %s pinned as origin/main\n' "${GITHUB_EVENT_NAME}" "$(git rev-parse 'origin/main^{commit}')"
       - name: Workspace lib tests (25,300+)
-        if: steps.tier.outputs.tier == 'full'
+        if: steps.tier.outputs.tier == 'full' && matrix.role == 'lib'
         # Excluded: aprender-compute (SIMD SIGSEGV at exit), aprender-gpu and aprender-cuda-edge
         # -- each runs as its own step below. The GPU crates are `default = []`, but they
         # CANNOT ride this `--workspace` line: cargo unifies features across the whole
@@ -524,13 +546,13 @@ jobs:
             -e SCCACHE_CACHE_SIZE=50G \
             -e CARGO_INCREMENTAL=0 \
             -e CARGO_BUILD_JOBS=8 \
-            -e SHARD -e SHARDS \
+            -e SHARD -e SHARDS -e ROLE -e PART -e PARTS \
             -e CARGO_PROFILE_TEST_DEBUG=line-tables-only \
             -e CARGO_PROFILE_DEV_DEBUG=line-tables-only \
             "$IMAGE" \
-            cargo nextest run --profile ci --workspace --lib --exclude aprender-gpu --exclude aprender-cuda-edge --exclude aprender-compute --partition "hash:${SHARD}/${SHARDS}"
+            cargo nextest run --profile ci --workspace --lib --exclude aprender-gpu --exclude aprender-cuda-edge --exclude aprender-compute --partition "hash:${PART}/${PARTS}"
       - name: "Σ-executed: keep the workspace lib junit (the next nextest run overwrites it)"
-        if: steps.tier.outputs.tier == 'full'
+        if: steps.tier.outputs.tier == 'full' && matrix.role == 'lib'
         # #4433: nextest writes <target>/nextest/ci/junit.xml and every invocation
         # overwrites it, so each run's report is copied out before the next one.
         shell: bash
@@ -593,7 +615,7 @@ jobs:
             "$IMAGE" \
             bash -c 'cargo test -p aprender-compute --lib 2>&1 | tee /tmp/compute-test.log; grep -Eq "test result: ok\. [1-9][0-9]* passed" /tmp/compute-test.log && ! grep -q "test result: FAILED" /tmp/compute-test.log'
       - name: Integration tests
-        if: steps.tier.outputs.tier == 'full'
+        if: steps.tier.outputs.tier == 'full' && matrix.role == 'integ'
         # #2465: the four FALSIFY-AUTH targets were appended here because they
         # were DARK — `falsify_auth_002` appeared nowhere in .github/, scripts/
         # or Makefile, and neither did the contract loader
@@ -662,9 +684,9 @@ jobs:
             -e SCCACHE_CACHE_SIZE=50G \
             -e CARGO_INCREMENTAL=0 \
             -e CARGO_BUILD_JOBS=8 \
-            -e SHARD -e SHARDS \
+            -e SHARD -e SHARDS -e ROLE -e PART -e PARTS \
             "$IMAGE" \
-            bash scripts/ci_run_explicit_test_commands.sh --run ci/explicit-test-commands.d --shard "${SHARD}/${SHARDS}"
+            bash scripts/ci_run_explicit_test_commands.sh --run ci/explicit-test-commands.d --shard "${PART}/${PARTS}"
       - name: "Σ-executed: the tests this job ran are exactly the tests it owes (#4433)"
         if: steps.tier.outputs.tier == 'full' && matrix.shard == 1
         # #4433, the cop's condition on the 5-fat-job PR: "The test-id set across
@@ -676,7 +698,7 @@ jobs:
         # Sharded, a shard owes a partition, not the set: this step (shard 1)
         # lists the universes and checks the shard-1-only GPU and compute steps;
         # the lib and explicit universes go to the workspace-test verdict job,
-        # which compares them with the UNION of the three shards' executed ids.
+        # which compares them with the UNION of the lib and integ shards' executed ids.
         shell: bash
         run: |
           set -euo pipefail
@@ -724,9 +746,15 @@ jobs:
           sig="$RUNNER_TEMP/sigma"
           mkdir -p sigma-shard
           printf '%s\n' "$TIER" > sigma-shard/tier
+          # The verdict job selects the lib junits and the integration logs BY
+          # this file, so a shard that ran the wrong role cannot pass as the
+          # right one, and a role with a missing part is RED there.
+          printf '%s %s %s\n' "$ROLE" "$PART" "$PARTS" > sigma-shard/role
           if [ "$TIER" = full ]; then
-            cp "$sig/lib.junit.xml" sigma-shard/lib.junit.xml
-            cp "${FAT_SECTION_LOG:?the fat driver sets FAT_SECTION_LOG}" sigma-shard/section.log
+            case "$ROLE" in
+              lib) cp "$sig/lib.junit.xml" sigma-shard/lib.junit.xml ;;
+              integ) cp "${FAT_SECTION_LOG:?the fat driver sets FAT_SECTION_LOG}" sigma-shard/section.log ;;
+            esac
             if [ "$SHARD" = 1 ]; then
               cp "$sig/lib.list.json" "$sig/explicit.list.txt" sigma-shard/
             fi
@@ -741,12 +769,12 @@ jobs:
       # list. Measured on the first sharded full-tier run (35361149112, shard 1
       # on yoga): 489 s of that shard's 794 s integration phase was this ONE
       # command, so round-robin sharding could never balance it -- a shard that
-      # drew it was the long pole regardless. It is its own step on shard 3
-      # (whose fragment share is the lightest), so the three shards finish
-      # together. Not a fragment because it is a build, not a test target, and
+      # drew it was the long pole regardless. It is the whole of the examples shard
+      # (631 s on merge-queue run 38681921622), so it shares a box with no test.
+      # Not a fragment because it is a build, not a test target, and
       # no wiring reader (check_model_tests_wired, check_beats_gated) names it.
       - name: Build every example (workspace, keep-going)
-        if: steps.tier.outputs.tier == 'full' && matrix.shard == 3
+        if: steps.tier.outputs.tier == 'full' && matrix.role == 'examples'
         timeout-minutes: 40
         run: |
           set -euo pipefail

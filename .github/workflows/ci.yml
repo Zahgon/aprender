@@ -64,7 +64,7 @@ jobs:
   # container/outputs exactly as the Actions runner did. The workspace tests
   # are the exception: as one shard inside x86-main they took 5358 s of it and
   # were the release critical path, so ci/sections.yml `matrix-pins` splits
-  # them into three shards and each runs as its own `workspace-test-shard` job
+  # them into ten one-role shards and each runs as its own `workspace-test-shard` job
   # below, in parallel. The `workspace-test` verdict job compares the UNION of
   # the shards' executed test ids with the owed universe, by id (#4433).
   #
@@ -398,16 +398,16 @@ jobs:
   # missing from its fat job's results (the job died before writing them) is a
   # failure, never a pass.
   # ==========================================================================
-  # The workspace tests, one shard per job (nextest hash partition N/3 plus the
-  # explicit runner's round-robin N/3), in parallel on the X64 clean-room pool.
-  # The section body is ci/sections.yml `workspace-test-shard`, unchanged.
+  # The workspace tests, one shard per job, one role per shard (ci/sections.yml
+  # matrix-pins: extras, examples, 4 lib hash parts, 4 integ round-robin parts),
+  # in parallel on the X64 clean-room pool. The body is ci/sections.yml `workspace-test-shard`.
   workspace-test-shard:
     runs-on: [self-hosted, Linux, X64, clean-room]   # same pool as x86-main
     timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     outputs:
       results: ${{ steps.run.outputs.results }}
     env:
@@ -425,7 +425,7 @@ jobs:
         id: run
         run: >-
           python3 scripts/ci/fat_driver.py run
-          --sections 'workspace-test-shard?${{ matrix.shard }}?3?'
+          --sections 'workspace-test-shard?${{ matrix.shard }}?10?*'
           --results "$RUNNER_TEMP/fat/results.json"
       # #4948: a cancelled run never reaches a section's own container removal,
       # and its fat-<run>-<section> container then sits on `tail -f /dev/null`
@@ -469,26 +469,43 @@ jobs:
           set -euo pipefail
           d="$RUNNER_TEMP/sigma"
           python3 scripts/ci/sigma_executed.py --self-test
-          tiers=""
-          for n in 1 2 3; do
-            [ -f "$d/sigma-shard-$n/tier" ] || { echo "::error::Σ: shard $n staged no tier file"; exit 1; }
-            tiers="$tiers $(cat "$d/sigma-shard-$n/tier")"
+          # SHARDS is the matrix length above; every shard 1..SHARDS must have
+          # staged its tier and role files, so a dropped shard is RED here.
+          SHARDS=10
+          tiers="" j=() l=() libparts="" integparts=""
+          for n in $(seq 1 "$SHARDS"); do
+            s="$d/sigma-shard-$n"
+            [ -f "$s/tier" ] || { echo "::error::Σ: shard $n staged no tier file"; exit 1; }
+            [ -f "$s/role" ] || { echo "::error::Σ: shard $n staged no role file"; exit 1; }
+            tiers="$tiers $(cat "$s/tier")"
+            read -r role part parts < "$s/role"
+            echo "shard $n: role=$role part=$part/$parts tier=$(cat "$s/tier")"
+            case "$role" in
+              lib) j+=(--junit "$s/lib.junit.xml"); libparts="$libparts $part/$parts" ;;
+              integ) l+=(--log "$s/section.log"); integparts="$integparts $part/$parts" ;;
+            esac
           done
           echo "shard tiers:$tiers"
           # Each shard decides its tier on its own. Only an AGREED non-full tier
           # skips the lib/explicit Σ; a split (full full quick) is RED, since
           # the full shards' partitions would otherwise go unchecked.
           set -- $tiers
-          [ "$1" = "$2" ] && [ "$2" = "$3" ] || { echo "::error::Σ: the shards disagree on the tier:$tiers"; exit 1; }
-          [ "$1" = full ] || { echo "every shard ran tier '$1': the lib/explicit Σ is not owed"; exit 0; }
-          j=() l=()
-          for n in 1 2 3; do
-            j+=(--junit "$d/sigma-shard-$n/lib.junit.xml")
-            l+=(--log "$d/sigma-shard-$n/section.log")
+          first=$1
+          for t in "$@"; do
+            [ "$t" = "$first" ] || { echo "::error::Σ: the shards disagree on the tier:$tiers"; exit 1; }
+          done
+          [ "$first" = full ] || { echo "every shard ran tier '$first': the lib/explicit Σ is not owed"; exit 0; }
+          # Each role's parts are exactly 1..PARTS, once each. The id-level Σ
+          # below would also catch a missing part, but this names it.
+          for want in lib:"$libparts" integ:"$integparts"; do
+            r=${want%%:*} got=$(printf '%s\n' ${want#*:} | sort -t/ -k1,1n | tr '\n' ' ')
+            p=$(printf '%s\n' ${want#*:} | head -1 | cut -d/ -f2)
+            exp=$(seq 1 "${p:-0}" | sed "s|\$|/${p:-0}|" | tr '\n' ' ')
+            [ -n "$p" ] && [ "$got" = "$exp" ] || { echo "::error::Σ: role $r parts are '$got', want '$exp'"; exit 1; }
           done
           rc=0
-          python3 scripts/ci/sigma_executed.py nextest --kind "nextest lib (3 shards)" "${j[@]}" --list-json "$d/sigma-shard-1/lib.list.json" || rc=1
-          python3 scripts/ci/sigma_executed.py explicit --kind "explicit (3 shards)" "${l[@]}" --step "Integration tests" --list "$d/sigma-shard-1/explicit.list.txt" || rc=1
+          python3 scripts/ci/sigma_executed.py nextest --kind "nextest lib ($(( ${#j[@]} / 2 )) lib shards)" "${j[@]}" --list-json "$d/sigma-shard-1/lib.list.json" || rc=1
+          python3 scripts/ci/sigma_executed.py explicit --kind "explicit ($(( ${#l[@]} / 2 )) integ shards)" "${l[@]}" --step "Integration tests" --list "$d/sigma-shard-1/explicit.list.txt" || rc=1
           exit "$rc"
 
   ci-gate:
