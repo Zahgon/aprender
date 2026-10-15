@@ -23,7 +23,7 @@ clap = { version = "4", features = ["derive"] }
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-serde_yaml_ng = "0.10"
+serde-saphyr = { workspace = true }
 # Error handling
 anyhow = "1.0"
 thiserror = "2.0"
@@ -36,7 +36,7 @@ num_cpus = "1.17"
 comfy-table = "7"
 colored = "3"
 # GPU profiling: direct cuBLAS measurement (OWN THE STACK)
-trueno-gpu = { path = "../aprender-gpu", version = "0.71.1", features = ["cuda"], optional = true, package = "aprender-gpu" }
+trueno-gpu = { path = "../aprender-gpu", version = "0.71.3", features = ["cuda"], optional = true, package = "aprender-gpu" }
 
 [features]
 default = []
