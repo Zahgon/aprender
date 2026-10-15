@@ -995,6 +995,29 @@ fn count_run(m: &Model, s: &Slot, prompt: &mut String, density: &mut f64) -> Res
     Ok(row)
 }
 
+/// The verbs `jobs` owes in `mode`, `run` first: it counts.
+fn slot_verbs<'a>(jobs: &'a [(&'static str, Py)], mode: &str) -> Vec<&'a Py> {
+    let mut verbs: Vec<&Py> = jobs
+        .iter()
+        .filter(|(m, _)| *m == mode)
+        .map(|(_, v)| v)
+        .collect();
+    verbs.sort_by_key(|v| v.as_str() != Some("run"));
+    verbs
+}
+
+/// A prompt of `tok` tokens, less when the model's context must leave room for a `budget`
+/// answer: `min(tok, ctx - budget - 1)`.
+fn prompt_target(tok: i128, ctx: &Py, budget: i64) -> Result<i128, String> {
+    if !ctx.truthy() {
+        return Ok(tok);
+    }
+    let room = py_int(ctx)?
+        .checked_sub(i128::from(budget) + 1)
+        .ok_or_else(overflow)?;
+    Ok(tok.min(room))
+}
+
 /// Every verb of one (rung, mode) slot, `run` first: it counts.
 fn measure_slot(
     m: &Model,
@@ -1005,13 +1028,7 @@ fn measure_slot(
     let mut prompt = build_prompt(s.target, acc.density)?;
     write_text(&s.pf, &prompt)?;
     let mut measured: Option<Py> = None;
-    let mut verbs: Vec<&Py> = jobs
-        .iter()
-        .filter(|(mode, _)| *mode == s.mode)
-        .map(|(_, v)| v)
-        .collect();
-    verbs.sort_by_key(|v| v.as_str() != Some("run"));
-    for verb in verbs {
+    for verb in slot_verbs(jobs, s.mode) {
         let row = base_row(m.item, verb, s.mode, s.rid, s.budget)?;
         let mut row = match verb.as_str() {
             Some("run") => {
@@ -1066,14 +1083,7 @@ fn measure_rung(
         } else {
             m.a.max_tokens
         };
-        let target = if ctx.truthy() {
-            let room = py_int(ctx)?
-                .checked_sub(i128::from(budget) + 1)
-                .ok_or_else(overflow)?;
-            tok.min(room)
-        } else {
-            tok
-        };
+        let target = prompt_target(tok, ctx, budget)?;
         let pf = path_join(&m.a.work, &format!("prompt-{}-{mode}.txt", py_str(rid)));
         let slot = Slot {
             rid,
@@ -1536,6 +1546,82 @@ mod tests {
         let exact = tiny.len() + 2 * line;
         let p = build_prompt(1, (exact as f64 + 0.5) / 1.01).expect("a prompt");
         assert_eq!(p.len(), exact);
+        // Each filler line is numbered in turn: the second one is 000001, never 000000 again.
+        assert!(p.contains("Log entry 000001: the ferry"));
+        assert!(!p.contains("Log entry 000002"));
+    }
+
+    #[test]
+    fn a_slot_runs_only_its_own_modes_verbs_run_first() {
+        let jobs = [
+            ("off", Py::str("chat")),
+            ("on", Py::str("code")),
+            ("off", Py::str("run")),
+        ];
+        assert_eq!(
+            slot_verbs(&jobs, "off"),
+            vec![&Py::str("run"), &Py::str("chat")]
+        );
+        assert_eq!(slot_verbs(&jobs, "on"), vec![&Py::str("code")]);
+    }
+
+    #[test]
+    fn a_prompt_leaves_room_for_the_answer_and_one_token() {
+        // int(ctx) - budget - 1 when that is under the rung, else the rung.
+        assert_eq!(prompt_target(9000, &Py::Int(8192), 64), Ok(8127));
+        assert_eq!(prompt_target(4096, &Py::Int(8192), 64), Ok(4096));
+        assert_eq!(prompt_target(9000, &Py::None, 64), Ok(9000));
+        assert_eq!(prompt_target(9000, &Py::Int(0), 64), Ok(9000));
+    }
+
+    #[test]
+    fn an_answer_of_exactly_120_chars_has_no_more_clause() {
+        let r = finish(row(), 0, &"x".repeat(120), "").expect("row");
+        let want = format!(
+            "answer does not contain the needle planted at token 0: '{}'",
+            "x".repeat(120)
+        );
+        assert_eq!(*r.at("reason"), Py::Str(want));
+    }
+
+    #[test]
+    fn a_container_ran_is_unhashable_as_in_python() {
+        assert_eq!(
+            backend_name(&Py::List(vec![])),
+            Err("TypeError: unhashable type: 'list'".to_owned())
+        );
+        assert_eq!(
+            backend_name(&Py::dict()),
+            Err("TypeError: unhashable type: 'dict'".to_owned())
+        );
+        assert_eq!(backend_name(&Py::Int(1)), Ok(Py::None));
+    }
+
+    #[test]
+    fn text_of_a_truthy_non_string_is_a_type_error() {
+        assert_eq!(text_of(Some(&Py::Int(0))), Ok(String::new()));
+        assert_eq!(
+            text_of(Some(&Py::Int(5))),
+            Err("TypeError: an answer of type 'int' is not text".to_owned())
+        );
+    }
+
+    #[test]
+    fn chat_keeps_a_dict_line_without_backend_as_text() {
+        let out =
+            "{\"a\": 1}\nTANGERINE-4417\n{\"backend\": {\"ran\": \"gpu\", \"fell_back\": false}}\n";
+        let r = chat_row(row(), 0, out, "").expect("row");
+        assert_eq!(*r.at("answer_chars"), Py::Int(23));
+        assert_eq!(*r.at("backend"), Py::str("cuda"));
+    }
+
+    #[test]
+    fn mib_bytes_refuses_what_has_no_integer() {
+        assert_eq!(mib_bytes("2"), Ok(Some(2 * MIB)));
+        // The regex only captures digits and dots, but the fn takes any text: NaN is refused,
+        // never truncated to 0.
+        assert!(mib_bytes("nan").is_err());
+        assert!(mib_bytes("inf").is_err());
     }
 
     #[test]
