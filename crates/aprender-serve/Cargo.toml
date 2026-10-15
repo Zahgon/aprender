@@ -179,7 +179,7 @@ uuid = { version = "1", features = ["v4", "serde", "js"] }
 provable-contracts = { workspace = true }  # #4369: build_helper::env_key, the one CONTRACT_* key builder
 # Parsing provable-contracts binding.yaml for CONTRACT_* env vars (build.rs)
 serde = { version = "1", features = ["derive"] }
-serde_yaml_ng = "0.10"
+serde-saphyr = { workspace = true }
 
 [dev-dependencies]
 # Contract trait enforcement (Section 23)
@@ -188,7 +188,7 @@ provable-contracts = { workspace = true }  # versioned (#4175): tests call its i
 # the contract is the ORIGIN of the capability facts and capability.rs is its
 # consumer. Already a build-dependency (build.rs parses binding.yaml); a
 # build-dependency is not linked into the test binary, so it is declared here too.
-serde_yaml_ng = "0.10"
+serde-saphyr = { workspace = true }
 
 # Visual regression testing framework (playbooks, TUI testing, GPU pixel verification)
 jugar-probar = { path = "../aprender-test-lib", package = "aprender-test-lib", features = ["tui", "gpu"] }
