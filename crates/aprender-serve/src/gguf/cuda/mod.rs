@@ -49,7 +49,7 @@ mod weights;
 pub use backend::CudaBackend;
 // PMAT-3477 (#3090): the Gated DeltaNet GPU model and its device state.
 pub use forward_qwen35_cuda::{
-    PrefillAttention, Qwen35CudaCheckpoint, Qwen35CudaModel, Qwen35CudaState,
+    PrefillAttention, Qwen35CudaCheckpoint, Qwen35CudaModel, Qwen35CudaState, Qwen35StepOut,
     PREFILL_MAX_CHUNK_ROWS, UNIFIED_PREFILL_CHUNK_ROWS,
 };
 // #3714: the Qwen3-MoE GPU model, its device state, and the MoE shape it is built for.
@@ -57,6 +57,7 @@ pub use forward_qwen3_moe_resident::{Qwen3MoeCudaModel, Qwen3MoeCudaState, Qwen3
 // PMAT-072: Step-wise batched decode state for lock-releasing scheduler
 pub use generation::{BatchedDecodeState, SlotRecorder};
 // #4971: what a prefill extracts for the session's first token.
+pub(crate) use generation::select_batched_token;
 pub(crate) use generation::FirstToken;
 
 use crate::error::{RealizarError, Result};
