@@ -21,7 +21,7 @@
 //! Capture is the manual recorder (trueno#243): the capture token runs eagerly
 //! with recording on, so it produces real logits, and the graph is built from
 //! the recorded launches. Every executor op this step reaches records itself
-//! (audited for #4233: the pinned MWV GEMVs, rmsnorm, per-head rmsnorm,
+//! (audited for #4233: the MWV GEMVs, and since #3513 the DP4A ones too, rmsnorm, per-head rmsnorm,
 //! residual add, fused SwiGLU, and all GDN ops); `CPU_RMSNORM=1` must not be set.
 //!
 //! Opt-in with `QWEN35_CUDA_GRAPH=1` until the token-identity and tok/s

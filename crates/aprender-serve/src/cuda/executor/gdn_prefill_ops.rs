@@ -7,7 +7,8 @@
 //!    rows. This path is f32 end to end — deliberately NOT `cublas_prefill_gemm`, whose
 //!    default on sm_89+ is FP8 and whose other legs are FP16/WMMA/DP4A: the hybrid feeds
 //!    its projections into a recurrence, which compounds low-precision activation error
-//!    (`Qwen35CudaModel::pin_float_gemv` documents the measured DP4A failure). The
+//!    (#3090's DP4A failure was a stale Q8_1 activation, #4258; f32 stays here as
+//!    the precision margin the prefill parity budgets are written against). The
 //!    handle is `CUBLAS_PEDANTIC_MATH` (no TF32), so SGEMM here is fp32 in and out.
 //!    #4313 adds legs, chosen by `APR_QWEN35_PREFILL_GEMM`:
 //!    - `f16` caches each weight once as fp16 (prewarmed at load when it fits in

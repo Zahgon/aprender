@@ -971,9 +971,9 @@ fn qwen35_cuda_attention_ops_match_cpu_given_the_same_inputs() {
         // CPU production op: `fused_matmul_into` quantizes its activation to
         // Q8_K and is itself ~3e-3 from exact, so it cannot be the reference a
         // 1e-3 bar is written against. See COSINE_FLOOR and the parity-floor
-        // test. These are not this ticket's kernels, but the float GEMV is what
-        // the constructor pins, so this is where a regression in that choice
-        // shows up first.
+        // test. These are not this ticket's kernels, but they are the GEMV variants
+        // the constructor keeps (DP4A on sm_89 since #3513), so this is where a
+        // regression in that choice shows up first.
         let q_full_e = exact_gemv(&a.attn_q, &normed_g);
         let k_e = exact_gemv(&a.attn_k, &normed_g);
         let out_e = exact_gemv(&a.attn_output, &attn_out_in_g);
@@ -1207,11 +1207,10 @@ fn qwen35_cuda_the_parity_floor_is_the_cpu_references_own_activation_quantizatio
         .fused_matmul_into(&x, &a.attn_q, &mut cpu)
         .expect("cpu attn_q");
 
-    // NOT `pin_reference_gemv()`: the constructor pins the float variants for
-    // every model of this architecture, and a test that re-pins measures its
-    // own call instead of production behaviour (#3090 review). The pin itself
-    // is asserted by `qwen35_cuda_a_fresh_model_pins_the_float_gemv_variants`;
-    // if it ever stops holding, the first assertion below turns red here too.
+    // NOT `pin_reference_gemv()`: a test that re-pins measures its own call
+    // instead of production behaviour (#3090 review). Production keeps the
+    // profile's variants (#3513), asserted by
+    // `qwen35_cuda_a_fresh_model_keeps_the_profiles_gemv_variants`.
     let mut gpu = Qwen35CudaModel::new(&qwen, executor).expect("build the CUDA model");
     let got = gpu
         .attn_q_gemv_of_host_input(il, &x)
@@ -1237,19 +1236,19 @@ fn qwen35_cuda_the_parity_floor_is_the_cpu_references_own_activation_quantizatio
     );
 }
 
-/// A model built the ordinary way already runs the FLOAT GEMV kernels — the pin
-/// is production behaviour, not something a test remembers to do.
+/// A model built the ordinary way keeps the GEMV variants the device profile
+/// picked, and does not pin the float pair (#3513).
 ///
-/// `GpuProfile::detect` picks the DP4A variants for this device; the
-/// constructor overrides them for this architecture because DP4A is
-/// catastrophic through the recurrence (the falsifier below). If that override
-/// is ever dropped, decode silently returns garbage tokens and only this
-/// assertion says so before the parity tests do.
+/// The float pin went in because DP4A measured "catastrophic through the
+/// recurrence". That was #4258's stale Q8_1 activation, and with it fixed DP4A
+/// is faster on 0.8B and 4B and holds CPU parity (`qwen35_cuda_gemv_pair_ab_*`,
+/// `qwen35_cuda_both_gemv_pairs_match_cpu_teacher_forced_*`). If the pin
+/// silently comes back, decode loses that throughput and only this says so.
 #[test]
 #[serial_test::serial]
-fn qwen35_cuda_a_fresh_model_pins_the_float_gemv_variants() {
-    use crate::cuda::gpu_profile::{Q4kVariant, Q6kVariant};
+fn qwen35_cuda_a_fresh_model_keeps_the_profiles_gemv_variants() {
     let executor = qwen35_cuda_fixture_or_skip!();
+    let detected = (executor.gpu_profile.q4k, executor.gpu_profile.q6k);
     let mapped = crate::gguf::MappedGGUFModel::from_path(MODEL_PATH).expect("map the GGUF");
     let base = load_cpu_model(&mapped);
     let qwen =
@@ -1258,8 +1257,8 @@ fn qwen35_cuda_a_fresh_model_pins_the_float_gemv_variants() {
     let gpu = Qwen35CudaModel::new(&qwen, executor).expect("build the CUDA model");
     assert_eq!(
         gpu.gemv_variants(),
-        (Q4kVariant::Mwv, Q6kVariant::Mwv),
-        "Qwen35CudaModel::new must pin the float GEMV variants for this architecture"
+        detected,
+        "Qwen35CudaModel::new must keep the GEMV variants GpuProfile::detect picked (#3513)"
     );
 }
 
@@ -1274,8 +1273,8 @@ fn qwen35_cuda_a_fresh_model_pins_the_float_gemv_variants() {
 /// position. So this now guards the fix: if the stale-activation reuse comes back,
 /// the argmax breaks here.
 ///
-/// The float pin in `Qwen35CudaModel::with_max_seq_len` stays until DP4A is
-/// re-measured on 2B/4B (#4030). This test only says the pin's stated reason is gone.
+/// #3513 then lifted the float pin on that evidence plus the 4B A/B
+/// (`qwen35_cuda_gemv_pair_ab_*`).
 #[test]
 #[serial_test::serial]
 fn qwen35_cuda_dp4a_gemv_holds_parity_through_the_recurrence() {
@@ -1841,4 +1840,226 @@ fn qwen35_cuda_graph_decode_is_token_identical_to_eager_0_8b() {
 fn qwen35_cuda_graph_decode_is_token_identical_to_eager_4b() {
     let executor = qwen35_cuda_file_or_skip!(MODEL_PATH_4B);
     qwen35_graph_matches_eager(MODEL_PATH_4B, executor);
+}
+
+/// #3513: which GEMV pair should a Qwen3.5 decode run? The float pin
+/// (`pin_float_gemv`) went in for correctness, and #4258 removed that reason, so
+/// the remaining question is throughput. This measures it, on one model and one
+/// GPU in one process: eager greedy decode (the production path; the graph is
+/// opt-in) under the float pair and under the DP4A pair, interleaved over
+/// `ROUNDS` so a neighbour's load hits both, and the CPU greedy tokens as the
+/// reference both must reproduce.
+///
+/// It prints `[aprender#3513]` lines with the median ms/tok of each pair and the
+/// first step at which each diverges from the CPU. It asserts only what makes
+/// the numbers mean something: both pairs were really armed, and each pair is
+/// token-stable across its own rounds.
+fn qwen35_gemv_pair_ab(path: &str, executor: crate::cuda::CudaExecutor) {
+    use crate::cuda::gpu_profile::{Q4kVariant, Q6kVariant};
+    const STEPS: usize = 64;
+    const ROUNDS: usize = 5;
+    let mapped = crate::gguf::MappedGGUFModel::from_path(path).expect("map the GGUF");
+    let base = load_cpu_model(&mapped);
+    let qwen =
+        Qwen35Model::from_model_and_layers(&base, &mapped.model, mapped.data()).expect("qwen35");
+
+    // The CPU reference tokens, greedy, same prompt and length.
+    let mut cpu_state = qwen.new_state(LONG_PROMPT.len() + STEPS + 1);
+    let mut logits = Vec::new();
+    for (pos, &token) in LONG_PROMPT.iter().enumerate() {
+        logits = qwen
+            .forward_single_qwen35(token, &mut cpu_state, pos)
+            .expect("cpu prompt forward");
+    }
+    // The CPU top-1 minus top-2 logit at each step: a divergence where this is
+    // tiny is a near-tie, not a precision loss (CLAUDE.md discipline 6).
+    let mut margin = Vec::with_capacity(STEPS);
+    let mut cpu = Vec::with_capacity(STEPS);
+    for i in 0..STEPS {
+        let next = crate::gguf::ops::argmax(&logits) as u32;
+        margin.push(top2_margin(&logits));
+        cpu.push(next);
+        logits = qwen
+            .forward_single_qwen35(next, &mut cpu_state, LONG_PROMPT.len() + i)
+            .expect("cpu decode forward");
+    }
+
+    let mut gpu = Qwen35CudaModel::with_max_seq_len(&qwen, executor, LONG_PROMPT.len() + STEPS + 1)
+        .expect("build the CUDA model");
+    gpu.set_decode_graph(false);
+    let pairs = [
+        ("float", Q4kVariant::Mwv, Q6kVariant::Mwv),
+        ("dp4a", Q4kVariant::HwDp4a, Q6kVariant::HwDp4a),
+    ];
+    // Warm both pairs once (module load, first-touch allocations).
+    for &(_, q4k, q6k) in &pairs {
+        gpu.executor_mut().gpu_profile.q4k = q4k;
+        gpu.executor_mut().gpu_profile.q6k = q6k;
+        let _ = qwen35_greedy(&mut gpu, &LONG_PROMPT, 8);
+    }
+    let mut ms: [Vec<f64>; 2] = [Vec::new(), Vec::new()];
+    let mut toks: [Option<Vec<u32>>; 2] = [None, None];
+    for _ in 0..ROUNDS {
+        for (i, &(name, q4k, q6k)) in pairs.iter().enumerate() {
+            gpu.executor_mut().gpu_profile.q4k = q4k;
+            gpu.executor_mut().gpu_profile.q6k = q6k;
+            assert_eq!(gpu.gemv_variants(), (q4k, q6k), "{name} pair not armed");
+            let (out, tps) = qwen35_greedy(&mut gpu, &LONG_PROMPT, STEPS);
+            ms[i].push(1000.0 / tps);
+            match &toks[i] {
+                None => toks[i] = Some(out),
+                Some(first) => assert_eq!(first, &out, "{name} pair is not token-stable"),
+            }
+        }
+    }
+    let median = |v: &mut Vec<f64>| {
+        v.sort_by(f64::total_cmp);
+        v[v.len() / 2]
+    };
+    let (float_ms, dp4a_ms) = (median(&mut ms[0]), median(&mut ms[1]));
+    for (i, &(name, _, _)) in pairs.iter().enumerate() {
+        let out = toks[i].as_ref().expect("measured");
+        let first_diff = out.iter().zip(&cpu).position(|(a, b)| a != b);
+        eprintln!(
+            "[aprender#3513] {path}: {name} median {:.3} ms/tok over {ROUNDS}x{STEPS}; \
+             first divergence from the CPU at step {first_diff:?} (CPU top-2 margin there {:?})",
+            if i == 0 { float_ms } else { dp4a_ms },
+            first_diff.map(|s| margin[s]),
+        );
+    }
+    eprintln!(
+        "[aprender#3513] {path}: dp4a/float = {:.3}x ms/tok (below 1 = DP4A faster)",
+        dp4a_ms / float_ms
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn qwen35_cuda_gemv_pair_ab_0_8b() {
+    let executor = qwen35_cuda_fixture_or_skip!();
+    qwen35_gemv_pair_ab(MODEL_PATH, executor);
+}
+
+#[test]
+#[serial_test::serial]
+fn qwen35_cuda_gemv_pair_ab_4b() {
+    let executor = qwen35_cuda_file_or_skip!(MODEL_PATH_4B);
+    qwen35_gemv_pair_ab(MODEL_PATH_4B, executor);
+}
+
+/// Top-1 minus top-2 of a logit row.
+fn top2_margin(logits: &[f32]) -> f32 {
+    let (mut a, mut b) = (f32::NEG_INFINITY, f32::NEG_INFINITY);
+    for &x in logits {
+        if x > a {
+            b = a;
+            a = x;
+        } else if x > b {
+            b = x;
+        }
+    }
+    a - b
+}
+
+/// #3513: teacher-forced argmax agreement with the CPU under one GEMV pair.
+///
+/// Free-running greedy decode stops comparing at the first near-tie, since
+/// both streams then decode different text. Here the GPU is fed the CPU's own
+/// greedy tokens, so every step is compared on the same input. Returns
+/// (steps, mismatches, mismatches where the CPU top-2 margin is at least
+/// `TIE`) per prompt; only the last count is a precision defect.
+fn qwen35_teacher_forced_mismatches(
+    qwen: &Qwen35Model<'_>,
+    gpu: &mut Qwen35CudaModel<'_>,
+    prompt: &[u32],
+    steps: usize,
+) -> (usize, usize, usize) {
+    const TIE: f32 = 0.1;
+    let mut cpu_state = qwen.new_state(prompt.len() + steps + 1);
+    let mut gpu_state = gpu.new_state().expect("device state");
+    let (mut n, mut any, mut real) = (0, 0, 0);
+    let mut next = prompt[0];
+    for pos in 0..prompt.len() + steps {
+        let token = if pos < prompt.len() {
+            prompt[pos]
+        } else {
+            next
+        };
+        let want = qwen
+            .forward_single_qwen35(token, &mut cpu_state, pos)
+            .expect("cpu forward");
+        let got = gpu
+            .forward_single(token, &mut gpu_state, pos)
+            .expect("gpu forward");
+        next = crate::gguf::ops::argmax(&want) as u32;
+        if pos + 1 >= prompt.len() {
+            n += 1;
+            if crate::gguf::ops::argmax(&got) as u32 != next {
+                any += 1;
+                if top2_margin(&want) >= TIE {
+                    real += 1;
+                }
+            }
+        }
+    }
+    (n, any, real)
+}
+
+/// Four prompts: the fixture's, the 4B file's France prompt, and two
+/// reorderings, so a single near-tie cannot decide the call.
+const TF_PROMPTS: [&[u32]; 4] = [
+    &LONG_PROMPT,
+    &PROMPT_4B,
+    &[9707, 2610, 525, 11, 1879],
+    &[760, 9338, 369, 6511, 314, 0],
+];
+
+fn qwen35_teacher_forced_both_pairs(path: &str, executor: crate::cuda::CudaExecutor) {
+    use crate::cuda::gpu_profile::{Q4kVariant, Q6kVariant};
+    const STEPS: usize = 48;
+    let mapped = crate::gguf::MappedGGUFModel::from_path(path).expect("map the GGUF");
+    let base = load_cpu_model(&mapped);
+    let qwen =
+        Qwen35Model::from_model_and_layers(&base, &mapped.model, mapped.data()).expect("qwen35");
+    let mut gpu = Qwen35CudaModel::with_max_seq_len(&qwen, executor, 8 + STEPS + 1)
+        .expect("build the CUDA model");
+    gpu.set_decode_graph(false);
+    let mut real_total = [0usize; 2];
+    for (i, (name, q4k, q6k)) in [
+        ("float", Q4kVariant::Mwv, Q6kVariant::Mwv),
+        ("dp4a", Q4kVariant::HwDp4a, Q6kVariant::HwDp4a),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        gpu.executor_mut().gpu_profile.q4k = q4k;
+        gpu.executor_mut().gpu_profile.q6k = q6k;
+        for (p, prompt) in TF_PROMPTS.iter().enumerate() {
+            let (n, any, real) = qwen35_teacher_forced_mismatches(&qwen, &mut gpu, prompt, STEPS);
+            real_total[i] += real;
+            eprintln!(
+                "[aprender#3513] {path}: {name} prompt {p}: {any}/{n} teacher-forced argmax \
+                 mismatches, {real} with a CPU top-2 margin >= 0.1"
+            );
+        }
+    }
+    assert_eq!(
+        real_total,
+        [0, 0],
+        "a GEMV pair disagreed with the CPU where the CPU was not near a tie (float, dp4a)"
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn qwen35_cuda_both_gemv_pairs_match_cpu_teacher_forced_0_8b() {
+    let executor = qwen35_cuda_fixture_or_skip!();
+    qwen35_teacher_forced_both_pairs(MODEL_PATH, executor);
+}
+
+#[test]
+#[serial_test::serial]
+fn qwen35_cuda_both_gemv_pairs_match_cpu_teacher_forced_4b() {
+    let executor = qwen35_cuda_file_or_skip!(MODEL_PATH_4B);
+    qwen35_teacher_forced_both_pairs(MODEL_PATH_4B, executor);
 }

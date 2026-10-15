@@ -616,19 +616,17 @@ impl<'a> Qwen35CudaModel<'a> {
             });
         }
 
-        // PRODUCTION DEFAULT, not a test affordance (PMAT-3477 / #3090): this
-        // architecture runs the FLOAT Q4_K/Q6_K GEMV kernels, never the DP4A
-        // ones `GpuProfile::detect` picks for a dense decode.
-        //
-        // The pin's original reason, "DP4A is catastrophic through the
-        // recurrence" (1.656 relative, a wrong argmax at position 0), was
-        // #4258: no qwen35 writer kernel cleared `q8_activation_valid`, so
-        // every DP4A GEMV reused the first Q8_1 activation. With that fixed,
-        // DP4A holds the parity contract on 0.8B
-        // (`qwen35_cuda_dp4a_gemv_holds_parity_through_the_recurrence`). The pin
-        // stays until DP4A is re-measured on 2B/4B (#4030). Lifting it is a
-        // perf decision to make on that evidence, not a side effect of this fix.
-        Self::pin_float_gemv(&mut executor.gpu_profile);
+        // NO GEMV pin (#3513): this architecture runs whatever Q4_K/Q6_K
+        // variants `GpuProfile::detect` picked, DP4A on sm_89, like a dense
+        // decode. Until #3513 it pinned the float kernels. That pin's reason,
+        // "DP4A is catastrophic through the recurrence", was the stale Q8_1
+        // activation of #4258, now fixed. Measured on the RTX 4090 (release,
+        // eager, 5x64 interleaved, `qwen35_cuda_gemv_pair_ab_*`), DP4A decodes
+        // 0.8B at 0.911x and 4B at 0.821x the float pair's ms/tok. Teacher-forced
+        // against the CPU over four prompts x 49 steps
+        // (`qwen35_cuda_both_gemv_pairs_match_cpu_teacher_forced_*`), every
+        // argmax disagreement of either pair is where the CPU's top-2 logits are
+        // inside 0.1: a near-tie, not lost precision.
 
         let mut layers = Vec::with_capacity(model.layers.len());
         for (il, layer) in model.layers.iter().enumerate() {
@@ -984,11 +982,10 @@ impl<'a> Qwen35CudaModel<'a> {
     /// test that means to measure the Gated `DeltaNet` kernels, and not the GEMV
     /// quantization choice, pins this first.
     ///
-    /// This is ALSO what [`Self::with_max_seq_len`] does at build time for
-    /// every model of this architecture (see the comment there and
-    /// [`Self::gemv_variants`]); the method stays because a test that wants to
-    /// say "the float GEMV, explicitly" should be able to, and because a caller
-    /// that has re-armed DP4A on the executor can get back to the pinned state.
+    /// Production does NOT do this: since #3513 a built model keeps the
+    /// variants `GpuProfile::detect` picked (see [`Self::with_max_seq_len`] and
+    /// [`Self::gemv_variants`]). This is for a test that means the float GEMV,
+    /// explicitly.
     pub fn pin_reference_gemv(&mut self) {
         Self::pin_float_gemv(&mut self.executor.gpu_profile);
     }
@@ -1001,8 +998,8 @@ impl<'a> Qwen35CudaModel<'a> {
 
     /// The Q4_K and Q6_K GEMV variants this model will actually dispatch.
     ///
-    /// A freshly built model reports the float pair — see the pinning comment
-    /// in [`Self::with_max_seq_len`]. A caller that overrides the executor's
+    /// A freshly built model reports what `GpuProfile::detect` picked — see the
+    /// comment in [`Self::with_max_seq_len`] (#3513). A caller that overrides the executor's
     /// profile afterwards sees its own choice here, which is what the DP4A
     /// falsifier test reads.
     #[must_use]
