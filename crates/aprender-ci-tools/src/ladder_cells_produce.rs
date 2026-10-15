@@ -348,12 +348,13 @@ pub fn meminfo(text: &str) -> Result<(Option<i128>, Option<i128>), String> {
 }
 
 /// `-> (total_bytes, free_bytes)`: a discrete GPU per nvidia-smi; a unified-memory GPU
-/// (where nvidia-smi says [N/A]) per /proc/meminfo.
-fn gpu_memory() -> Result<(Option<i128>, Option<i128>), String> {
-    if let Some((t, f)) = gpu_mem(&NVIDIA_SMI) {
+/// (where nvidia-smi says [N/A]) per /proc/meminfo. The query and the meminfo path are
+/// [`NVIDIA_SMI`] and `/proc/meminfo` outside the tests.
+fn gpu_memory(smi: &[&str], meminfo_path: &str) -> Result<(Option<i128>, Option<i128>), String> {
+    if let Some((t, f)) = gpu_mem(smi) {
         return Ok((Some(t), Some(f)));
     }
-    let Ok(b) = std::fs::read("/proc/meminfo") else {
+    let Ok(b) = std::fs::read(meminfo_path) else {
         return Ok((None, None));
     };
     meminfo(&crate::pystr::py_read_text(&b))
@@ -989,7 +990,8 @@ fn count_run(m: &Model, s: &Slot, prompt: &mut String, density: &mut f64) -> Res
             break;
         }
         let d = prompt.chars().count() as f64 / as_float(pt)?;
-        *density = if d > 1.0 { d } else { 1.0 };
+        // `max(1.0, d)`: a NaN density is 1.0 there too.
+        *density = d.max(1.0);
         if reaches(pt, s.target)? {
             break;
         }
@@ -1249,15 +1251,14 @@ fn only_skips(only: &str, file: &Py) -> Result<bool, String> {
 
 /// The judge owes nothing for a declaimed model (#4590): hours of cells would measure a claim
 /// the release does not make.
-fn note_declaimed(file: &Py, host: &Py, d: &Py) -> Result<(), String> {
-    eprintln!(
+fn note_declaimed(file: &Py, host: &Py, d: &Py) -> Result<String, String> {
+    Ok(format!(
         "cells: {} DECLAIMED on {} (arch {}, #{}) -- not measured",
         py_str(file),
         py_str(host),
         py_str(subscript(d, "arch")?),
         py_str(subscript(d, "issue")?)
-    );
-    Ok(())
+    ))
 }
 
 fn cmd_measure(a: &Measure) -> Result<Outcome, String> {
@@ -1289,7 +1290,7 @@ fn cmd_measure(a: &Measure) -> Result<Outcome, String> {
         return Ok(Outcome::Refuse(1, lines.join("\n")));
     }
     let mut rows: Vec<Py> = Vec::new();
-    let mut matched = 0;
+    let mut matched = false;
     // Line by line, as the original: a bad line is met only after the models before it.
     for line in read_lines(&a.common.inventory)? {
         if py_strip(&line).is_empty() {
@@ -1300,17 +1301,17 @@ fn cmd_measure(a: &Measure) -> Result<Outcome, String> {
         if only_skips(only, file)? {
             continue;
         }
-        matched += 1;
+        matched = true;
         let d = find_declaimed(&dec, &host, dict_get(&it, "arch")?).filter(|d| d.truthy());
         if let Some(d) = d {
-            note_declaimed(file, &host, d)?;
+            eprintln!("{}", note_declaimed(file, &host, d)?);
             continue;
         }
         let path =
             path_for(&paths, file).ok_or_else(|| format!("KeyError: {}", py_repr_value(file)))?;
         rows.extend(measure_item(&r, &it, path, &ladder, &rungs_doc, a)?);
     }
-    if !only.is_empty() && matched == 0 {
+    if !only.is_empty() && !matched {
         // A rung id selects no inventory model; zero rows at rc 0 would read as "this host
         // owes no cells" (#3715).
         return Ok(Outcome::Refuse(
@@ -1341,7 +1342,7 @@ fn cmd_measure(a: &Measure) -> Result<Outcome, String> {
 pub fn run(cmd: &Sub) -> Result<String, (u8, String)> {
     match cmd {
         Sub::Gpumem => {
-            let (t, f) = gpu_memory().map_err(|e| (1, e))?;
+            let (t, f) = gpu_memory(&NVIDIA_SMI, "/proc/meminfo").map_err(|e| (1, e))?;
             let doc = Py::Dict(vec![
                 kv("gpu_mem_total_bytes", opt_int(t)),
                 kv("gpu_mem_free_bytes", opt_int(f)),
@@ -1355,6 +1356,10 @@ pub fn run(cmd: &Sub) -> Result<String, (u8, String)> {
         },
     }
 }
+
+#[cfg(test)]
+#[path = "ladder_cells_produce_e2e.rs"]
+mod e2e;
 
 #[cfg(test)]
 mod tests {
@@ -1530,6 +1535,29 @@ mod tests {
             format!("The passphrase is {NEEDLE_WORD}. Remember it.\n{QUESTION}")
         );
         assert!(build_prompt(10, f64::INFINITY).is_err());
+        // Filler stops on the line that reaches the want exactly: int(1 * c * 1.01) = exact.
+        let line = "Log entry 000000: the ferry left the harbour on time and the weather stayed \
+                    calm.\n"
+            .len();
+        let exact = tiny.len() + 2 * line;
+        let p = build_prompt(1, (exact as f64 + 0.5) / 1.01).expect("a prompt");
+        assert_eq!(p.len(), exact);
+    }
+
+    #[test]
+    fn gpu_memory_falls_back_to_meminfo() {
+        let smi = ["sh", "-c", "echo '100, 50'"];
+        let mib = Some(100 * MIB);
+        assert_eq!(gpu_memory(&smi, "/nonexistent"), Ok((mib, Some(50 * MIB))));
+        let dir = std::env::temp_dir().join(format!("lcp-meminfo-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a dir");
+        let path = dir.join("meminfo");
+        std::fs::write(&path, "MemTotal: 10 kB\nMemAvailable: 5 kB\n").expect("written");
+        let path = path.to_str().expect("utf-8");
+        let na = ["sh", "-c", "echo '[N/A], [N/A]'"];
+        assert_eq!(gpu_memory(&na, path), Ok((Some(10_240), Some(5_120))));
+        assert_eq!(gpu_memory(&na, "/nonexistent"), Ok((None, None)));
+        std::fs::remove_dir_all(&dir).expect("removed");
     }
 
     #[test]
@@ -1761,5 +1789,147 @@ mod tests {
             r.argv(&["run"]).join(" "),
             "flock -E 75 -w 5 /l choom -n 1000 -- apr run"
         );
+    }
+
+    #[test]
+    fn runner_call_returns_rc_stdout_stderr() {
+        let r = Runner {
+            apr: "sh",
+            lock: "",
+            wait: 0,
+            timeout: 10,
+        };
+        let got = r.call(&["-c", "cat; echo err >&2; exit 3"], Some("in"));
+        assert_eq!(got, Ok((3, "in".to_owned(), "err\n".to_owned())));
+    }
+
+    #[test]
+    fn model_paths_split_at_the_first_bar_and_later_lines_win() {
+        let dir = std::env::temp_dir().join(format!("lcp-paths-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let f = dir.join("models.txt");
+        std::fs::write(&f, "a|/x\nno bar\nb|/y|z\na|/w\n\n").expect("models");
+        let f = f.display().to_string();
+        let paths = model_paths(&f).expect("read");
+        assert_eq!(
+            paths,
+            vec![
+                ("a".to_owned(), "/x".to_owned()),
+                ("b".to_owned(), "/y|z".to_owned()),
+                ("a".to_owned(), "/w".to_owned()),
+            ]
+        );
+        assert_eq!(path_for(&paths, &Py::str("a")), Some("/w"));
+        assert_eq!(path_for(&paths, &Py::str("b")), Some("/y|z"));
+        assert_eq!(path_for(&paths, &Py::str("c")), None);
+        assert_eq!(path_for(&paths, &Py::Int(1)), None);
+        let j = dir.join("rows.jsonl");
+        std::fs::write(&j, "{\"a\": 1}\n  \n\n[2]\n").expect("jsonl");
+        let rows = jsonl(&j.display().to_string()).expect("rows");
+        assert_eq!(rows, vec![j(r#"{"a": 1}"#), j("[2]")]);
+        assert_eq!(
+            read_lines(&f).expect("lines"),
+            vec!["a|/x\n", "no bar\n", "b|/y|z\n", "a|/w\n", "\n"]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(read_lines(&f).is_err_and(|e| e.starts_with("FileNotFoundError: ")));
+    }
+
+    #[test]
+    fn only_skips_every_other_model() {
+        let f = Py::str("m.gguf");
+        assert_eq!(only_skips("", &f), Ok(false));
+        assert_eq!(only_skips("m.gguf", &f), Ok(false));
+        assert_eq!(only_skips("inv:m.gguf", &f), Ok(false));
+        assert_eq!(only_skips("n.gguf", &f), Ok(true));
+        assert_eq!(only_skips("inv:n.gguf", &f), Ok(true));
+        assert_eq!(only_skips("", &Py::Int(1)), Ok(false));
+        assert!(only_skips("x", &Py::Int(1)).is_err_and(|e| e.contains("\"int\"")));
+    }
+
+    #[test]
+    fn note_declaimed_names_the_arch_and_issue() {
+        let d = j(r#"{"arch": "qwen2", "issue": 4590}"#);
+        assert_eq!(
+            note_declaimed(&Py::str("m.gguf"), &Py::str("t"), &d),
+            Ok("cells: m.gguf DECLAIMED on t (arch qwen2, #4590) -- not measured".to_owned())
+        );
+        assert!(note_declaimed(&Py::str("m"), &Py::str("t"), &j("{}")).is_err());
+    }
+
+    #[test]
+    fn counts_compare_as_python_numbers() {
+        assert_eq!(as_float(&Py::Bool(true)), Ok(1.0));
+        assert_eq!(as_float(&Py::Bool(false)), Ok(0.0));
+        assert_eq!(as_float(&Py::Int(7)), Ok(7.0));
+        assert_eq!(as_float(&Py::Float(2.5)), Ok(2.5));
+        assert!(as_float(&Py::str("7")).is_err());
+        for (pt, want) in [
+            (Py::Bool(true), [true, true, false]),
+            (Py::Int(1), [true, true, false]),
+            (Py::Float(1.0), [true, true, false]),
+        ] {
+            let got = [0, 1, 2].map(|t| reaches(&pt, t).expect("a number"));
+            assert_eq!(got, want, "{pt:?}");
+        }
+        assert!(reaches(&Py::None, 0).is_err());
+    }
+
+    #[test]
+    fn fill_measured_fills_only_a_missing_count() {
+        let mut r = row();
+        fill_measured(&mut r, None);
+        assert_eq!(r, row());
+        fill_measured(&mut r, Some(&Py::Int(9)));
+        assert_eq!(r.at("prompt_tokens"), &Py::Int(9));
+        assert_eq!(r.at("prompt_tokens_source"), &Py::str(SOURCE));
+        let mut r = row();
+        r.set("prompt_tokens", Py::Int(3));
+        let before = r.clone();
+        fill_measured(&mut r, Some(&Py::Int(9)));
+        assert_eq!(r, before);
+    }
+
+    #[test]
+    fn rungs_group_by_id_and_size_then_sort_by_size() {
+        let cell = |rid: &str, tok: Option<i128>, mode: &'static str| Cell {
+            rid: Py::str(rid),
+            tok,
+            mode,
+            verb: Py::str("run"),
+        };
+        let groups = group_by_rung(vec![
+            cell("8k", Some(8192), "off"),
+            cell("a", Some(4096), "off"),
+            cell("b", Some(4096), "off"),
+            cell("8k", Some(8192), "on"),
+            cell("8k", Some(1), "on"),
+            cell("x", None, "off"),
+        ]);
+        let keys: Vec<(String, Option<i128>, usize)> = groups
+            .iter()
+            .map(|((rid, tok), jobs)| (py_str(rid), *tok, jobs.len()))
+            .collect();
+        assert_eq!(
+            keys,
+            vec![
+                ("x".to_owned(), None, 1),
+                ("8k".to_owned(), Some(1), 1),
+                ("a".to_owned(), Some(4096), 1),
+                ("b".to_owned(), Some(4096), 1),
+                ("8k".to_owned(), Some(8192), 2),
+            ]
+        );
+    }
+
+    #[test]
+    fn write_text_writes_or_names_the_path() {
+        let dir = std::env::temp_dir().join(format!("lcp-write-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let f = dir.join("t.txt").display().to_string();
+        assert_eq!(write_text(&f, "hé"), Ok(()));
+        assert_eq!(std::fs::read_to_string(&f).expect("read"), "hé");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(write_text(&f, "x").is_err_and(|e| e.starts_with("OSError: ")));
     }
 }

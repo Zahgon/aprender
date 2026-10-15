@@ -158,9 +158,9 @@ fn as_number(v: &Py) -> Option<f64> {
     }
 }
 
+/// An int, compared exactly; a bool is 0 or 1, which [`as_number`] holds exactly too.
 fn as_integer(v: &Py) -> Option<i128> {
     match v {
-        Py::Bool(b) => Some(i128::from(*b)),
         Py::Int(i) => Some(*i),
         _ => None,
     }
@@ -259,7 +259,7 @@ pub fn float_repr(x: f64) -> String {
         } else {
             format!(".{rest}")
         };
-        let esign = if exp < 0 { '-' } else { '+' };
+        let esign = if exp.is_negative() { '-' } else { '+' };
         format!("{first}{frac}e{esign}{:02}", exp.abs())
     };
     format!("{sign}{body}")
@@ -541,7 +541,8 @@ impl Parser {
 
     /// The `\uXXXX` escape whose `u` is at `self.pos`, with a following low surrogate joined.
     fn unicode_escape(&mut self) -> Result<char, LoadErr> {
-        let esc = self.pos - 1;
+        // Python names the `u`, not the backslash before it.
+        let esc = self.pos;
         let hi = self
             .hex4(self.pos + 1)
             .ok_or_else(|| self.err("Invalid \\uXXXX escape", esc))?;
@@ -808,5 +809,156 @@ mod tests {
             py_repr_value(&load(r#"{"a": [1, null, true], "b": "x'y"}"#)),
             r#"{'a': [1, None, True], 'b': "x'y"}"#
         );
+    }
+
+    #[test]
+    fn truth_and_type_names_are_pythons() {
+        let cases = [
+            (Py::None, false, "NoneType"),
+            (Py::Bool(true), true, "bool"),
+            (Py::Int(0), false, "int"),
+            (Py::Int(-2), true, "int"),
+            (Py::Float(0.0), false, "float"),
+            (Py::Float(0.5), true, "float"),
+            (Py::str(""), false, "str"),
+            (load("[0]"), true, "list"),
+            (load("{}"), false, "dict"),
+        ];
+        for (v, truthy, name) in cases {
+            assert_eq!((v.truthy(), v.type_name()), (truthy, name), "{v:?}");
+        }
+    }
+
+    #[test]
+    fn equality_is_exact_for_ints_and_deep_for_containers() {
+        let big = 1_i128 << 53;
+        assert!(!py_eq(&Py::Int(big + 1), &Py::Int(big)));
+        assert!(py_eq(&Py::Int(big + 1), &Py::Int(big + 1)));
+        assert!(py_eq(&Py::Bool(true), &Py::Float(1.0)));
+        assert!(!py_eq(&Py::Bool(false), &Py::Float(1.0)));
+        assert!(py_eq(&load("[1, [1]]"), &load("[1.0, [true]]")));
+        assert!(!py_eq(&load("[1]"), &load("[1, 2]")));
+        assert!(!py_eq(&load("[1]"), &load("[2]")));
+        assert!(py_eq(
+            &load(r#"{"a": 1, "b": 2}"#),
+            &load(r#"{"b": 2.0, "a": 1}"#)
+        ));
+        assert!(!py_eq(&load(r#"{"a": 1}"#), &load(r#"{"a": 2}"#)));
+        assert!(!py_eq(&load(r#"{"a": 1}"#), &load(r#"{"b": 1}"#)));
+        assert!(!py_eq(&load(r#"{"a": 1}"#), &load(r#"{"a": 1, "b": 1}"#)));
+        assert!(!py_eq(&Py::str("1"), &Py::Int(1)));
+        assert_eq!(py_contains(&load(r#"{"a": 1}"#), &Py::str("a")), Ok(true));
+        assert_eq!(py_contains(&load(r#"{"a": 1}"#), &Py::str("b")), Ok(false));
+        assert_eq!(py_contains(&load(r#"{"a": 1}"#), &Py::Int(1)), Ok(false));
+        assert_eq!(py_contains(&load("[1, 2]"), &Py::Float(2.0)), Ok(true));
+        assert_eq!(py_contains(&Py::str("abc"), &Py::str("bc")), Ok(true));
+        assert!(py_contains(&Py::str("abc"), &Py::Int(1)).is_err());
+        assert!(py_contains(&Py::Int(1), &Py::Int(1)).is_err());
+    }
+
+    #[test]
+    fn int_of_a_float_needs_a_finite_one() {
+        assert_eq!(py_int(&Py::Float(-2.7)), Ok(-2));
+        assert_eq!(
+            py_int(&Py::Float(f64::INFINITY)),
+            Err("cannot convert float inf to integer".to_owned())
+        );
+        assert_eq!(
+            py_int(&Py::Float(f64::NAN)),
+            Err("cannot convert float nan to integer".to_owned())
+        );
+        assert_eq!(float_repr(f64::INFINITY), "inf");
+        assert_eq!(float_repr(f64::NEG_INFINITY), "-inf");
+        assert_eq!(dumps(&Py::Float(f64::INFINITY)), "Infinity");
+        assert_eq!(float_repr(1e-5), "1e-05");
+        assert_eq!(float_repr(1e22), "1e+22");
+    }
+
+    #[test]
+    fn nested_dict_values_indent_one_level_deeper() {
+        assert_eq!(
+            dumps_indent1(&load(r#"{"a": [1]}"#)),
+            "{\n \"a\": [\n  1\n ]\n}"
+        );
+    }
+
+    #[test]
+    fn load_err_message_is_either_kind() {
+        assert_eq!(LoadErr::Decode("d".into()).into_msg(), "d");
+        assert_eq!(LoadErr::Fatal("f".into()).into_msg(), "f");
+    }
+
+    #[test]
+    fn numbers_parse_as_python_reads_them() {
+        assert_eq!(load("[1,2]"), Py::List(vec![Py::Int(1), Py::Int(2)]));
+        assert_eq!(
+            load("[1e5, 1E+2, 2e-3, 1.5]"),
+            Py::List(vec![
+                Py::Float(100_000.0),
+                Py::Float(100.0),
+                Py::Float(0.002),
+                Py::Float(1.5)
+            ])
+        );
+        for s in ["1.", "1e"] {
+            assert_eq!(
+                loads(s),
+                Err(LoadErr::Decode(
+                    "Extra data: line 1 column 2 (char 1)".into()
+                )),
+                "{s}"
+            );
+        }
+        assert_eq!(
+            loads("[1,\n x]"),
+            Err(LoadErr::Decode(
+                "Expecting value: line 2 column 2 (char 5)".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn unicode_escapes_join_surrogate_pairs() {
+        assert_eq!(load(r#""é😀""#), Py::str("é😀"));
+        assert_eq!(load(r#""AB""#), Py::str("AB"));
+        assert_eq!(load(r#""\ud83dA""#), Py::str("\u{fffd}A"));
+        assert_eq!(load(r#""\ud83dxxdc00""#), Py::str("\u{fffd}xxdc00"));
+        assert_eq!(
+            loads(r#""\uzzzz""#),
+            Err(LoadErr::Decode(
+                "Invalid \\uXXXX escape: line 1 column 3 (char 2)".into()
+            ))
+        );
+        assert_eq!(
+            loads(r#""\ud83d\uzzzz""#),
+            Err(LoadErr::Decode(
+                "Invalid \\uXXXX escape: line 1 column 9 (char 8)".into()
+            ))
+        );
+        assert_eq!(
+            loads(r#"["ab\u12"]"#),
+            Err(LoadErr::Decode(
+                "Invalid \\uXXXX escape: line 1 column 6 (char 5)".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn depth_is_counted_per_nesting_not_per_value() {
+        let ok = std::thread::Builder::new()
+            .stack_size(8 << 20)
+            .spawn(|| {
+                let at = |n: usize| loads(&format!("{}{}", "[".repeat(n), "]".repeat(n)));
+                let siblings = format!("[{}[]]", "[],".repeat(2000));
+                (
+                    at(MAX_DEPTH).is_ok(),
+                    matches!(at(MAX_DEPTH + 1), Err(LoadErr::Fatal(_))),
+                    loads(&siblings).is_ok(),
+                )
+            })
+            .expect("spawn")
+            .join()
+            .expect("join");
+        assert_eq!(ok, (true, true, true));
     }
 }
