@@ -65,7 +65,7 @@ proof_obligations:
   - id: ACE-GAP-PO-005
     type: invariant
     property: "Changing started_at, wall_s and wall_ms leaves the comment byte-identical (ACE-GAP-005)"
-    formal: "∀ x ∈ {started_at, wall_s, wall_ms}. render(a[x ↦ x']) = render(a)"
+    formal: "∀ b. same_run(a, b) ⇒ render(a) = render(b)"
 
 falsification_tests:
   - id: FALSIFY-ACE-GAP-001
