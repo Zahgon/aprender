@@ -9,8 +9,9 @@
 //! - prefill = 1000 / `prompt_per_second` (ms per token);
 //! - decode = 1000 / `predicted_per_second` (ms per token).
 //!
-//! A shot of another shape or with no server timing voids the whole series: a
-//! figure is never the median of the shots that happened to fit.
+//! A shot of another shape, with no server timing, or whose server evaluated
+//! fewer than `pp` prompt tokens (a reused cached prefix) voids the whole
+//! series: a figure is never the median of the shots that happened to fit.
 
 use crate::crux_perf::Phases;
 use crate::harness::{classify, Parsed, Reply};
@@ -31,14 +32,21 @@ pub enum ShotRefusal {
         prompt: u64,
         completion: u64,
     },
-    /// Shot `i` carried no positive, finite server timing.
+    /// Shot `i` carried no positive, finite server timing, or no `prompt_n`.
     Untimed(usize),
+    /// Shot `i` evaluated `evaluated` prompt tokens, not `pp`: the server
+    /// reused a cached prefix, so its prefill time is not a pp-token prefill.
+    Cached {
+        shot: usize,
+        evaluated: u64,
+    },
     /// Fewer shots than [`crate::crux_perf::MIN_RUNS`].
     TooFew(usize),
 }
 
 /// The request for one shot: greedy, exactly `tg` tokens, end-of-sequence ignored
-/// so a short answer cannot shrink the decode sample.
+/// so a short answer cannot shrink the decode sample, and no prompt cache, so
+/// every shot prefills all `pp` tokens (llama-server caches by default).
 /// (`json!` expands to an `unwrap` of an infallible `to_value`, hence the allow.)
 #[allow(clippy::disallowed_methods)]
 #[must_use]
@@ -49,6 +57,7 @@ pub fn shot_body(model: &str, prompt: &str, tg: u64) -> Value {
         "temperature": 0.0,
         "max_tokens": tg,
         "ignore_eos": true,
+        "cache_prompt": false,
         "stream": false,
     })
 }
@@ -115,6 +124,16 @@ fn sample(i: usize, s: &Parsed, pp: u64, tg: u64) -> Result<[f64; 3], ShotRefusa
             prompt,
             completion,
         });
+    }
+    match s.prompt_n {
+        None => return Err(ShotRefusal::Untimed(i)),
+        Some(n) if n != pp => {
+            return Err(ShotRefusal::Cached {
+                shot: i,
+                evaluated: n,
+            })
+        }
+        Some(_) => {}
     }
     let t = s.server.as_ref().ok_or(ShotRefusal::Untimed(i))?;
     let per_tok = |tps: Option<f64>| {

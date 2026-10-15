@@ -8,7 +8,7 @@ fn shot(prompt: u64, completion: u64, prompt_ms: f64, pps: f64, tps: f64) -> Par
         body: format!(
             r#"{{"choices":[{{"message":{{"content":"VERDICT: PASS"}}}}],
             "usage":{{"prompt_tokens":{prompt},"completion_tokens":{completion}}},
-            "timings":{{"prompt_ms":{prompt_ms},"predicted_ms":2000.0,
+            "timings":{{"prompt_n":{prompt},"prompt_ms":{prompt_ms},"predicted_ms":2000.0,
             "prompt_per_second":{pps},"predicted_per_second":{tps}}}}}"#
         ),
         wall_ms: 2500.0,
@@ -90,6 +90,27 @@ fn falsify_crux_perf_008_an_untimed_shot_voids_the_series() {
 }
 
 #[test]
+fn falsify_crux_perf_011_a_cached_prefill_voids_the_series() {
+    // llama-server reused the 512-token prefix and evaluated 1 token: its
+    // prompt_ms is a one-token prefill, not a pp512 one.
+    let mut shots = good(6);
+    shots[3].prompt_n = Some(1);
+    assert_eq!(
+        phases_from_shots(&shots, PP, TG, 1),
+        Err(ShotRefusal::Cached {
+            shot: 3,
+            evaluated: 1
+        })
+    );
+    // No prompt_n is no evidence the prompt was evaluated at all.
+    shots[3].prompt_n = None;
+    assert_eq!(
+        phases_from_shots(&shots, PP, TG, 1),
+        Err(ShotRefusal::Untimed(3))
+    );
+}
+
+#[test]
 fn too_few_or_no_shots_give_no_phases() {
     assert_eq!(phases_from_shots(&[], PP, TG, 1), Err(ShotRefusal::NoShots));
     assert_eq!(
@@ -133,13 +154,23 @@ fn the_shot_body_asks_for_exactly_tg_tokens_past_eos() {
     assert_eq!(b["ignore_eos"], true);
     assert_eq!(b["temperature"], 0.0);
     assert_eq!(b["stream"], false);
+    assert_eq!(b["cache_prompt"], false);
 }
 
 /// A fake server: `overhead(url)` template tokens plus one per word, exactly
 /// `max_tokens` generated, and a slow first full-length shot (cold load).
+/// Like llama-server, it reuses the last prompt's prefix unless the body says
+/// `cache_prompt: false`, and then evaluates only 1 prompt token.
 fn server(overhead: fn(&str) -> u64) -> impl FnMut(&str, &Value) -> Result<Reply, String> {
     let mut warm = std::collections::HashSet::new();
+    let mut last = std::collections::HashMap::new();
     move |url: &str, body: &Value| {
+        let text = body["messages"][0]["content"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        let cached = body["cache_prompt"] != false
+            && last.insert(url.to_string(), text.clone()).as_deref() == Some(text.as_str());
         let words = body["messages"][0]["content"]
             .as_str()
             .map_or(0, |s| s.split_whitespace().count() as u64);
@@ -151,12 +182,13 @@ fn server(overhead: fn(&str) -> u64) -> impl FnMut(&str, &Value) -> Result<Reply
             (128.0, 4000.0, 64.0)
         };
         let prompt = overhead(url) + words;
+        let evaluated = if cached { 1 } else { prompt };
         Ok(Reply {
             status: 200,
             body: format!(
                 r#"{{"choices":[{{"message":{{"content":"x"}}}}],
                 "usage":{{"prompt_tokens":{prompt},"completion_tokens":{max}}},
-                "timings":{{"prompt_ms":{ms},"predicted_ms":1.0,
+                "timings":{{"prompt_n":{evaluated},"prompt_ms":{ms},"predicted_ms":1.0,
                 "prompt_per_second":{pps},"predicted_per_second":{tps}}}}}"#
             ),
             wall_ms: 1.0,

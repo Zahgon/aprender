@@ -124,6 +124,9 @@ pub struct Parsed {
     pub text: String,
     pub tokens: Option<Tokens>,
     pub server: Option<ServerTimings>,
+    /// `timings.prompt_n`: the prompt tokens the server evaluated for this
+    /// request. Below `usage.prompt_tokens` when it reused a cached prefix.
+    pub prompt_n: Option<u64>,
 }
 
 /// Classify a reply. 200 with a message → parsed verdict; a 4xx naming the
@@ -135,6 +138,7 @@ pub fn classify(reply: &Reply) -> Parsed {
         text: reply.body.clone(),
         tokens: None,
         server: None,
+        prompt_n: None,
     };
     if reply.status != 200 {
         let lower = reply.body.to_lowercase();
@@ -169,6 +173,7 @@ pub fn classify(reply: &Reply) -> Parsed {
         text: text.to_string(),
         tokens,
         server,
+        prompt_n: t["prompt_n"].as_u64(),
     }
 }
 
@@ -252,6 +257,7 @@ impl Run {
             text: String::new(),
             tokens: None,
             server: None,
+            prompt_n: None,
         };
         let body = request_body(&self.model_id, &self.prompt, "");
         let mut r = self.receipt(item, &body, &p, 0.0, "-", when);
