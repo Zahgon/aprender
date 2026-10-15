@@ -243,7 +243,7 @@ pub fn float_repr(x: f64) -> String {
         return "nan".to_owned();
     }
     if x.is_infinite() {
-        return if x > 0.0 { "inf" } else { "-inf" }.to_owned();
+        return if x.is_sign_positive() { "inf" } else { "-inf" }.to_owned();
     }
     let sci = format!("{:e}", x.abs());
     let (mant, exp) = sci.split_once('e').unwrap_or((sci.as_str(), "0"));
@@ -282,7 +282,11 @@ fn json_float(x: f64) -> String {
     if x.is_nan() {
         "NaN".to_owned()
     } else if x.is_infinite() {
-        let word = if x > 0.0 { "Infinity" } else { "-Infinity" };
+        let word = if x.is_sign_positive() {
+            "Infinity"
+        } else {
+            "-Infinity"
+        };
         word.to_owned()
     } else {
         float_repr(x)
@@ -780,7 +784,34 @@ mod tests {
                 "Expecting value: line 2 column 4 (char 4)".into()
             ))
         );
-        assert!(matches!(loads("\"a\u{1}\""), Err(LoadErr::Decode(_))));
+        assert_eq!(
+            loads("[\"ab\u{1}\"]"),
+            Err(LoadErr::Decode(
+                "Invalid control character at: line 1 column 5 (char 4)".into()
+            ))
+        );
+        assert_eq!(
+            loads(r#"["ab\x"]"#),
+            Err(LoadErr::Decode(
+                "Invalid \\escape: line 1 column 5 (char 4)".into()
+            ))
+        );
+        assert_eq!(
+            load(r#""\"\\\/\b\f\n\r\t""#),
+            Py::str("\"\\/\u{8}\u{c}\n\r\t")
+        );
+        assert_eq!(
+            loads(r#"[1, "ab"#),
+            Err(LoadErr::Decode(
+                "Unterminated string starting at: line 1 column 5 (char 4)".into()
+            ))
+        );
+        assert_eq!(
+            loads(r#"[1, "ab\"#),
+            Err(LoadErr::Decode(
+                "Unterminated string starting at: line 1 column 5 (char 4)".into()
+            ))
+        );
         assert_eq!(load(" -0 "), Py::Int(0));
         assert_eq!(load("1E2"), Py::Float(100.0));
         // MAX_DEPTH frames need more than a 2 MiB debug test thread; the CLI runs on the
@@ -920,7 +951,10 @@ mod tests {
     #[test]
     fn unicode_escapes_join_surrogate_pairs() {
         assert_eq!(load(r#""é😀""#), Py::str("é😀"));
+        assert_eq!(load(r#""􏿿""#), Py::str("\u{10ffff}"));
         assert_eq!(load(r#""AB""#), Py::str("AB"));
+        // A high surrogate before a non-low `\u` keeps both escapes, each read alone.
+        assert_eq!(load(r#""\ud83dA""#), Py::str("\u{fffd}A"));
         assert_eq!(load(r#""\ud83dA""#), Py::str("\u{fffd}A"));
         assert_eq!(load(r#""\ud83dxxdc00""#), Py::str("\u{fffd}xxdc00"));
         assert_eq!(
