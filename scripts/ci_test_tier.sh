@@ -294,6 +294,11 @@ decide() {
             # landing paid an hour for work the PR and the queue had both already
             # measured.
             local base how why=""
+            # #5172: a TAG push (the release tag) runs the whole workspace. The queue result on
+            # the tagged commit is never cited and no diff is refined: v0.71.0's tag push reused
+            # it and ran no workspace test at all.
+            local gref; gref=$(printenv GITHUB_REF || true)
+            case "$gref" in refs/tags/*) printf 'tier=full\nreason=push of tag %s: a release tag runs the whole workspace -- never a reused merge_group result, never a refined diff (#5172)\n' "${gref#refs/tags/}"; return 0 ;; esac # R-TAGREF
             if [ "$MG_GIVEN" = 1 ]; then
                 why=$(push_reuse_why)
                 if [ -z "$why" ]; then
@@ -393,6 +398,8 @@ self_test() {
     if [ -n "${CI_TEST_TIER_SELF_TEST_PID:-}" ]; then
         printf 'ci_test_tier: refusing a nested self-test (outer self-test pid %s)\n' "$CI_TEST_TIER_SELF_TEST_PID" >&2; return 2
     fi
+    # #5172: a tag-push run's own GITHUB_REF would turn every push row below full.
+    unset GITHUB_REF
     export CI_TEST_TIER_SELF_TEST_PID=$$
     td=$(mktemp -d "${TMPDIR:-/tmp}/ci-tier.XXXXXX"); trap 'rm -rf "${td:?}"' RETURN
     # One decision, many rows. Each full decision re-runs check_tree_reader_tests.sh
@@ -538,6 +545,7 @@ self_test() {
     row 0 "merge_group on a SQUASH queue ref, roadmap entry only -> none: workspace-test has nothing to measure" '^tier=none$' bash -c "$(replay sq-docs)"
     row 0 "  ...and the reason says docs-only, so the skip is auditable in the log" 'docs-only' bash -c "$(replay sq-docs)"
     row 0 "push of a SQUASH landing (one parent, no reflog) -> quick over HEAD^1..HEAD, not full" "^crates=.*$leaf" bash "$T" --event push --repo-root "$td/s-leaf"
+    row 0 "push of a TAG (#5172) -> ONE tier line, full, over the same squash repo: never the refined diff" '^tier=full 1$' bash -c "o=\$(GITHUB_REF=refs/tags/v9.9.9 bash '$T' --event push --repo-root '$td/s-leaf'); printf '%s %s\\n' \"\$(printf '%s\\n' \"\$o\" | grep '^tier=' | head -n1)\" \"\$(printf '%s\\n' \"\$o\" | grep -c '^tier=')\""
     # MUTANT: restore the HEAD^2 gate -- the squash rows above must go back to full.
     sed "s|^\( *\)# IS this PR's diff on the new base. A failed diff still falls closed.|&\n\1if ! git -C \"\$ROOT\" rev-parse -q --verify 'HEAD^2' >/dev/null 2>\&1; then printf 'tier=full\\\\nreason=MUTANT-HEAD2\\\\n'; return 0; fi|" "$T" > "$td/mutant-head2.sh"
     row 0 "mutant with the HEAD^2 gate restored sends the squash group back to full -- the rows discriminate" 'MUTANT-FULL' bash -c "o=\$(bash '$td/mutant-head2.sh' --event merge_group --repo-root '$td/s-leaf' --pr-head '$(qh "$td/s-leaf")' --pr-head-conclusion success 2>&1); case \"\$o\" in *reason=MUTANT-HEAD2*) echo MUTANT-FULL ;; *) echo MUTANT-NOT-APPLIED ;; esac"
@@ -571,7 +579,28 @@ self_test() {
     row 0 "  ...and the crate it left is in the selection" "^crates=.*$leaf" bash -c "$(replay sq-rename)"
     sed 's| diff --no-renames --name-only | diff --name-only |' "$T" > "$td/mutant-renames.sh"
     row 0 "mutant without --no-renames reads the rename as docs-only (tier=none) -- the rows discriminate" 'MUTANT-NONE' bash -c "o=\$(bash '$td/mutant-renames.sh' --event merge_group --repo-root '$td/s-rename' --pr-head '$(qh "$td/s-rename")' --pr-head-conclusion success 2>&1); case \"\$o\" in *tier=none*) echo MUTANT-NONE ;; *) echo MUTANT-NOT-NONE ;; esac"
-    row 0 "ci/sections.yml (#4433) builds the pull_request touched list with --no-renames (the list docs_only judges)" '^ALL-PRESENT$' contains_all "$TREE/ci/sections.yml" 'git diff --no-renames --name-only "origin/${GITHUB_BASE_REF}" HEAD > "$RUNNER_TEMP/touched.txt"'
+    row 0 "ci/sections.yml (#4433) lists the pull_request touched paths through pr_touched_paths.sh, which keeps --no-renames" '^ALL-PRESENT$' contains_all "$TREE/ci/sections.yml" 'bash scripts/ci/pr_touched_paths.sh "origin/${GITHUB_BASE_REF}" HEAD > "$RUNNER_TEMP/touched.txt"'
+    row 0 "  ...and the helper diffs with --no-renames" '^ALL-PRESENT$' contains_all "$TREE/scripts/ci/pr_touched_paths.sh" 'git diff --no-renames --name-only "$mb" "$head"'
+    # #5391: main moves AFTER the PR branched. The PR touches crates/<leaf>; main's later commit
+    # touches crates/other-crate. The PR's touched list must hold the first and never the second.
+    mkmoved() { # $1 dir -> branch pr off base touching crates/$leaf; main then touches crates/other-crate
+        local d=$1
+        git init -q -b main "$d"
+        ( cd "$d" \
+          && export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
+          && export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null \
+          && mkdir -p "crates/own-crate/src" crates/other-crate/src && printf 'a\n' > "crates/own-crate/src/lib.rs" \
+          && printf 'a\n' > crates/other-crate/src/lib.rs && git add -A && git commit -q -m base \
+          && git checkout -q -b pr && printf 'b\n' > "crates/own-crate/src/lib.rs" && git commit -q -am "the PR" \
+          && git checkout -q main && printf 'c\n' > crates/other-crate/src/lib.rs && git commit -q -am "main moved: other-crate" \
+          && git checkout -q pr )
+    }
+    mkmoved "$td/s-moved"
+    PTP="$(cd "$TREE" && pwd)/scripts/ci/pr_touched_paths.sh"  # rows cd into the fixture; TREE may be "."
+    row 0 "#5391 PR touched list: the PR's own crate is listed (merge-base diff)" "^crates/own-crate/src/lib\.rs\$" bash -c "cd '$td/s-moved' && bash '$PTP' main HEAD 2>/dev/null"
+    row 0 "#5391 ...and a crate only main's later commit touched is NOT listed (own crate present, so not vacuous)" '^NOT-LISTED$' bash -c "cd '$td/s-moved' && o=\$(bash '$PTP' main HEAD 2>/dev/null); case \"\$o\" in *other-crate*) echo LISTED-OR-EMPTY;; *crates/own-crate/*) echo NOT-LISTED;; *) echo LISTED-OR-EMPTY;; esac"
+    sed 's|git diff --no-renames --name-only "\$mb" "\$head"|git diff --no-renames --name-only "$base" "$head"|' "$TREE/scripts/ci/pr_touched_paths.sh" > "$td/mutant-tipvstip.sh"
+    row 0 "#5391 mutant (tip vs tip, the old behaviour) lists main's crate -- the rows discriminate" '^MUTANT-LISTS-IT$' bash -c "cd '$td/s-moved' && m=\$(bash '$td/mutant-tipvstip.sh' main HEAD 2>/dev/null); case \"\$m\" in *other-crate*) echo MUTANT-LISTS-IT;; *) echo MUTANT-SURVIVES;; esac"
     # MUTANT: a copy whose queue branch ignores the re-derived diff and always
     # says full is exactly today's behaviour — the rows above must lose the crates.
     sed 's|^\( *\)selection "merge_group|\1printf "tier=full\\nreason=MUTANT\\n"; return 0; selection "merge_group|' "$T" > "$td/mutant-queue.sh"

@@ -135,7 +135,7 @@ trueno-quant = { workspace = true }
 # APR-2231: sovereign `.apr` container leaf. aprender-core From-wraps its
 # AprFormatError into AprenderError and re-exports it (no API break). Leaf has
 # no dependency back on core, so this introduces no publish cycle.
-apr-format = { path = "../apr-format", version = "0.70" }
+apr-format = { path = "../apr-format", version = "0.71" }
 
 # NOTE: trueno-rag (=aprender-rag) removed (APR-MONO self-containment): aprender-rag
 # depends on aprender-core + aprender-serve, so core→rag closed a core→rag→serve→core
@@ -215,7 +215,7 @@ provable-contracts-macros = { workspace = true }
 [build-dependencies]
 provable-contracts = { workspace = true }  # #4369: build_helper::env_key, the one CONTRACT_* key builder
 serde = { version = "1", features = ["derive"] }
-serde_yaml_ng = "0.10"
+serde-saphyr = { workspace = true }
 
 [dev-dependencies]
 proptest = "1.6"
@@ -234,7 +234,8 @@ provable-contracts = { workspace = true }  # versioned (#4175): tests call its i
 # Integration tests for InferenceMonitor (GH-305: was runtime dep, now dev-only).
 # Same publish-time cycle break as renacer above.
 entrenar = { path = "../aprender-train", package = "aprender-train" }
-serde_yaml = "0.9"  # YAML contract binding in tests (FALSIFY-SHIP-009 GATE-APR-PROV-004)
+serde-saphyr = { workspace = true }  # YAML contract binding in tests (FALSIFY-SHIP-009 GATE-APR-PROV-004)
+serde_yaml = "0.9"  # models/modernbert test only: a laya judge path, frozen until LT-1's receipt (#5208)
 # The in-tree contract crate is reached through `provable-contracts` above: upstream
 # repointed that key from the crates.io package to ../aprender-contracts, which is
 # exactly what the old `setfit-contract-schema` alias (plan 01-08, D-14) existed to
@@ -248,6 +249,10 @@ half = { workspace = true }  # IEEE f16 oracle for the convert_report f32_to_f16
 # plain `cargo test --test setfit_conformance` build needs this dev-dependency.
 # Workspace-pinned: no new external package enters the tree.
 sha2 = { workspace = true }
+# Plan 08-03: the modernbert tests read the tiny fixture's raw F16 bytes from
+# model.safetensors (already locked at 0.4.5; the runtime dep is optional).
+# Workspace-pinned (IN-07, plan 08-20): the root pins the same "0.4".
+safetensors = { workspace = true }
 
 [features]
 default = ["parallel"]

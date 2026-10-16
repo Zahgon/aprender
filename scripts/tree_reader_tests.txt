@@ -39,6 +39,7 @@ apr-format	--lib	falsifiers
 apr-format	--test	golden_fixtures
 aprender-build-sha	--lib	<root>
 aprender-cgp	--lib	analysis::contracts
+aprender-ci-tools	--lib	nextest_fail_fast
 aprender-compute-xtask	--bins
 aprender-contracts	--lib	binding
 aprender-contracts	--lib	build_helper
@@ -73,6 +74,7 @@ aprender-contracts	--lib	ontology::extract::pv_contract
 aprender-contracts	--lib	ontology::extract::readme
 aprender-contracts	--lib	ontology::liskov
 aprender-contracts	--lib	ontology::owl
+aprender-contracts	--lib	ontology::readme
 aprender-contracts	--lib	ontology::sigma
 aprender-contracts	--lib	ontology::w3c
 aprender-contracts	--lib	ontology::witness
@@ -83,6 +85,7 @@ aprender-contracts	--lib	query::index
 aprender-contracts	--lib	query::persist
 aprender-contracts	--lib	readme_gen
 aprender-contracts	--lib	schema
+aprender-contracts	--lib	schema::no_test_debt
 aprender-contracts	--lib	scoring::drift
 aprender-contracts	--lib	tree
 aprender-contracts	--test	apr_serve_api_key_auth_contract
@@ -116,6 +119,7 @@ aprender-contracts-cli	--test	ont8_evidence_gate
 aprender-contracts-cli	--test	ont9_self_contract
 aprender-contracts-cli	--test	ont_entity_properties
 aprender-contracts-cli	--test	ont_extract_json
+aprender-contracts-cli	--test	ont_findings_ledger
 aprender-contracts-cli	--test	ont_refusal_receipt
 aprender-contracts-cli	--test	ont_release_readiness
 aprender-contracts-cli	--test	pv_surface_gate
@@ -135,6 +139,8 @@ aprender-core	--lib	format::ship_004
 aprender-core	--lib	format::ship_010
 aprender-core	--lib	format::special_tokens_contract_falsify
 aprender-core	--lib	format::tokenizer_vocab_contract_falsify
+aprender-core	--lib	models::modernbert
+aprender-core	--lib	models::modernbert::config
 aprender-core	--lib	qa::docs
 aprender-core	--lib	qa::velocity
 aprender-core	--lib	release_section
@@ -153,6 +159,13 @@ aprender-core	--test	falsification_spec_v10_tests
 aprender-core	--test	monorepo_invariants
 aprender-core	--test	readme_contract
 aprender-core	--test	setfit_conformance
+aprender-decide	--lib	<root>
+aprender-decide	--lib	test_support
+aprender-decide	--test	demo_run
+aprender-decide	--test	fail_closed_vectors
+aprender-decide	--test	laya_parity
+aprender-decide	--test	pack_laya_smoke
+aprender-distribute	--lib	executor::tls
 aprender-orchestrate	--lib	agent::contracts
 aprender-orchestrate	--lib	agent::driver::chat_template
 aprender-orchestrate	--lib	agent::repl_directives
@@ -183,7 +196,10 @@ aprender-review-experiment	--lib	contamination
 aprender-review-experiment	--lib	prereg
 aprender-serve	--lib	capability
 aprender-serve	--lib	cli::cli_tests
+aprender-serve	--lib	gguf::inference::matmul
+aprender-serve	--lib	gpu::adapters::wgpu_adapter
 aprender-serve	--lib	infer
+aprender-serve	--lib	kernel_registry
 aprender-serve	--lib	quantize::contract_tests
 aprender-shell	--lib	model
 aprender-simulate	--lib	demos::tsp_grasp
@@ -202,6 +218,7 @@ aprender-test-lib	--lib	llm::prompts
 aprender-test-lib	--lib	perf_gate
 aprender-test-lib	--lib	perf_gate::drain
 aprender-test-lib	--lib	perf_gate::protocol
+aprender-test-lib	--lib	perf_gate::ttft_verdict
 aprender-test-lib	--lib	perf_gate::witness
 aprender-train	--lib	hf_pipeline::export::pipeline
 aprender-train	--lib	models::llama_370m

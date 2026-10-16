@@ -1,4 +1,3 @@
-
 /// Create a demo APR v2 model for testing
 pub(crate) fn create_demo_apr_model(_input_dim: usize) -> Result<AprModel, RealizarError> {
     use crate::apr::TensorEntry;
@@ -75,7 +74,10 @@ pub struct ChatCompletionRequest {
     /// (aprender#2375) — see `types::deserialize_temperature_f32`. `/api/chat`
     /// and `/api/generate` build this struct in Rust rather than deserializing
     /// it, so their own `options.temperature` carries the same guard.
-    #[serde(default, deserialize_with = "crate::api::types::deserialize_temperature_f32")]
+    #[serde(
+        default,
+        deserialize_with = "crate::api::types::deserialize_temperature_f32"
+    )]
     pub temperature: Option<f32>,
     /// Nucleus sampling
     #[serde(default)]
@@ -159,6 +161,129 @@ pub struct ChatCompletionRequest {
     /// Absent on both = thinking OFF, production's default since #3801.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub think: Option<bool>,
+    /// #3568 PR 4: OpenAI's structured output. `json_schema` and `json_object` run the turn
+    /// under a constraint and a second reader; `text` (or absent) is today's turn. A `type`
+    /// apr does not know is refused at deserialization, never dropped, with a message that
+    /// names the field and the types apr serves.
+    #[serde(
+        default,
+        deserialize_with = "response_format_of_known_type",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub response_format: Option<ResponseFormat>,
+    /// #4971: OpenAI's `logprobs`. When true the reply carries
+    /// `choices[0].logprobs`, one entry per generated token, or the backend
+    /// answers 501 (ASOC-INV-021).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logprobs: Option<bool>,
+    /// #4971: OpenAI's `top_logprobs`, 0 to 20 alternatives per entry. Only
+    /// with `logprobs: true`; alone it is refused with 400.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_logprobs: Option<TopLogprobs>,
+}
+
+/// OpenAI's `response_format` (#3568 PR 4).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResponseFormat {
+    /// Free text: no constraint.
+    Text,
+    /// Any JSON object: the schema `{"type": "object"}`.
+    JsonObject,
+    /// A JSON Schema the output must satisfy.
+    JsonSchema {
+        /// The schema and its name.
+        json_schema: JsonSchemaFormat,
+    },
+}
+
+/// The `type`s [`ResponseFormat`] serves, in the order a refusal lists them.
+const RESPONSE_FORMAT_TYPES: [&str; 3] = ["text", "json_object", "json_schema"];
+
+/// `deserialize_with` for `response_format` (#3568): a `type` apr does not serve is refused
+/// with a client-visible reason naming the field, where serde's own "unknown variant" text is
+/// hidden by the rejection sanitizer and the caller read only "Invalid request body".
+fn response_format_of_known_type<'de, D>(
+    deserializer: D,
+) -> Result<Option<ResponseFormat>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let value = serde_json::Value::deserialize(deserializer)?;
+    if value.is_null() {
+        return Ok(None);
+    }
+    let kind = value.get("type").and_then(serde_json::Value::as_str);
+    if !kind.is_some_and(|k| RESPONSE_FORMAT_TYPES.contains(&k)) {
+        return Err(D::Error::custom(format!(
+            "{}response_format.type must be one of {}, got {}",
+            crate::api::CLIENT_VISIBLE_MARKER,
+            RESPONSE_FORMAT_TYPES.join(", "),
+            // Unquoted: the sanitizer trims a trailing `"` off a client-visible reason
+            match kind {
+                Some(k) => k.to_string(),
+                None => value
+                    .get("type")
+                    .map_or_else(|| "no type".to_string(), ToString::to_string),
+            }
+        )));
+    }
+    ResponseFormat::deserialize(value)
+        .map(Some)
+        .map_err(D::Error::custom)
+}
+
+/// The `json_schema` object of a `response_format` (#3568 PR 4).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JsonSchemaFormat {
+    /// The schema's name, echoed by OpenAI; apr reads none of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// What the schema is for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// The JSON Schema.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<serde_json::Value>,
+    /// OpenAI's opt-in to enforcement. apr enforces every schema it accepts, so `false`
+    /// loosens nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strict: Option<bool>,
+}
+
+impl ResponseFormat {
+    /// The constraint this format asks for: `None` for `text`.
+    ///
+    /// # Errors
+    /// `SchemaInvalid` for a `json_schema` with no schema, or one that is not an object or a
+    /// boolean.
+    pub fn constraint(
+        &self,
+    ) -> Result<Option<crate::constrain::ConstraintRequest>, crate::constrain::ConstraintError>
+    {
+        use crate::constrain::{ConstraintError, ConstraintRequest};
+        let schema = match self {
+            Self::Text => return Ok(None),
+            Self::JsonObject => serde_json::json!({"type": "object"}),
+            Self::JsonSchema { json_schema } => match &json_schema.schema {
+                Some(s) if s.is_object() || s.is_boolean() => s.clone(),
+                Some(_) => {
+                    return Err(ConstraintError::SchemaInvalid(
+                        "response_format.json_schema.schema is JSON but not a schema: a JSON \
+                         Schema is an object or a boolean"
+                            .to_string(),
+                    ))
+                },
+                None => {
+                    return Err(ConstraintError::SchemaInvalid(
+                        "response_format.json_schema has no `schema`".to_string(),
+                    ))
+                },
+            },
+        };
+        Ok(Some(ConstraintRequest::JsonSchema(schema)))
+    }
 }
 
 /// The `chat_template_kwargs` apr honours (#3723).
@@ -176,13 +301,18 @@ impl ChatCompletionRequest {
     /// [`Self::thinking_conflict`] at the handler entry, so this never has to choose.
     #[must_use]
     pub fn thinking(&self) -> Option<bool> {
-        self.chat_template_kwargs.and_then(|k| k.enable_thinking).or(self.think)
+        self.chat_template_kwargs
+            .and_then(|k| k.enable_thinking)
+            .or(self.think)
     }
 
     /// `Some(reason)` when the two spellings of the toggle disagree (#3723).
     #[must_use]
     pub fn thinking_conflict(&self) -> Option<String> {
-        match (self.chat_template_kwargs.and_then(|k| k.enable_thinking), self.think) {
+        match (
+            self.chat_template_kwargs.and_then(|k| k.enable_thinking),
+            self.think,
+        ) {
             (Some(a), Some(b)) if a != b => Some(format!(
                 "chat_template_kwargs.enable_thinking={a} contradicts think={b}; send one (#3723)"
             )),
@@ -646,6 +776,16 @@ pub struct Timings {
     pub predicted_per_second: Option<f64>,
     /// Which clock produced the two durations.
     pub clock: String,
+    /// Milliseconds from the handler's start to the engine starting prefill:
+    /// template, tokenize, the session lock (#4954). Not a llama.cpp key;
+    /// absent when the engine did not mark prefill's start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub load_ms: Option<f64>,
+    /// Milliseconds from prefill choosing the first token to the first content
+    /// chunk being handed to the stream (#4954). Not a llama.cpp key; absent
+    /// outside a stream, or when the engine did not mark prefill's end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_token_ms: Option<f64>,
 }
 
 /// The clock [`Timings`] is measured on.
@@ -658,7 +798,7 @@ pub const TIMINGS_CLOCK: &str = "server std::time::Instant (CLOCK_MONOTONIC)";
 /// `cuda` feature gate on purpose: the handler that receives it compiles in
 /// every build, so the channel type has to as well.
 ///
-/// Both fields are `Option`: an engine that timed prefill but not decode
+/// Every field is `Option`: an engine that timed prefill but not decode
 /// reports exactly that.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct PhaseTimings {
@@ -666,9 +806,56 @@ pub struct PhaseTimings {
     pub prefill_ms: Option<f64>,
     /// Wall-clock milliseconds spent decoding.
     pub decode_ms: Option<f64>,
+    /// When prefill started (#4954): the handler's anchor for `load_ms`.
+    pub prefill_started: Option<std::time::Instant>,
+    /// When prefill had chosen the first token (#4954): the handler's anchor
+    /// for `first_token_ms`.
+    pub prefill_ended: Option<std::time::Instant>,
 }
 
 impl PhaseTimings {
+    /// The split an engine that marked its phase edges reports (#4954):
+    /// prefill from `prefill_started` to `prefill_ended`, decode from there to
+    /// `decode_ended`, and both marks kept for the handler. A mark out of
+    /// order leaves its duration `None` rather than a zero.
+    #[must_use]
+    pub fn from_marks(
+        prefill_started: std::time::Instant,
+        prefill_ended: std::time::Instant,
+        decode_ended: std::time::Instant,
+    ) -> Self {
+        Self {
+            prefill_ms: elapsed_ms(prefill_started, prefill_ended),
+            decode_ms: elapsed_ms(prefill_ended, decode_ended),
+            prefill_started: Some(prefill_started),
+            prefill_ended: Some(prefill_ended),
+        }
+    }
+
+    /// [`Self::to_timings`] plus the two TTFT edges only the handler can
+    /// close (#4954): `load_ms` from `request_start` to prefill's start, and
+    /// `first_token_ms` from prefill's end to `first_content`, the instant the
+    /// first content chunk was handed to the stream. An edge with a missing or
+    /// out-of-order mark stays `None`.
+    #[must_use]
+    pub fn to_timings_at(
+        self,
+        prompt_n: usize,
+        predicted_n: usize,
+        request_start: std::time::Instant,
+        first_content: Option<std::time::Instant>,
+    ) -> Option<Timings> {
+        let mut timings = self.to_timings(prompt_n, predicted_n)?;
+        timings.load_ms = self
+            .prefill_started
+            .and_then(|started| elapsed_ms(request_start, started));
+        timings.first_token_ms = self
+            .prefill_ended
+            .zip(first_content)
+            .and_then(|(ended, first)| elapsed_ms(ended, first));
+        Some(timings)
+    }
+
     /// Pair the measured durations with the token counts the handler knows.
     ///
     /// Returns `None` unless BOTH phases were measured. A `timings` block whose
@@ -707,8 +894,18 @@ impl Timings {
             predicted_ms,
             predicted_per_second: rate_per_second(predicted_n, predicted_ms),
             clock: TIMINGS_CLOCK.to_string(),
+            load_ms: None,
+            first_token_ms: None,
         }
     }
+}
+
+/// Milliseconds from `earlier` to `later`, or `None` when `later` is earlier.
+#[must_use]
+fn elapsed_ms(earlier: std::time::Instant, later: std::time::Instant) -> Option<f64> {
+    later
+        .checked_duration_since(earlier)
+        .map(|d| d.as_secs_f64() * 1000.0)
 }
 
 /// Tokens per second over a millisecond duration, or `None` when undefined.
@@ -805,6 +1002,30 @@ pub struct ChatDelta {
     /// Content chunk
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    /// #4918: the tool calls a streamed turn made, on one chunk before the
+    /// terminal one. Absent from the JSON when there are none, so a stream
+    /// without tools reads exactly as it did before the field existed.
+    #[serde(default, skip_serializing_if = "no_delta_tool_calls")]
+    pub tool_calls: Option<Vec<ChatDeltaToolCall>>,
+}
+
+fn no_delta_tool_calls(calls: &Option<Vec<ChatDeltaToolCall>>) -> bool {
+    calls.as_ref().is_none_or(Vec::is_empty)
+}
+
+/// One entry of `delta.tool_calls`: a [`ResponseToolCall`] plus the `index`
+/// OpenAI streaming clients key their accumulation on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatDeltaToolCall {
+    /// Position of this call in the turn's list of calls.
+    pub index: usize,
+    /// Unique tool-call id, e.g. "call_0".
+    pub id: String,
+    /// Always "function".
+    #[serde(rename = "type")]
+    pub call_type: String,
+    /// The called function (name + arguments-as-string).
+    pub function: ResponseFunctionCall,
 }
 
 impl ChatCompletionChunk {
@@ -827,6 +1048,7 @@ impl ChatCompletionChunk {
                         None
                     },
                     content,
+                    tool_calls: None,
                 },
                 finish_reason,
             }],
@@ -857,6 +1079,28 @@ impl ChatCompletionChunk {
     /// Create content chunk
     fn content(id: &str, model: &str, text: &str) -> Self {
         Self::new(id, model, Some(text.to_string()), None)
+    }
+
+    /// #4918: the chunk that carries a streamed turn's tool calls, each with
+    /// its `index`. Arguments arrive whole, in this one chunk.
+    fn tool_calls(id: &str, model: &str, calls: Vec<ResponseToolCall>) -> Self {
+        let mut chunk = Self::new(id, model, None, None);
+        let delta = &mut chunk.choices[0].delta;
+        // `new` reads (no content, no finish) as the opening chunk and adds a role.
+        delta.role = None;
+        delta.tool_calls = Some(
+            calls
+                .into_iter()
+                .enumerate()
+                .map(|(index, call)| ChatDeltaToolCall {
+                    index,
+                    id: call.id,
+                    call_type: call.call_type,
+                    function: call.function,
+                })
+                .collect(),
+        );
+        chunk
     }
 
     /// Create the terminal chunk, carrying the reason generation ACTUALLY ended.
