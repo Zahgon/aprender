@@ -320,14 +320,27 @@ jobs:
             export PATH="$CARGO_INSTALL_ROOT/bin:$PATH"
           fi
           cargo deny --version
+      - name: Prove cargo-deny runs on this runner's arch (absent or wrong-arch fails, never skips)
+        run: |
+          set -euo pipefail
+          command -v cargo-deny > /dev/null || { echo "::error::cargo-deny is absent after the install step"; exit 1; }
+          arch=$(uname -m)
+          # Executing the binary is the arch proof: a wrong-arch binary dies with "Exec format error" here.
+          echo "cargo-deny $(cargo deny --version) executes on $arch"
       - name: Advisories must pass, with deny.toml exemptions honoured
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+          marker=$(mktemp)
+          dbs="${CARGO_HOME:-$HOME/.cargo}/advisory-dbs"
           export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
           GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
           export GIT_CONFIG_VALUE_0
           cargo deny check advisories
+          # The check must have read a database fetched by THIS run, not a stale cache.
+          [ -n "$(find "$dbs" -type f -newer "$marker" -print -quit 2> /dev/null)" ] \
+            || { echo "::error::no RustSec advisory-db file under $dbs is newer than this step; the db was not fetched"; exit 1; }
       - name: Every deny.toml exemption must still be live
         env:
           GITHUB_TOKEN: ${{ github.token }}
