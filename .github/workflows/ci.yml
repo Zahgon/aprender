@@ -423,7 +423,9 @@ jobs:
   # explicit runner's round-robin N/3), in parallel on the X64 clean-room pool.
   # The section body is ci/sections.yml `workspace-test-shard`, unchanged.
   workspace-test-shard:
-    runs-on: [self-hosted, Linux, X64, clean-room]   # same pool as x86-main
+    # #5432: shard 3 drops the X64 selector so the arch-neutral clean-room pool (gx10, ARM64)
+    # can serve it; shards 1 and 2 stay on X64 until shard 3's pickup and wall are measured.
+    runs-on: ${{ matrix.shard == 3 && fromJSON('["self-hosted","Linux","clean-room"]') || fromJSON('["self-hosted","Linux","X64","clean-room"]') }}
     timeout-minutes: 180
     strategy:
       fail-fast: false
