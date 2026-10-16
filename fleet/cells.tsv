@@ -1,4 +1,4 @@
-# measured 2026-10-16T10:32:37Z
+# measured 2026-10-16T10:47:37Z
 lambda-labs	apr	GREEN	ok (installed v0.71.4@5027da6, target v0.71.4@5027da6)
 lambda-labs	pv	GREEN	ok (installed v0.71.4@5027da6, target v0.71.4@5027da6)
 lambda-labs	forjar	GREEN	no-sha (installed nightly@34c26b4, target nightly@34c26b4)
@@ -9,7 +9,7 @@ lambda-labs	copia	GREEN	no-sha (installed nightly@ce1909f, target nightly@ce1909
 lambda-labs	rmedia	GREEN	ok (installed nightly@d4aae74, target nightly@d4aae74)
 lambda-labs	apex	GREEN	ok (installed v-apex-0.1.0-rc.2@f2e20b6, target v-apex-0.1.0-rc.2@f2e20b6)
 lambda-labs	ollama	GREEN	ok (installed 0.40.5, target v0.40.5)
-lambda-labs	llama.cpp	GREEN	lag (installed b11681, target b11691)
+lambda-labs	llama.cpp	GREEN	lag (installed b11681, target b11693)
 gx10	apr	GREEN	ok (installed v0.71.4@5027da6, target v0.71.4@5027da6)
 gx10	pv	GREEN	ok (installed v0.71.4@5027da6, target v0.71.4@5027da6)
 gx10	forjar	GREEN	no-sha (installed nightly@34c26b4, target nightly@34c26b4)
@@ -19,7 +19,7 @@ gx10	pzsh	GREEN	no-sha (installed nightly@b42cbbc, target nightly@b42cbbc)
 gx10	copia	GREEN	no-sha (installed nightly@ce1909f, target nightly@ce1909f)
 gx10	apex	GREEN	ok (installed v-apex-0.1.0-rc.2@f2e20b6, target v-apex-0.1.0-rc.2@f2e20b6)
 gx10	ollama	GREEN	ok (installed 0.40.5, target v0.40.5)
-gx10	llama.cpp	RED	behind-upstream (installed b11671, target b11691)
+gx10	llama.cpp	RED	behind-upstream (installed b11671, target b11693)
 yoga	apr	RED	behind (installed v0.71.4@5027da6, target nightly@146a632)
 yoga	pv	GREEN	ok (installed v0.71.4@5027da6, target v0.71.4@5027da6)
 yoga	forjar	GREEN	no-sha (installed nightly@34c26b4, target nightly@34c26b4)
