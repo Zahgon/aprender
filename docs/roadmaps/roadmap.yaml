@@ -18576,6 +18576,23 @@ roadmap:
   estimated_effort: null
   labels: []
   notes: null
+- id: GH-5426
+  github_issue: 5426
+  item_type: task
+  kind: code
+  title: 'pr-review: update stale agy/Claude model ids to current quorum lanes (gemini-4-argon-high, claude-sonnet-5-5, claude-haiku-5-5)'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-10-16T10:38:47.453979621+00:00
+  updated: 2026-10-16T10:38:47.453979621+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
 - id: PMAT-3351
   github_issue: 3347
   item_type: task
@@ -21550,6 +21567,24 @@ Not done, pending the ruling: moving the 31 fixture files to an obviously synthe
   labels:
   - kind:code
   notes: 'SCOPE, as the cop ruled: the FIX already landed as #3672 in batch-1 #3707 (a9502d992). run_prompt_and_chat hands realizar the RAW prompt and `force_chat_template`, and prepare_tokens applies the model''s template once. This row does not re-fix dispatch_run.rs. It adds only what #3672 lacked: the three-shape equality test and the dogfood check. MEASURED (done_when 1) on lambda, CPU, Qwen3.5-0.8B-Q4_K_M, --verbose `[DEBUG] formatted_prompt` + `encoded N tokens`, same text "What is 2+2? Answer with one number.". `apr 0.69.0 (52f43da71)`: `--prompt P --chat` 56 tokens, positional `P --chat` 56, `-i file --chat` 24; the two 56s carry the zero-width escape and their formatted-prompt sha (cbbfe515524c) differs from the file shape (fe8052ef3bac). `apr 0.69.0 (a9502d992)` (batch-1): 24 == 24 == 24, identical formatted-prompt sha fe8052ef3bac on all three, no zero-width. TEST (done_when 1): lib_execute_export_convert.rs test_3743_three_prompt_shapes_build_the_same_realizar_config parses the three argv spellings with clap (on a 16 MB thread), feeds each through run_prompt_and_chat exactly as dispatch_run does, and builds realizar''s config through the new `commands::run::realizar_config` (execute_with_realizar''s config building, extracted unchanged). It asserts every shape reaches realizar as the raw text with force_chat_template set, so the formatted prompt, a pure function of that config and the model, is byte-identical. RED at 0.69.0, whose shape was the CLI-side ChatML wrap. The wrap-restored mutant (run_prompt_and_chat wrapping when chat_template) turns it RED: `left: Some("<|im_start|>user\nWhat is 2+2? ...")`. THINKING TOGGLE (done_when 2): on main neither `apr run` nor realizar''s InferenceConfig has an `enable_thinking`/thinking flag yet (#3723, aprender-fd). The apr-cli side no longer wraps anything, so nothing can re-wrap or drop it. `realizar_config()` is now the single place a thinking flag must be forwarded, and fd was told the seam. This criterion cannot be closed until #3723 adds the flag, so the PR says Refs, not Closes. DOGFOOD (done_when 3): scripts/model_ladder.sh''s per-backend run cell adds --verbose and sets `escaped_special` when realizar''s `formatted_prompt=` line carries `\u{200b}` (Debug-escaped) or the raw U+200B. The rung is then not green, and scripts/check_model_ladder.sh (the [package.metadata.dogfood] gate) fails it: "templated twice (#3743)". Old receipts without the field read as not escaped. New case scripts/lib/model_ladder_cases/red-escaped-special; `check_model_ladder.sh --self-test` 19 cases, 0 bad. Mutant: judge rule removed -> "FAIL case red-escaped-special rc=0 want=1". The ladder''s exact cell and grep on qwen2.5-coder-0.5b-instruct-q4_k_m.gguf (instruct-named, so 0.69.0''s name heuristic wrapped it): 52f43da71 -> escaped_special=true (`<\u{200b}|im_start|>user` visible); a9502d992 -> false. CRUX: this repo holds no CRUX run cell that feeds `apr run` a prompt; the CRUX probes live in the nightly-ux-crux skill, and that check is named for its owner. SUITES at this commit: `cargo test -p apr-cli --lib` 7301 passed; `-p aprender-contracts --lib` 1689 passed; clippy -D warnings apr-cli clean; fmt clean; bashrs lint findings unchanged vs main (model_ladder.sh 45=45, check_model_ladder.sh 18=18).'
+- id: PMAT-3745
+  github_issue: 3745
+  item_type: task
+  title: '#3745 S3: hand-list guard (LAB nightly) + hand-list migration'
+  status: planned
+  priority: medium
+  assigned_to: null
+  created: 2026-10-12T16:14:06Z
+  updated: 2026-10-12T16:14:06Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 3863
 - id: PMAT-3747
   github_issue: 3747
   item_type: task
@@ -23738,6 +23773,24 @@ Not done, pending the ruling: moving the 31 fixture files to an obviously synthe
   labels:
   - kind:code
   notes: 'DPO x3 by pvl-b; NF4 x3 and f16 by aprender-57. The old dpo_gradient_formula axiom was false for beta < 0; now a HasDerivAt theorem plus dpo_gradient_scale_nonpos (0 <= beta).'
+- id: PMAT-4354
+  github_issue: 4354
+  item_type: task
+  kind: code
+  title: 'PRM-L: land PRM-001 v3 (PROMETHEUS) + rex/001 to main'
+  status: in_progress
+  priority: high
+  assigned_to: worker
+  created: 2026-09-25T18:38:33Z
+  updated: 2026-09-25T18:38:33Z
+  spec: docs/specifications/PRM-001-prometheus.md
+  acceptance_criteria:
+  - Refs paiml/aprender#4354. Spec PRM-001 v3 byte-exact, rex-prereg-v2 lock, v1 lock frozen, superseded banners, v3 figure.
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
 - id: PMAT-4369
   github_issue: 4369
   item_type: task
@@ -23872,6 +23925,38 @@ Not done, pending the ruling: moving the 31 fixture files to an obviously synthe
   estimated_effort: null
   labels: []
   notes: 'Adopted from aprender-ea orphan fix/4445-bench-fresh-prefill @65fd973170 (09-25, never PRed). The bug exists only with the #4214 checkpoint, i.e. car/0.70.0 (#4429); main before #4429 does not reuse an identical prompt. Cop ruling 2026-09-27: not folded into the car; own PR on main the moment #4429 merges, before the rc.1 tag. Superseded 2026-09-27 ~14:00Z by operator "make it faster" (via cop): open on main NOW, in parallel with the car. Until the car lands this change is inert on main (an identical prompt already prefills whole there); it pre-lands the bench wiring and the API so the car merge needs only the checkpoint line, which the exhaustive destructure forces.'
+- id: PMAT-4446
+  github_issue: 4446
+  item_type: task
+  title: PRA-001 T12 terms/provider tagging (P-TERMS)
+  status: planned
+  priority: medium
+  assigned_to: null
+  created: 2026-09-25T17:08:31Z
+  updated: 2026-09-25T17:08:31Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: PMAT-4447
+  github_issue: 4447
+  item_type: task
+  title: PRM-S1 review-replay-v1 benchmark + runner
+  status: planned
+  priority: medium
+  assigned_to: null
+  created: 2026-09-25T17:46:46Z
+  updated: 2026-09-25T17:46:46Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
 - id: PMAT-4453
   github_issue: 4453
   item_type: task
@@ -24050,6 +24135,24 @@ Not done, pending the ruling: moving the 31 fixture files to an obviously synthe
   estimated_effort: null
   labels: []
   notes: null
+- id: PMAT-4524
+  github_issue: 4524
+  item_type: task
+  title: 'PRM-L land rex/001 C6+C11+C14 on main: merge main, reconcile with #4655 crate snapshot'
+  status: planned
+  priority: high
+  assigned_to: null
+  created: 2026-10-08T12:49:26Z
+  updated: 2026-10-08T12:49:26Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 4354
 - id: PMAT-4539
   github_issue: 4539
   item_type: task
@@ -25110,6 +25213,42 @@ Not done, pending the ruling: moving the 31 fixture files to an obviously synthe
   - kind:code
   notes: null
   epic: 3998
+- id: PMAT-5225
+  github_issue: 5225
+  item_type: task
+  title: 'PY-PORT-2f: port model_ladder_cells_produce.py to aprender-ci-tools (C301), carries #4986'
+  status: planned
+  priority: medium
+  assigned_to: null
+  created: 2026-10-12T16:14:45Z
+  updated: 2026-10-12T16:14:45Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 4741
+- id: PMAT-5227
+  github_issue: 5227
+  item_type: task
+  title: apr-cli lib.rs include!d fns exceed complexity thresholds
+  status: planned
+  priority: medium
+  assigned_to: null
+  created: 2026-10-12T16:33:54Z
+  updated: 2026-10-12T16:33:54Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 3863
 - id: PMAT-5282
   github_issue: 5282
   item_type: task
@@ -25128,3 +25267,39 @@ Not done, pending the ruling: moving the 31 fixture files to an obviously synthe
   - kind:docs
   notes: null
   epic: 5281
+- id: PMAT-5374
+  github_issue: 5374
+  item_type: task
+  title: 'FLAKE-0: check_hardcoded_paths self-test pipe into grep -q (GH #5374)'
+  status: planned
+  priority: high
+  assigned_to: null
+  created: 2026-10-15T06:51:19Z
+  updated: 2026-10-15T06:51:19Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 4780
+- id: PMAT-5463
+  github_issue: 5463
+  item_type: task
+  title: refactor 5 apr-cli files under pre-commit complexity limits
+  status: planned
+  priority: high
+  assigned_to: null
+  created: 2026-10-17T03:17:59Z
+  updated: 2026-10-17T03:17:59Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 3998
