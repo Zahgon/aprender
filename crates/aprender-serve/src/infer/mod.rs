@@ -234,6 +234,11 @@ pub struct InferenceConfig {
     /// removes the empty `<think>` prefill so the model reasons, and is refused by name on a
     /// template with no thinking mode ([`crate::chat_template::apply_thinking_mode`]).
     pub thinking: Option<bool>,
+    /// #4026: `apr run --logprobs K` — record the `K` most likely next tokens at
+    /// every generated step. 0 records nothing. Only the one engine records
+    /// ([`crate::session::take_last_turn_steps`]); a run served by any other
+    /// path is refused by name by the caller, never reported with an empty list.
+    pub logprobs_top_k: usize,
     /// #3793: constrain generation to a JSON Schema or a Lark grammar (`apr run --json-schema`
     /// / `--grammar`), read and checked before the model loads. A path that cannot apply it
     /// refuses by name; it never runs unconstrained.
@@ -292,8 +297,16 @@ impl InferenceConfig {
             use_mock_backend: false,
             force_chat_template: false,
             thinking: None,
+            logprobs_top_k: 0,
             constraint: None,
         }
+    }
+
+    /// #4026: record the `k` most likely next tokens at every generated step.
+    #[must_use]
+    pub fn with_logprobs_top_k(mut self, k: usize) -> Self {
+        self.logprobs_top_k = k;
+        self
     }
 
     /// Set the text prompt
@@ -437,6 +450,7 @@ impl InferenceConfig {
         gen_config.seed = self.seed;
         gen_config.repeat_penalty = self.repeat_penalty;
         gen_config.repeat_last_n = self.repeat_last_n;
+        gen_config.logprobs_top_k = self.logprobs_top_k;
     }
 }
 
@@ -694,18 +708,23 @@ fn prepare_tokens_gguf(config: &InferenceConfig, prompt: &str) -> Result<Prepare
     }
 
     if config.verbose {
-        eprintln!(
-            "[DEBUG] add_bos={}, encoded {} tokens: {:?}",
-            add_bos,
-            tokens.len(),
-            &tokens[..tokens.len().min(30)]
-        );
+        eprintln!("{}", encoded_tokens_debug_line(add_bos, &tokens));
     }
 
     Ok(PreparedTokens {
         input_count: tokens.len(),
         tokens,
     })
+}
+
+/// #5056: the `-v` line naming every prompt id `apr run` encoded. It printed
+/// only the first 30, so a parity harness that feeds a reference engine the
+/// ids it reads here gave that engine a cut prompt on any longer prompt.
+fn encoded_tokens_debug_line(add_bos: bool, tokens: &[u32]) -> String {
+    format!(
+        "[DEBUG] add_bos={add_bos}, encoded {} tokens: {tokens:?}",
+        tokens.len()
+    )
 }
 
 /// Prepare tokens for SafeTensors format (chat template from config.json)
@@ -975,6 +994,10 @@ mod tests_sampling_default_3754;
 #[cfg(test)]
 #[path = "tests_dense_session_4268.rs"]
 mod tests_dense_session_4268;
+// #5056: `-v` prints every encoded prompt id.
+#[cfg(test)]
+#[path = "tests_encoded_ids_5056.rs"]
+mod tests_encoded_ids_5056;
 
 #[cfg(test)]
 mod sibling_tokenizer_config_3990 {
