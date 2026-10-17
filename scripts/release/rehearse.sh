@@ -130,7 +130,7 @@ dledger_table() {
 D1|ap:preflight,cascade|FAIL +R4 HEAD .* is not an ancestor of origin/release/|preflight R4 requires origin/release/<V>, which no script creates
 D2|t2,ap:dogfood|\[FAIL\] declared:check_model_ladder|the dogfood ladder gate runs with no CRUX receipt dir, beside the models lane that writes them
 D4|cascade|FAIL +R7 |the cascade's own preflight runs without the CRUX receipts
-D5|ship|no T-2 GO receipt for |prepare_bump.sh --ship needs a T-2 GO that cannot exist
+D5|ship|no T-2 GO receipt for |prepare_bump.sh --ship found no T-2 GO for the bump's parent: T-2 wrote none for the commit the bump was cut at (#5082 cuts it at T-2's commit, not main's head)
 D7|ship|-|the bump commit's trailer names a model the fleet does not use
 DLEDGER
 }
