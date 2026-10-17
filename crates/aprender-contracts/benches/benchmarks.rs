@@ -87,8 +87,8 @@ fn bench_parse_roundtrip(c: &mut Criterion) {
     c.bench_function("contract_yaml_roundtrip", |b| {
         b.iter(|| {
             let contract = parse_contract_str(black_box(FULL_CONTRACT)).unwrap();
-            let yaml = serde_yaml::to_string(&contract).unwrap();
-            let _: serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
+            let yaml = serde_saphyr::to_string(&contract).unwrap();
+            let _: serde_json::Value = serde_saphyr::from_str_with_options(&yaml, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false }).unwrap();
         });
     });
 }

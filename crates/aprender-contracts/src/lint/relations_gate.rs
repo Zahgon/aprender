@@ -90,7 +90,7 @@ pub fn run_relations_gate(contract_dir: &Path) -> RelationsOutcome {
         let (n_legacy, n_unresolved) = legacy_depends_on_edges(doc, &stems);
         legacy_depends_on += n_legacy;
         legacy_unresolved += n_unresolved;
-        let Some(map) = doc.get("relations").and_then(serde_yaml::Value::as_mapping) else {
+        let Some(map) = doc.get("relations").and_then(serde_json::Value::as_object) else {
             continue;
         };
         contracts_with_relations += 1;
@@ -189,14 +189,14 @@ pub fn typed_graph(contract_dir: &Path) -> TypedGraph {
     let (docs, stems) = read_corpus(contract_dir, &sigma_path);
     let mut edges = BTreeSet::new();
     for (stem, file, doc) in &docs {
-        if let Some(map) = doc.get("relations").and_then(serde_yaml::Value::as_mapping) {
+        if let Some(map) = doc.get("relations").and_then(serde_json::Value::as_object) {
             let _ = check_block(&sigma, stem, file, map, &stems, &mut edges);
         }
     }
     TypedGraph::Read { ids: stems, edges }
 }
 
-type Doc = (String, std::path::PathBuf, serde_yaml::Value);
+type Doc = (String, std::path::PathBuf, serde_json::Value);
 
 /// Every contract document the corpus parses, by stem, with its file (ONT-4e reads `requires`/`ensures`/`invariants`
 /// from them). `ontology.yaml` is not a contract and is left out; a file that does not parse is the `validate` gate's
@@ -204,7 +204,7 @@ type Doc = (String, std::path::PathBuf, serde_yaml::Value);
 #[must_use]
 pub fn corpus_documents(
     contract_dir: &Path,
-) -> BTreeMap<String, (std::path::PathBuf, serde_yaml::Value)> {
+) -> BTreeMap<String, (std::path::PathBuf, serde_json::Value)> {
     let (docs, _) = read_corpus(contract_dir, &contract_dir.join("ontology.yaml"));
     docs.into_iter()
         .map(|(stem, file, doc)| (stem, (file, doc)))
@@ -224,7 +224,7 @@ fn read_corpus(contract_dir: &Path, sigma_path: &Path) -> (Vec<Doc>, BTreeSet<St
         let Ok(raw) = std::fs::read_to_string(file) else {
             continue;
         };
-        let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(&raw) else {
+        let Ok(doc) = crate::yaml::from_str::<serde_json::Value>(&raw) else {
             continue; // a file that does not parse is the `validate` gate's business
         };
         let stem = file
@@ -243,13 +243,13 @@ fn check_block(
     sigma: &Sigma,
     stem: &str,
     file: &Path,
-    map: &serde_yaml::Mapping,
+    map: &serde_json::Map<String, serde_json::Value>,
     stems: &BTreeSet<String>,
     edges: &mut BTreeSet<Edge>,
 ) -> Vec<LintFinding> {
     let mut out = Vec::new();
     for (key, value) in map {
-        let Some(role) = key.as_str() else { continue };
+        let role = key.as_str();
         let Some(decl) = sigma.roles.get(role) else {
             out.push(finding(
                 "PV-ONT-005",
@@ -271,7 +271,7 @@ fn check_block(
             ));
             continue;
         }
-        let Some(targets) = value.as_sequence() else {
+        let Some(targets) = value.as_array() else {
             out.push(finding(
                 "PV-ONT-007",
                 format!("relation `{role}` must be a list of contract ids"),
@@ -355,7 +355,7 @@ fn check_targets(
     file: &Path,
     role: &str,
     symmetric: bool,
-    targets: &[serde_yaml::Value],
+    targets: &[serde_json::Value],
     stems: &BTreeSet<String>,
     edges: &mut BTreeSet<Edge>,
 ) -> Vec<LintFinding> {
@@ -416,11 +416,11 @@ fn normalize_id(raw: &str) -> String {
 }
 
 /// `metadata.depends_on` — counted and resolved, never a finding. Returns (edges, unresolved).
-fn legacy_depends_on_edges(doc: &serde_yaml::Value, stems: &BTreeSet<String>) -> (usize, usize) {
+fn legacy_depends_on_edges(doc: &serde_json::Value, stems: &BTreeSet<String>) -> (usize, usize) {
     let Some(list) = doc
         .get("metadata")
         .and_then(|m| m.get("depends_on"))
-        .and_then(serde_yaml::Value::as_sequence)
+        .and_then(serde_json::Value::as_array)
     else {
         return (0, 0);
     };

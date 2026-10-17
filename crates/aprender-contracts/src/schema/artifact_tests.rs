@@ -163,8 +163,8 @@ fn real_publish_manifests_validate() {
 fn a_manifest_missing_a_required_field_is_rejected() {
     let path = repo_path("contracts/publish-manifests/paiml-qwen2.5-coder-7b-apache-q4k-v1-apr.yaml");
     let text = std::fs::read_to_string(&path).expect("manifest readable");
-    let mut doc: Value = serde_yaml::from_str(&text).expect("manifest parses");
-    let map = doc.as_mapping_mut().expect("manifest is a mapping");
+    let mut doc: Value = crate::yaml::from_str(&text).expect("manifest parses");
+    let map = doc.as_object_mut().expect("manifest is a mapping");
     map.remove("license");
     let rules = error_rules(&validate_publish_manifest(&doc, &path));
     assert!(
@@ -199,9 +199,9 @@ fn manifest_field_shape_case_table() {
         ),
     ];
     for (field, bad, rule) in mutations {
-        let mut doc: Value = serde_yaml::from_str(&text).expect("manifest parses");
-        let map = doc.as_mapping_mut().expect("mapping");
-        map.insert(Value::String((*field).to_string()), bad.clone());
+        let mut doc: Value = crate::yaml::from_str(&text).expect("manifest parses");
+        let map = doc.as_object_mut().expect("mapping");
+        map.insert((*field).to_string(), bad.clone());
         let rules = error_rules(&validate_publish_manifest(&doc, &path));
         assert!(
             rules.iter().any(|r| r.starts_with(rule)),
@@ -215,7 +215,7 @@ fn manifest_field_shape_case_table() {
 #[test]
 fn a_manifest_with_no_locatable_schema_is_rejected() {
     let doc: Value =
-        serde_yaml::from_str("model_id: paiml/x\nprovenance:\n  pipeline: finetune\n")
+        crate::yaml::from_str("model_id: paiml/x\nprovenance:\n  pipeline: finetune\n")
             .expect("parses");
     let orphan = Path::new("/nonexistent-root-for-this-test/manifest.yaml");
     let rules = error_rules(&validate_publish_manifest(&doc, orphan));

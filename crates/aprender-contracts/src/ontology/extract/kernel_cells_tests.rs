@@ -387,7 +387,7 @@ mod rr2 {
     }
 
     fn parse(text: &str) -> Vec<crate::ontology::shapes::NodeShape> {
-        let doc: serde_yaml::Value = serde_yaml::from_str(text).expect("the contract is YAML");
+        let doc: serde_json::Value = crate::yaml::from_str(text).expect("the contract is YAML");
         parse_shapes("release-readiness-v2", &doc).expect("shapes inside the engine's subset")
     }
 
@@ -665,7 +665,7 @@ mod rr2 {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../contracts/release-readiness-v1.yaml");
         let text = std::fs::read_to_string(&path).expect("release-readiness-v1.yaml is committed");
-        let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("the contract is YAML");
+        let doc: serde_json::Value = crate::yaml::from_str(&text).expect("the contract is YAML");
         let v1 =
             parse_shapes("release-readiness-v1", &doc).expect("shapes inside the engine's subset");
         assert!(

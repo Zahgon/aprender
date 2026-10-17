@@ -32,7 +32,10 @@
 //! must not be believed.
 
 use serde::{Deserialize, Serialize};
-use serde_yaml::{Mapping, Value};
+use serde_json::{Map, Value};
+
+/// A YAML mapping, read into JSON form (string keys, document order).
+type Mapping = Map<String, Value>;
 
 use crate::error::{ContractError, Severity, Violation};
 
@@ -103,7 +106,7 @@ pub struct ExternalCorpora {
 ///
 /// [`ContractError::Yaml`] if the text is not a declaration of this shape.
 pub fn parse_external_corpora_str(yaml: &str) -> Result<ExternalCorpora, ContractError> {
-    Ok(serde_yaml::from_str(yaml)?)
+    Ok(crate::yaml::from_str(yaml)?)
 }
 
 /// Does `schema` name the external-corpora family (any version)?
@@ -124,7 +127,7 @@ fn violation(rule: &str, message: String, location: &str) -> Violation {
 /// Validate an external-corpora declaration (rules `EXT-CORPORA-001..009`).
 #[must_use]
 pub fn validate_external_corpora(yaml: &str) -> Vec<Violation> {
-    let doc: Value = match serde_yaml::from_str(yaml) {
+    let doc: Value = match crate::yaml::from_str(yaml) {
         Ok(doc) => doc,
         Err(e) => {
             return vec![violation(
@@ -134,7 +137,7 @@ pub fn validate_external_corpora(yaml: &str) -> Vec<Violation> {
             )]
         }
     };
-    let Some(top) = doc.as_mapping() else {
+    let Some(top) = doc.as_object() else {
         return vec![violation(
             "EXT-CORPORA-001",
             "external-corpora declaration is not a YAML mapping".to_string(),
@@ -186,15 +189,10 @@ fn check_unknown_keys(
     prefix: &str,
     violations: &mut Vec<Violation>,
 ) {
+    // JSON-form keys are always strings: a YAML `1:` key reads as `"1"` and is
+    // refused below as an unknown key.
     for key in map.keys() {
-        let Some(key) = key.as_str() else {
-            violations.push(violation(
-                "EXT-CORPORA-007",
-                format!("{prefix}key {key:?} is not a string"),
-                prefix,
-            ));
-            continue;
-        };
+        let key = key.as_str();
         if !allowed.contains(&key) {
             violations.push(violation(
                 "EXT-CORPORA-007",
@@ -212,7 +210,7 @@ fn check_unknown_keys(
 /// `EXT-CORPORA-002`: `corpora` is a non-empty list. An empty declaration is a
 /// file that claims to declare and declares nothing.
 fn check_corpora(top: &Mapping, violations: &mut Vec<Violation>) {
-    let Some(Value::Sequence(entries)) = top.get("corpora") else {
+    let Some(Value::Array(entries)) = top.get("corpora") else {
         violations.push(violation(
             "EXT-CORPORA-002",
             "`corpora` is missing or not a list".to_string(),
@@ -238,7 +236,7 @@ fn check_corpora(top: &Mapping, violations: &mut Vec<Violation>) {
 
 fn check_entry(entry: &Value, i: usize, seen: &mut Vec<String>, violations: &mut Vec<Violation>) {
     let prefix = format!("corpora[{i}].");
-    let Some(map) = entry.as_mapping() else {
+    let Some(map) = entry.as_object() else {
         violations.push(violation(
             "EXT-CORPORA-003",
             format!("corpora[{i}] is not a mapping"),

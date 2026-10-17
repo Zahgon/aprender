@@ -55,7 +55,7 @@ fn with_metadata(body: &str) -> String {
 #[test]
 fn kaizen_kind_round_trips() {
     assert_eq!(ContractKind::Kaizen.to_string(), "kaizen");
-    let k: ContractKind = serde_yaml::from_str("kaizen").expect("kebab-case parses");
+    let k: ContractKind = crate::yaml::from_str("kaizen").expect("kebab-case parses");
     assert_eq!(k, ContractKind::Kaizen);
 }
 
@@ -283,7 +283,7 @@ fn quantity_parse_case_table() {
         ("-3", -3.0),
     ];
     for (input, expected) in must_parse {
-        let got = parse_quantity(&serde_yaml::Value::String((*input).to_string()));
+        let got = parse_quantity(&serde_json::Value::String((*input).to_string()));
         assert_eq!(got, Some(*expected), "{input:?} should read as a quantity");
     }
 
@@ -298,14 +298,14 @@ fn quantity_parse_case_table() {
         "cuMemcpyDtoH full gradient buffer",
     ];
     for input in must_not_parse {
-        let got = parse_quantity(&serde_yaml::Value::String(input.to_string()));
+        let got = parse_quantity(&serde_json::Value::String(input.to_string()));
         assert_eq!(got, None, "{input:?} must NOT read as a quantity");
     }
 
     // Booleans are a state change, not a movement along an axis.
-    assert_eq!(parse_quantity(&serde_yaml::Value::Bool(true)), None);
+    assert_eq!(parse_quantity(&serde_json::Value::Bool(true)), None);
     assert_eq!(
-        parse_quantity(&serde_yaml::from_str::<serde_yaml::Value>("9").expect("number")),
+        parse_quantity(&crate::yaml::from_str::<serde_json::Value>("9").expect("number")),
         Some(9.0)
     );
 }

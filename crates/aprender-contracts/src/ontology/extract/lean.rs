@@ -179,24 +179,24 @@ fn walk(root: &Path, base: &Path, stats: &mut LeanStats) -> Vec<Statement> {
 /// Every `lean_theorem:` reference a contract document makes, from `equations.*` and `proof_obligations[]`,
 /// trimmed of quotes; `none` and empty are not references.
 #[must_use]
-pub fn references_of(doc: &serde_yaml::Value) -> Vec<String> {
+pub fn references_of(doc: &serde_json::Value) -> Vec<String> {
     let mut refs = Vec::new();
-    let mut push = |v: Option<&serde_yaml::Value>| {
-        if let Some(s) = v.and_then(serde_yaml::Value::as_str) {
+    let mut push = |v: Option<&serde_json::Value>| {
+        if let Some(s) = v.and_then(serde_json::Value::as_str) {
             let s = s.trim().trim_matches('"');
             if !s.is_empty() && s != "none" && !s.starts_with("none ") {
                 refs.push(s.to_string());
             }
         }
     };
-    if let Some(eqs) = doc.get("equations").and_then(serde_yaml::Value::as_mapping) {
+    if let Some(eqs) = doc.get("equations").and_then(serde_json::Value::as_object) {
         for (_, eq) in eqs {
             push(eq.get("lean_theorem"));
         }
     }
     if let Some(obs) = doc
         .get("proof_obligations")
-        .and_then(serde_yaml::Value::as_sequence)
+        .and_then(serde_json::Value::as_array)
     {
         for ob in obs {
             push(ob.get("lean_theorem"));
@@ -352,7 +352,7 @@ mod tests {
 
     #[test]
     fn references_come_from_equations_and_obligations_and_none_is_not_one() {
-        let doc: serde_yaml::Value = serde_yaml::from_str(
+        let doc: serde_json::Value = crate::yaml::from_str(
             "equations:\n  a:\n    lean_theorem: Theorems.A\n  b:\n    lean_theorem: none — L4 not declared\nproof_obligations:\n  - lean_theorem: \"Theorems.B\"\n  - lean_theorem: none\n  - id: x\n",
         )
         .expect("yaml");

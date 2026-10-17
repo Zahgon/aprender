@@ -171,7 +171,7 @@ impl Census {
     fn observe(&mut self, sigma: &Sigma, file: &Path) {
         let Some(doc) = std::fs::read_to_string(file)
             .ok()
-            .and_then(|raw| serde_yaml::from_str::<serde_yaml::Value>(&raw).ok())
+            .and_then(|raw| crate::yaml::from_str::<serde_json::Value>(&raw).ok())
         else {
             return;
         };
@@ -196,7 +196,7 @@ impl Census {
         if self.findings.len() == before {
             let w = v
                 .get("world")
-                .and_then(serde_yaml::Value::as_str)
+                .and_then(serde_json::Value::as_str)
                 .unwrap_or(DEFAULT_WORLD);
             *self.by_world.entry(w.to_string()).or_default() += 1;
         }
@@ -230,12 +230,12 @@ fn finding(rule: &str, msg: String, stem: &str, file: &Path) -> LintFinding {
 /// Every rule a present `metadata.valid_under` must satisfy.
 fn check_valid_under(
     sigma: &Sigma,
-    v: &serde_yaml::Value,
+    v: &serde_json::Value,
     stem: &str,
     file: &Path,
     out: &mut Vec<LintFinding>,
 ) {
-    let Some(map) = v.as_mapping() else {
+    let Some(map) = v.as_object() else {
         out.push(finding(
             "PV-ONT-013",
             "`metadata.valid_under` must be a mapping — `world:` (omitted = committed) and/or the qualifiers toolchain, host_class, backend, features".to_string(),
@@ -245,7 +245,7 @@ fn check_valid_under(
         return;
     };
     for key in map.keys() {
-        let name = key.as_str().unwrap_or("<non-string key>");
+        let name = key.as_str();
         if !VALID_UNDER_KEYS.contains(&name) {
             out.push(finding(
                 "PV-ONT-013",
@@ -275,7 +275,7 @@ fn check_valid_under(
 /// PV-ONT-014: the `world:` key names a world Σ declares (or defaults to one that exists).
 fn check_valid_under_world(
     sigma: &Sigma,
-    map: &serde_yaml::Mapping,
+    map: &serde_json::Map<String, serde_json::Value>,
     stem: &str,
     file: &Path,
     out: &mut Vec<LintFinding>,
@@ -309,18 +309,16 @@ fn check_valid_under_world(
 
 /// PV-ONT-015: the toolchain map and the host_class/backend/features lists are well-formed.
 fn check_valid_under_qualifiers(
-    map: &serde_yaml::Mapping,
+    map: &serde_json::Map<String, serde_json::Value>,
     stem: &str,
     file: &Path,
     out: &mut Vec<LintFinding>,
 ) {
     if let Some(tc) = map.get("toolchain") {
-        let ok = tc.as_mapping().is_some_and(|m| {
+        let ok = tc.as_object().is_some_and(|m| {
             !m.is_empty()
-                && m.iter().all(|(k, v)| {
-                    k.as_str().is_some_and(|s| !s.is_empty())
-                        && v.as_str().is_some_and(|s| !s.is_empty())
-                })
+                && m.iter()
+                    .all(|(k, v)| !k.is_empty() && v.as_str().is_some_and(|s| !s.is_empty()))
         });
         if !ok {
             out.push(finding(
@@ -333,7 +331,7 @@ fn check_valid_under_qualifiers(
     }
     for key in ["host_class", "backend", "features"] {
         if let Some(list) = map.get(key) {
-            let ok = list.as_sequence().is_some_and(|s| {
+            let ok = list.as_array().is_some_and(|s| {
                 !s.is_empty() && s.iter().all(|x| x.as_str().is_some_and(|s| !s.is_empty()))
             });
             if !ok {

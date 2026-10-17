@@ -105,7 +105,7 @@ mod beat_benchmark_tests {
     #[test]
     fn beat_benchmark_kind_round_trips() {
         assert_eq!(ContractKind::BeatBenchmark.to_string(), "beat-benchmark");
-        let k: ContractKind = serde_yaml::from_str("beat-benchmark").unwrap();
+        let k: ContractKind = crate::yaml::from_str("beat-benchmark").unwrap();
         assert_eq!(k, ContractKind::BeatBenchmark);
     }
 

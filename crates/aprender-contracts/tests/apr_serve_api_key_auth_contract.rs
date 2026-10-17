@@ -52,7 +52,7 @@ fn load_contract() -> ContractRoot {
     let path = contract_path();
     let yaml =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    serde_yaml::from_str(&yaml).unwrap_or_else(|e| {
+    serde_saphyr::from_str_with_options(&yaml, serde_saphyr::options! { strict_booleans: true, merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary, emit_comments: false, reject_non_finite_typeless_float: false }).unwrap_or_else(|e| {
         panic!(
             "parse {} as apr-serve-api-key-auth-v1 contract: {e}",
             path.display()

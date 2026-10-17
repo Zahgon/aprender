@@ -29,7 +29,7 @@ pub fn extract(contract_dir: &Path) -> Graph {
 /// Every contract document under `contract_dir` (Σ excluded), in byte order: `(stem, path relative to the
 /// repository root, raw YAML)`. The one walk every extractor shares, so they all see the same corpus.
 #[must_use]
-pub fn documents(contract_dir: &Path) -> Vec<(String, String, serde_yaml::Value)> {
+pub fn documents(contract_dir: &Path) -> Vec<(String, String, serde_json::Value)> {
     let sigma_path = contract_dir.join("ontology.yaml");
     let mut files = Vec::new();
     crate::lint::collect_yaml_files(contract_dir, &mut files);
@@ -42,7 +42,7 @@ pub fn documents(contract_dir: &Path) -> Vec<(String, String, serde_yaml::Value)
         let Ok(raw) = std::fs::read_to_string(file) else {
             continue;
         };
-        let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(&raw) else {
+        let Ok(doc) = crate::yaml::from_str::<serde_json::Value>(&raw) else {
             continue;
         };
         let stem = file
@@ -61,7 +61,7 @@ pub fn documents(contract_dir: &Path) -> Vec<(String, String, serde_yaml::Value)
 }
 
 /// One contract document into `g`. Public so a fixture can be extracted without a directory.
-pub fn extract_one(g: &mut Graph, stem: &str, file: &str, doc: &serde_yaml::Value) {
+pub fn extract_one(g: &mut Graph, stem: &str, file: &str, doc: &serde_json::Value) {
     let s = iri("contract", stem);
     g.insert(s.clone(), RDF_TYPE, Term::iri(ont("Contract")));
     g.insert(s.clone(), RDF_TYPE, Term::iri(PROV_ENTITY));
@@ -100,12 +100,12 @@ pub fn extract_one(g: &mut Graph, stem: &str, file: &str, doc: &serde_yaml::Valu
         }
         emit_entity_properties(g, &s, entity_type.as_deref(), entity);
     }
-    if let Some(rel) = doc.get("relations").and_then(serde_yaml::Value::as_mapping) {
+    if let Some(rel) = doc.get("relations").and_then(serde_json::Value::as_object) {
         for (role, targets) in rel {
-            let (Some(role), Some(list)) = (role.as_str(), targets.as_sequence()) else {
+            let (Some(role), Some(list)) = (Some(role.as_str()), targets.as_array()) else {
                 continue;
             };
-            for t in list.iter().filter_map(serde_yaml::Value::as_str) {
+            for t in list.iter().filter_map(serde_json::Value::as_str) {
                 let t = t.trim();
                 let t = t.strip_prefix("contracts/").unwrap_or(t);
                 let t = t.strip_suffix(".yaml").unwrap_or(t);
@@ -122,7 +122,7 @@ pub fn extract_one(g: &mut Graph, stem: &str, file: &str, doc: &serde_yaml::Valu
 #[must_use]
 pub fn positive_control() -> bool {
     const STEM: &str = "__pc_extract__";
-    let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(
+    let Ok(doc) = crate::yaml::from_str::<serde_json::Value>(
         "metadata: {kind: kernel}\nrelations: {depends_on: [contracts/__pc_target__-v1.yaml]}\nentity: {type: __pc__}\n",
     ) else {
         return false;
@@ -143,7 +143,7 @@ pub fn positive_control() -> bool {
         .iter()
         .any(|t| t.as_iri() == Some(entity_class("__pc__").as_str()));
     let mut planted = doc;
-    if let Some(m) = planted.as_mapping_mut() {
+    if let Some(m) = planted.as_object_mut() {
         m.remove("metadata");
         m.remove("entity");
     }
@@ -174,18 +174,18 @@ fn emit_entity_properties(
     g: &mut Graph,
     subject: &str,
     entity_type: Option<&str>,
-    entity: &serde_yaml::Value,
+    entity: &serde_json::Value,
 ) {
     let (Some(ty), Some(props)) = (
         entity_type,
         entity
             .get("properties")
-            .and_then(serde_yaml::Value::as_mapping),
+            .and_then(serde_json::Value::as_object),
     ) else {
         return;
     };
     for (key, value) in props {
-        let (Some(key), Some(v)) = (key.as_str(), scalar(Some(value))) else {
+        let (Some(key), Some(v)) = (Some(key.as_str()), scalar(Some(value))) else {
             continue;
         };
         g.insert(
@@ -226,11 +226,11 @@ pub fn entity_class(entity_type: &str) -> String {
 
 /// A YAML scalar as a string: strings as they are, numbers and booleans by their YAML spelling. Mappings and
 /// sequences are not scalars and produce no triple.
-pub(crate) fn scalar(v: Option<&serde_yaml::Value>) -> Option<String> {
+pub(crate) fn scalar(v: Option<&serde_json::Value>) -> Option<String> {
     match v? {
-        serde_yaml::Value::String(s) => Some(s.clone()),
-        serde_yaml::Value::Number(n) => Some(n.to_string()),
-        serde_yaml::Value::Bool(b) => Some(b.to_string()),
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
         _ => None,
     }
 }
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn a_contract_becomes_a_typed_subject_with_what_it_says_and_nothing_more() {
-        let doc: serde_yaml::Value = serde_yaml::from_str(
+        let doc: serde_json::Value = crate::yaml::from_str(
             "name: n\nversion: '1.2.0'\nstatus: active\nmetadata:\n  kind: pattern\nrelations:\n  depends_on: [b, contracts/c.yaml]\nentity:\n  type: pv-contract\n  ref: contracts/\n",
         )
         .unwrap();
@@ -271,7 +271,7 @@ mod tests {
     #[test]
     fn only_an_absent_or_kernel_kind_is_typed_ont_kernel() {
         let typed = |yaml: &str| {
-            let doc: serde_yaml::Value = serde_yaml::from_str(yaml).expect("yaml");
+            let doc: serde_json::Value = crate::yaml::from_str(yaml).expect("yaml");
             let mut g = Graph::new();
             extract_one(&mut g, "a", "contracts/a.yaml", &doc);
             g.instances_of(&ont("Kernel")).len()
@@ -299,7 +299,7 @@ mod tests {
     fn an_entitys_own_properties_become_typed_predicates_on_the_contract_node() {
         // apex EV-21: the nine degrees of freedom live in the contract, because the contract IS the
         // pre-registration. `study:scale` &c. so a shape can constrain them by path.
-        let doc: serde_yaml::Value = serde_yaml::from_str(
+        let doc: serde_json::Value = crate::yaml::from_str(
             "entity:\n  type: study\n  ref: study-shape-v1\n  properties:\n    scale: linear\n    vintage: '2026-09-12'\n    bins: 7\n    logged: true\n    nested: {a: 1}\n    listed: [a, b]\n",
         )
         .expect("yaml");
@@ -349,8 +349,8 @@ mod tests {
 
     #[test]
     fn properties_without_an_entity_type_are_not_guessed_into_a_namespace() {
-        let doc: serde_yaml::Value =
-            serde_yaml::from_str("entity:\n  ref: x\n  properties:\n    scale: linear\n")
+        let doc: serde_json::Value =
+            crate::yaml::from_str("entity:\n  ref: x\n  properties:\n    scale: linear\n")
                 .expect("yaml");
         let mut g = Graph::new();
         extract_one(&mut g, "a", "contracts/a.yaml", &doc);
@@ -388,11 +388,11 @@ mod tests {
     fn a_contract_is_an_instance_of_its_entity_type_class_and_of_no_other() {
         let mut g = Graph::new();
         for (stem, ty) in [("s", "study"), ("c1", "claim"), ("c2", "claim")] {
-            let doc: serde_yaml::Value =
-                serde_yaml::from_str(&format!("entity:\n  type: {ty}\n")).expect("yaml");
+            let doc: serde_json::Value =
+                crate::yaml::from_str(&format!("entity:\n  type: {ty}\n")).expect("yaml");
             extract_one(&mut g, stem, &format!("contracts/{stem}.yaml"), &doc);
         }
-        let none: serde_yaml::Value = serde_yaml::from_str("name: n\n").expect("yaml");
+        let none: serde_json::Value = crate::yaml::from_str("name: n\n").expect("yaml");
         extract_one(&mut g, "bare", "contracts/bare.yaml", &none);
         let at = |t: &str| crate::ontology::shapes::instances_closed(&g, &entity_class(t));
         assert_eq!(at("study"), vec![iri("contract", "s")]);

@@ -38,7 +38,10 @@
 //! wrong way round.
 
 use serde::{Deserialize, Serialize};
-use serde_yaml::{Mapping, Value};
+use serde_json::{Map, Value};
+
+/// A YAML mapping, read into JSON form (string keys, document order).
+type Mapping = Map<String, Value>;
 
 use crate::error::{Severity, Violation};
 
@@ -129,14 +132,14 @@ impl KaizenRecord {
     /// assert `invariants:` instead, and handled by KAIZEN-003.
     #[must_use]
     pub fn delta_pair(&self) -> Option<(&Mapping, &Mapping)> {
-        let baseline = self.baseline.as_ref()?.as_mapping()?;
+        let baseline = self.baseline.as_ref()?.as_object()?;
         if let (Some(before), Some(after)) = (
-            baseline.get("before").and_then(Value::as_mapping),
-            baseline.get("after").and_then(Value::as_mapping),
+            baseline.get("before").and_then(Value::as_object),
+            baseline.get("after").and_then(Value::as_object),
         ) {
             return Some((before, after));
         }
-        let target = self.target.as_ref()?.as_mapping()?;
+        let target = self.target.as_ref()?.as_object()?;
         Some((baseline, target))
     }
 
@@ -154,8 +157,8 @@ impl KaizenRecord {
 fn is_empty_block(value: Option<&Value>) -> bool {
     match value {
         None | Some(Value::Null) => true,
-        Some(Value::Sequence(s)) => s.is_empty(),
-        Some(Value::Mapping(m)) => m.is_empty(),
+        Some(Value::Array(s)) => s.is_empty(),
+        Some(Value::Object(m)) => m.is_empty(),
         Some(_) => false,
     }
 }
@@ -217,7 +220,7 @@ fn parse_quantity_str(raw: &str) -> Option<f64> {
 fn comparable_metrics(before: &Mapping, after: &Mapping) -> Vec<(String, f64, f64)> {
     let mut out = Vec::new();
     for (key, before_value) in before {
-        let Some(name) = key.as_str() else { continue };
+        let name = key.as_str();
         let Some(after_value) = after.get(key) else {
             continue;
         };
@@ -337,7 +340,7 @@ fn validate_delta_shape(record: &KaizenRecord, violations: &mut Vec<Violation>) 
     let Some(target) = record.target.as_ref() else {
         return;
     };
-    let Some(target_map) = target.as_mapping() else {
+    let Some(target_map) = target.as_object() else {
         violations.push(violation(
             "KAIZEN-004",
             "`target:` must be a map of metric → value so it can be compared to \
@@ -347,7 +350,7 @@ fn validate_delta_shape(record: &KaizenRecord, violations: &mut Vec<Violation>) 
         ));
         return;
     };
-    let Some(baseline_map) = record.baseline.as_ref().and_then(Value::as_mapping) else {
+    let Some(baseline_map) = record.baseline.as_ref().and_then(Value::as_object) else {
         violations.push(violation(
             "KAIZEN-004",
             "`target:` is declared with no `baseline:` map to improve on — a target \

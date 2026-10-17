@@ -219,7 +219,7 @@ fn proof_obligation_id_survives_deserialization() {
   property: an obligation with no id
 ";
     let obs: Vec<ProofObligation> =
-        serde_yaml::from_str(yaml).expect("two obligations, one with an id");
+        crate::yaml::from_str(yaml).expect("two obligations, one with an id");
     assert_eq!(obs.len(), 2);
     assert_eq!(
         obs[0].id.as_deref(),
@@ -233,7 +233,7 @@ fn proof_obligation_id_survives_deserialization() {
 }
 
 /// The id must also survive a round trip, because `pv unlock` writes contracts
-/// back. It does so through `serde_yaml::Value` today, so unknown keys survive
+/// back. It does so through `serde_json::Value` today, so unknown keys survive
 /// regardless — but if anyone ever "improves" that into a typed round trip,
 /// `skip_serializing_if` plus this test are what stop it silently stripping
 /// 3,750 ids file by file.
@@ -245,12 +245,13 @@ fn proof_obligation_id_survives_a_typed_round_trip() {
         ..Default::default()
     };
     let round: ProofObligation =
-        serde_yaml::from_str(&serde_yaml::to_string(&ob).expect("serialize")).expect("deserialize");
+        crate::yaml::from_str(&serde_saphyr::to_string(&ob).expect("serialize"))
+            .expect("deserialize");
     assert_eq!(round.id.as_deref(), Some("QHF-INV-004"));
 
     // and an obligation without one must not gain an empty `id:` key
     let bare = ProofObligation::default();
-    let text = serde_yaml::to_string(&bare).expect("serialize");
+    let text = serde_saphyr::to_string(&bare).expect("serialize");
     assert!(
         !text.contains("id:"),
         "a None id must be omitted, not written as null: {text}"
@@ -260,7 +261,7 @@ fn proof_obligation_id_survives_a_typed_round_trip() {
 // ── PMAT-3091: not-applicable-to-unit-tests obligations ───────────────────
 
 fn na_obligation_from(yaml: &str) -> ProofObligation {
-    serde_yaml::from_str(yaml).expect("obligation fixture must parse")
+    crate::yaml::from_str(yaml).expect("obligation fixture must parse")
 }
 
 #[test]
@@ -297,7 +298,7 @@ fn na_roundtrip_keeps_not_applicable_and_both_fields() {
     let ob = na_obligation_from(
         "property: p\napplies_to: N/A\nna_reason: an O() with no constant\nna_owner: bench qwen35\n",
     );
-    let yaml = serde_yaml::to_string(&ob).expect("serialize");
+    let yaml = serde_saphyr::to_string(&ob).expect("serialize");
     assert!(yaml.contains("applies_to: not_applicable"), "{yaml}");
     let back = na_obligation_from(&yaml);
     assert_eq!(back.applies_to, Some(AppliesTo::NotApplicable));
@@ -308,7 +309,7 @@ fn na_roundtrip_keeps_not_applicable_and_both_fields() {
 #[test]
 fn na_fields_absent_are_not_serialized() {
     let ob = na_obligation_from("property: p\napplies_to: all\n");
-    let yaml = serde_yaml::to_string(&ob).expect("serialize");
+    let yaml = serde_saphyr::to_string(&ob).expect("serialize");
     assert!(
         !yaml.contains("na_reason") && !yaml.contains("na_owner"),
         "{yaml}"

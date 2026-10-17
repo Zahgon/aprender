@@ -14,7 +14,7 @@ fn sigma() -> Sigma {
 }
 
 fn rules_with(census: Option<&str>, yaml: &str) -> (Vec<String>, bool) {
-    let v: serde_yaml::Value = serde_yaml::from_str(yaml).expect("case is YAML");
+    let v: serde_json::Value = crate::yaml::from_str(yaml).expect("case is YAML");
     let mut out = Vec::new();
     let pending = check_evidence(
         &sigma(),

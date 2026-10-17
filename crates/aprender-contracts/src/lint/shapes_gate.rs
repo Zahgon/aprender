@@ -117,14 +117,14 @@ pub fn target_class_map(contract_dir: &Path) -> shapes::TargetMap {
     let Ok(text) = std::fs::read_to_string(contract_dir.join("ontology.yaml")) else {
         return shapes::TargetMap::new();
     };
-    let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(&text) else {
+    let Ok(doc) = crate::yaml::from_str::<serde_json::Value>(&text) else {
         return shapes::TargetMap::new();
     };
     doc.get("entity_type_target_class")
-        .and_then(serde_yaml::Value::as_mapping)
+        .and_then(serde_json::Value::as_object)
         .map(|m| {
             m.iter()
-                .filter_map(|(k, v)| Some((k.as_str()?.to_string(), v.as_str()?.to_string())))
+                .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string())))
                 .collect()
         })
         .unwrap_or_default()

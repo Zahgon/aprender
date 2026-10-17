@@ -6,7 +6,7 @@ pub enum ContractError {
     Io(#[from] std::io::Error),
 
     #[error("Failed to parse YAML: {0}")]
-    Yaml(#[from] serde_yaml::Error),
+    Yaml(#[from] serde_saphyr::Error),
 
     #[error("Schema violation: {0}")]
     Schema(String),

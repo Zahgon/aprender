@@ -76,7 +76,7 @@ pub struct Sigma {
     /// still claim the key like every other — the anti-decoration rule is not weakened, it is answered
     /// ("the contract schema reads it, not Σ").
     #[serde(default)]
-    pub metadata: Option<serde_yaml::Value>,
+    pub metadata: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -320,7 +320,7 @@ impl Sigma {
     /// Parse Σ. Does NOT check integrity — [`Sigma::check_integrity`] does that, so a caller can report a parse
     /// failure and a malformed declaration differently.
     pub fn from_yaml(yaml: &str) -> Result<Self, SigmaError> {
-        serde_yaml::from_str(yaml).map_err(|e| SigmaError::Parse(e.to_string()))
+        crate::yaml::from_str(yaml).map_err(|e| SigmaError::Parse(e.to_string()))
     }
 
     /// The malformed-Σ classes: ONT-2b's four in the order the row lists them, then the target-class map (v4.16 D-T1).

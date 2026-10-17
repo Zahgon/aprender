@@ -37,10 +37,10 @@ pub type Synonyms = BTreeMap<String, Vec<String>>;
 pub fn synonyms(contract_dir: &Path) -> Synonyms {
     std::fs::read_to_string(contract_dir.join("ontology.yaml"))
         .ok()
-        .and_then(|t| serde_yaml::from_str::<serde_yaml::Value>(&t).ok())
+        .and_then(|t| crate::yaml::from_str::<serde_json::Value>(&t).ok())
         .and_then(|d| {
             d.get("llm_context_role_synonyms")
-                .and_then(|m| serde_yaml::from_value::<Synonyms>(m.clone()).ok())
+                .and_then(|m| serde_json::from_value::<Synonyms>(m.clone()).ok())
         })
         .unwrap_or_default()
 }
@@ -92,7 +92,7 @@ fn emit_frontmatter(g: &mut Graph, s: &str, rel: &str, text: &str, stats: &mut D
         Err(e) => return stats.refuse(rel, e),
     };
     for (k, v) in &fm {
-        let Some(key) = k.as_str() else { continue };
+        let key = k.as_str();
         let pred = if key == "tools" {
             llm("declaredTool")
         } else {

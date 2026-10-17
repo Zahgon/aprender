@@ -211,20 +211,20 @@ fn expand_term(s: &str, prefix: &str) -> String {
 
 /// Expand `ex:` / `rdfs:` / `owl:` / `sh:` inside a shape document's string values, recursively, so the shape
 /// parser (which knows `ont:`, `xsd:`, `rdf:`, `prov:`) sees full IRIs for the case's own terms.
-fn expand_doc(v: &serde_yaml::Value, prefix: &str) -> serde_yaml::Value {
+fn expand_doc(v: &serde_json::Value, prefix: &str) -> serde_json::Value {
     match v {
-        serde_yaml::Value::String(s) => {
+        serde_json::Value::String(s) => {
             let e = expand_term(s, prefix);
-            serde_yaml::Value::String(if e == *s && s.starts_with("xsd:") {
+            serde_json::Value::String(if e == *s && s.starts_with("xsd:") {
                 s.clone()
             } else {
                 e
             })
         }
-        serde_yaml::Value::Sequence(seq) => {
-            serde_yaml::Value::Sequence(seq.iter().map(|x| expand_doc(x, prefix)).collect())
+        serde_json::Value::Array(seq) => {
+            serde_json::Value::Array(seq.iter().map(|x| expand_doc(x, prefix)).collect())
         }
-        serde_yaml::Value::Mapping(m) => serde_yaml::Value::Mapping(
+        serde_json::Value::Object(m) => serde_json::Value::Object(
             m.iter()
                 .map(|(k, x)| (k.clone(), expand_doc(x, prefix)))
                 .collect(),
@@ -301,24 +301,24 @@ fn object_term(o: &str, prefix: &str) -> Result<Term, CaseError> {
 
 /// Parse one embedded case.
 pub fn parse_case(id: &str, yaml: &str) -> Result<Case, CaseError> {
-    let doc: serde_yaml::Value =
-        serde_yaml::from_str(yaml).map_err(|e| CaseError(format!("{id}: {e}")))?;
+    let doc: serde_json::Value =
+        crate::yaml::from_str(yaml).map_err(|e| CaseError(format!("{id}: {e}")))?;
     let prefix = doc
         .get("prefix")
-        .and_then(serde_yaml::Value::as_str)
+        .and_then(serde_json::Value::as_str)
         .ok_or_else(|| CaseError(format!("{id}: no `prefix`")))?
         .to_string();
     let shapes_doc = doc
         .get("shapes")
         .ok_or_else(|| CaseError(format!("{id}: no `shapes`")))?;
     let shapes_doc = expand_doc(shapes_doc, &prefix);
-    let mut wrapper = serde_yaml::Mapping::new();
+    let mut wrapper = serde_json::Map::new();
     wrapper.insert("shapes".into(), shapes_doc);
-    let shapes = shapes::parse_shapes(id, &serde_yaml::Value::Mapping(wrapper))
+    let shapes = shapes::parse_shapes(id, &serde_json::Value::Object(wrapper))
         .map_err(|e| CaseError(format!("{id}: {e}")))?;
     let data = doc
         .get("data")
-        .and_then(serde_yaml::Value::as_str)
+        .and_then(serde_json::Value::as_str)
         .ok_or_else(|| CaseError(format!("{id}: no `data`")))?;
     let mut graph = Graph::new();
     for line in data.lines() {
@@ -331,22 +331,19 @@ pub fn parse_case(id: &str, yaml: &str) -> Result<Case, CaseError> {
         .ok_or_else(|| CaseError(format!("{id}: no `expect`")))?;
     let conforms = expect
         .get("conforms")
-        .and_then(serde_yaml::Value::as_bool)
+        .and_then(serde_json::Value::as_bool)
         .ok_or_else(|| CaseError(format!("{id}: `expect.conforms` is not a boolean")))?;
     let mut expected = Vec::new();
-    if let Some(list) = expect
-        .get("results")
-        .and_then(serde_yaml::Value::as_sequence)
-    {
+    if let Some(list) = expect.get("results").and_then(serde_json::Value::as_array) {
         for r in list {
             let focus = r
                 .get("focus")
-                .and_then(serde_yaml::Value::as_str)
+                .and_then(serde_json::Value::as_str)
                 .unwrap_or_default();
-            let path = r.get("path").and_then(serde_yaml::Value::as_str);
+            let path = r.get("path").and_then(serde_json::Value::as_str);
             let component = r
                 .get("component")
-                .and_then(serde_yaml::Value::as_str)
+                .and_then(serde_json::Value::as_str)
                 .unwrap_or_default();
             expected.push(Expected {
                 focus: expand_term(focus, &prefix),

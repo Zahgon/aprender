@@ -7,7 +7,7 @@ const SM: &str = "ProvableContracts/Theorems/Softmax/Kernel.lean";
 const GELU: &str = "ProvableContracts/Theorems/Gelu/Bound.lean";
 
 fn rec(yaml: &str) -> Record {
-    parse(&serde_yaml::from_str(yaml).expect("yaml"))
+    parse(&crate::yaml::from_str(yaml).expect("yaml"))
 }
 
 fn model(module: &str, model_of: &str, kind: Kind) -> Model {

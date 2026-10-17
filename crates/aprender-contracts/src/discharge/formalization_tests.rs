@@ -29,7 +29,7 @@ fn summary() -> Summary {
 }
 
 fn judged(yaml: &str, s: Option<&Summary>, sorry: usize) -> Report {
-    let doc: Value = serde_yaml::from_str(yaml).unwrap();
+    let doc: Value = crate::yaml::from_str(yaml).unwrap();
     let mut r = Report::default();
     judge_doc(&doc, s, sorry, &mut r);
     r
