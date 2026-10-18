@@ -1,0 +1,1 @@
+{"id":"FND-20261018-registry-progress-human-untested","session":"w5382","kind":"coverage-gap","where":"crates/aprender-registry/src/cache.rs:DownloadProgress::{eta_human,downloaded_human,total_human}","note":"human-readable accessors had no tests; 3 tests + new contract C-REGISTRY-DOWNLOAD-PROGRESS; mutation (downloaded_human reads total) RED->restored."}
