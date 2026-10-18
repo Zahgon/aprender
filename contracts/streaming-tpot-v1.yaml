@@ -92,5 +92,5 @@ qa_gate:
   - tpot_nonzero
   - ttft_separable
   - content_parity
-  pass_criteria: All 3 falsification tests pass + TPOT P50 > 0
+  pass_criteria: All 4 falsification tests pass + TPOT P50 > 0
   falsification: Disable streaming — verify TPOT drops to 0

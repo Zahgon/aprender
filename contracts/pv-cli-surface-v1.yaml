@@ -280,6 +280,6 @@ qa_gate:
     - "advertised_implies_reachable"
     - "unusable_input_is_rejected"
   pass_criteria: >
-    All 11 falsification tests pass via
+    All 12 falsification tests pass via
     `cargo test -p aprender-contracts-cli --test pv_surface_gate`, which is wired
     into the required `workspace-test` integration step in .github/workflows/ci.yml.
