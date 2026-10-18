@@ -5176,3 +5176,119 @@ fn test_save_apr_checkpoint_rejects_inf_classifier_bias() {
     assert!(err.to_string().contains("classifier.bias"), "{err}");
     assert!(!dir.path().join("model.apr").exists());
 }
+
+// =========================================================================
+// ClassifyTrainer::save_checkpoint (C-CKPT-001) — the files it writes
+// =========================================================================
+
+fn ckpt_metrics_s() -> EpochMetrics {
+    EpochMetrics {
+        epoch: 2,
+        train_loss: 0.5,
+        train_accuracy: 0.75,
+        val_loss: 0.25,
+        val_accuracy: 0.5,
+        learning_rate: 0.01,
+        epoch_time_ms: 1234,
+        samples_per_sec: 42.0,
+    }
+}
+
+fn ckpt_trainer_s() -> ClassifyTrainer {
+    let cfg = TrainingConfig { epochs: 1, val_split: 0.2, ..TrainingConfig::default() };
+    ClassifyTrainer::new(tiny_pipeline(3), make_corpus(20, 3), cfg).expect("valid")
+}
+
+#[test]
+fn test_save_checkpoint_writes_metadata_json_with_the_epoch_metrics() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut t = ckpt_trainer_s();
+    t.save_checkpoint(dir.path(), 2, &ckpt_metrics_s()).expect("save");
+    let meta: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.path().join("metadata.json")).expect("metadata.json"),
+    )
+    .expect("valid json");
+    assert_eq!(meta["epoch"], 2);
+    assert_eq!(meta["epoch_time_ms"], 1234);
+    assert_eq!(meta["train_loss"].as_f64(), Some(0.5));
+    assert_eq!(meta["val_loss"].as_f64(), Some(0.25));
+    assert_eq!(meta["val_accuracy"].as_f64(), Some(0.5));
+    assert!(meta.get("class_weights").is_some(), "class_weights key is always written");
+}
+
+#[test]
+fn test_save_checkpoint_safetensors_carries_head_and_lora_tensors() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut t = ckpt_trainer_s();
+    t.save_checkpoint(dir.path(), 2, &ckpt_metrics_s()).expect("save");
+    let bytes = std::fs::read(dir.path().join("model.safetensors")).expect("model.safetensors");
+    let (_, st_meta) = safetensors::SafeTensors::read_metadata(&bytes).expect("valid safetensors");
+    let meta = st_meta.metadata().as_ref().expect("header metadata");
+    assert_eq!(meta.get("epoch").map(String::as_str), Some("2"));
+    assert_eq!(meta.get("val_loss").map(String::as_str), Some("0.250000"));
+    let st = safetensors::SafeTensors::deserialize(&bytes).expect("deserialize");
+    let names: Vec<String> = st.names().iter().map(|n| n.to_string()).collect();
+    // F-CLASS-008: Q (even) and V (odd) adapters per layer, A and B each.
+    for name in [
+        "lora.0.q_proj.lora_a",
+        "lora.0.q_proj.lora_b",
+        "lora.0.v_proj.lora_a",
+        "lora.0.v_proj.lora_b",
+    ] {
+        assert!(names.iter().any(|n| n == name), "{name} missing from {names:?}");
+    }
+    let a = st.tensor("lora.0.q_proj.lora_a").expect("lora_a");
+    assert_eq!(a.shape()[0], 4, "lora_a is [rank, d_in] with rank 4");
+    assert_eq!(a.dtype(), safetensors::tensor::Dtype::F32);
+}
+
+#[test]
+fn test_save_checkpoint_writes_hf_config_and_peft_adapter_config() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut t = ckpt_trainer_s();
+    t.save_checkpoint(dir.path(), 0, &ckpt_metrics_s()).expect("save");
+    let cfg: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.path().join("config.json")).expect("config.json"),
+    )
+    .expect("valid json");
+    assert_eq!(cfg["architectures"][0], "Qwen2ForSequenceClassification");
+    assert_eq!(cfg["model_type"], "qwen2");
+    assert_eq!(cfg["num_labels"], 3);
+    assert_eq!(cfg["problem_type"], "single_label_classification");
+    assert_eq!(cfg["hidden_size"], TransformerConfig::tiny().hidden_size);
+    let adapter: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.path().join("adapter_config.json"))
+            .expect("adapter_config.json"),
+    )
+    .expect("valid json");
+    assert_eq!(adapter["task_type"], "SEQ_CLS");
+    assert_eq!(adapter["r"], 4);
+}
+
+#[test]
+fn test_save_checkpoint_without_a_model_dir_writes_no_tokenizer_json() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut t = ckpt_trainer_s();
+    t.save_checkpoint(dir.path(), 0, &ckpt_metrics_s()).expect("save");
+    assert!(!dir.path().join("tokenizer.json").exists());
+}
+
+#[test]
+fn test_save_checkpoint_creates_missing_parent_directories() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let nested = dir.path().join("a").join("b").join("epoch-0");
+    let mut t = ckpt_trainer_s();
+    t.save_checkpoint(&nested, 0, &ckpt_metrics_s()).expect("save");
+    assert!(nested.join("metadata.json").is_file());
+    assert!(nested.join("model.safetensors").is_file());
+}
+
+#[test]
+fn test_save_checkpoint_under_a_regular_file_is_an_io_error() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let blocker = dir.path().join("not_a_dir");
+    std::fs::write(&blocker, b"x").expect("write blocker");
+    let mut t = ckpt_trainer_s();
+    let err = t.save_checkpoint(&blocker.join("ckpt"), 0, &ckpt_metrics_s()).unwrap_err();
+    assert!(err.to_string().contains("Failed to create checkpoint dir"), "unexpected error: {err}");
+}
