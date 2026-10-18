@@ -1,0 +1,36 @@
+metadata:
+  version: 1.0.0
+  kind: pattern
+  description: |
+    Output shape of the inference-runtime scorecard renderers in
+    crates/aprender-test-lib/src/llm/score.rs: format_table (terminal) and
+    format_profile_markdown. A renderer is a pure function of the scorecard,
+    so each shape below is checkable from its output alone.
+  references:
+    - "crates/aprender-test-lib/src/llm/score.rs — format_table, format_profile_markdown"
+    - "crates/aprender-test-lib/tests/llm_score_format_edges.rs"
+
+equations:
+  table_columns_follow_concurrency:
+    formula: "concurrency == 1 -> 5 metric columns and a 74-wide rule; otherwise 6 metric columns and an 88-wide rule"
+  best_cell_is_starred:
+    formula: "cell(m) = score right-aligned to 3 + '*' if m.best else ' '; a missing metric renders '   -'"
+  profile_consistency_is_conditional:
+    formula: "the '### Profile Consistency' section appears iff consistency is non-empty"
+
+falsification_tests:
+  - id: FALSIFY-LLM-SCORE-FMT-001
+    rule: "format_table picks its column set and rule width from concurrency"
+    prediction: "c=1 prints an Interactive title, no Aggr column and a 74-char rule; c=8 prints Throughput (c=8), an Aggr column and an 88-char rule"
+    test: "cargo test -p aprender-test-lib --test llm_score_format_edges"
+    if_fails: "the c=1 and c>1 layouts are swapped or merged, so a scorecard misreads its columns"
+  - id: FALSIFY-LLM-SCORE-FMT-002
+    rule: "best-in-class cells are starred and missing metrics are dashes"
+    prediction: "a best cell ends in '*', a non-best cell does not, a missing metric is '   -'"
+    test: "cargo test -p aprender-test-lib --test llm_score_format_edges"
+    if_fails: "the legend '* = best in class' names a mark the table no longer prints"
+  - id: FALSIFY-LLM-SCORE-FMT-003
+    rule: "format_profile_markdown rows round as stated and the consistency section is conditional"
+    prediction: "decode 120.25 prints 120.2, consistency 84.74 prints 85%, and an empty consistency list prints no Consistency heading"
+    test: "cargo test -p aprender-test-lib --test llm_score_format_edges"
+    if_fails: "profile reports show wrong precision or an empty consistency section"
