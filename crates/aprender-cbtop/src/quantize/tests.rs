@@ -142,3 +142,31 @@ fn test_expected_ppl_delta() {
     // Q8_0 should have very low perplexity delta
     assert!(QuantFormat::Q8_0.expected_ppl_delta() < 0.1);
 }
+
+/// FALSIFY-OPS-014: `Display for QuantStats` prints the totals it holds
+/// and a per-format section only when a layer has been added.
+#[test]
+fn test_quant_stats_display_reports_totals_and_formats() {
+    let empty = format!("{}", QuantStats::new());
+    assert!(empty.starts_with("Quantization Statistics\n======================\n"));
+    assert!(empty.contains("Total Weights: 0\n"));
+    assert!(empty.contains("Compression: 1.00x\n"));
+    assert!(empty.contains("Avg Bits/Weight: 0.00\n"));
+    assert!(!empty.contains("By Format:"));
+
+    // 100x100 = 10_000 weights in 5_000 bytes: 4.0 bits/weight, 20_000 B as F16
+    let mut stats = QuantStats::new();
+    stats.add_layer(&QuantizedWeights::new(
+        QuantFormat::Q8_0,
+        vec![0u8; 5_000],
+        (100, 100),
+        "blk.0",
+    ));
+    let out = format!("{stats}");
+    assert!(out.contains("Total Weights: 10000\n"));
+    assert!(out.contains("Total Memory: 0.01 MB (quantized)\n"));
+    assert!(out.contains("F16 Memory: 0.02 MB (baseline)\n"));
+    assert!(out.contains("Compression: 4.00x\n"));
+    assert!(out.contains("Avg Bits/Weight: 4.00\n"));
+    assert!(out.contains("By Format:\n  Q8_0: 10000 weights, 0.01 MB\n"));
+}

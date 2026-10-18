@@ -265,6 +265,11 @@ falsification_tests:
   prediction: The timestamp in a cbtop report matches the UTC date at the moment it was generated, on both headless paths
   test: commands::cbtop::tests::test_chrono_timestamp_is_current_utc_date
   if_fails: Persisted CI provenance is stamped with a stale hardcoded date
+- id: FALSIFY-OPS-014
+  rule: cbtop quantization report prints the totals it holds
+  prediction: Display for QuantStats reports weights, memory, compression and a per-format section only when a layer was added
+  test: quantize::tests::test_quant_stats_display_reports_totals_and_formats
+  if_fails: cbtop quantization report misstates sizes or compression
 kani_harnesses:
 - id: KANI-OPS-001
   obligation: ReadOnly commands have no side effects
