@@ -214,37 +214,44 @@ impl TspEngine {
     /// Apply 2-opt local search.
     fn two_opt(&self, tour: &mut [usize]) -> u64 {
         let mut improvements = 0u64;
-        let mut improved = true;
+        loop {
+            let found = self.two_opt_pass(tour);
+            if found == 0 {
+                return improvements;
+            }
+            improvements += found;
+        }
+    }
 
-        while improved {
-            improved = false;
-            for i in 0..self.n - 1 {
-                for j in i + 2..self.n {
-                    // Skip adjacent edges
-                    if j == i + 1 || (i == 0 && j == self.n - 1) {
-                        continue;
-                    }
-
-                    // Calculate improvement
-                    let a = tour[i];
-                    let b = tour[i + 1];
-                    let c = tour[j];
-                    let d = tour[(j + 1) % self.n];
-
-                    let current = self.distances[a][b] + self.distances[c][d];
-                    let swapped = self.distances[a][c] + self.distances[b][d];
-
-                    if swapped < current {
-                        // Reverse segment [i+1, j]
-                        tour[i + 1..=j].reverse();
-                        improved = true;
-                        improvements += 1;
-                    }
+    /// One sweep over every non-adjacent edge pair; returns the number of reversals applied.
+    fn two_opt_pass(&self, tour: &mut [usize]) -> u64 {
+        let mut improvements = 0u64;
+        for i in 0..self.n - 1 {
+            for j in i + 2..self.n {
+                // Skip adjacent edges
+                if j == i + 1 || (i == 0 && j == self.n - 1) {
+                    continue;
+                }
+                if self.two_opt_gains(tour, i, j) {
+                    // Reverse segment [i+1, j]
+                    tour[i + 1..=j].reverse();
+                    improvements += 1;
                 }
             }
         }
-
         improvements
+    }
+
+    /// True when swapping edges (i, i+1) and (j, j+1) shortens the tour.
+    fn two_opt_gains(&self, tour: &[usize], i: usize, j: usize) -> bool {
+        let a = tour[i];
+        let b = tour[i + 1];
+        let c = tour[j];
+        let d = tour[(j + 1) % self.n];
+
+        let current = self.distances[a][b] + self.distances[c][d];
+        let swapped = self.distances[a][c] + self.distances[b][d];
+        swapped < current
     }
 
     /// Perform one restart iteration.

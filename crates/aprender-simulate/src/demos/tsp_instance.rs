@@ -390,19 +390,21 @@ impl TspInstanceYaml {
     pub fn check_triangle_inequality(&self) -> Result<(), TspInstanceError> {
         let n = self.cities.len();
         for i in 0..n {
-            for j in 0..n {
-                for k in 0..n {
-                    if i != j && j != k && i != k {
-                        let direct = self.matrix[i][k];
-                        let via_j = self.matrix[i][j].saturating_add(self.matrix[j][k]);
-                        if direct > via_j {
-                            return Err(TspInstanceError::TriangleInequalityViolation { i, j, k });
-                        }
+            for j in (0..n).filter(|&j| j != i) {
+                for k in (0..n).filter(|&k| k != i && k != j) {
+                    if self.violates_triangle(i, j, k) {
+                        return Err(TspInstanceError::TriangleInequalityViolation { i, j, k });
                     }
                 }
             }
         }
         Ok(())
+    }
+
+    /// True when the direct i->k edge is longer than the detour via j.
+    fn violates_triangle(&self, i: usize, j: usize, k: usize) -> bool {
+        let via_j = self.matrix[i][j].saturating_add(self.matrix[j][k]);
+        self.matrix[i][k] > via_j
     }
 
     /// Compute tour length for given city sequence.

@@ -596,59 +596,67 @@ impl ExperimentYaml {
             }
         }
 
-        // Hypothesis validation
-        if let Some(ref hyp) = self.hypothesis {
-            if hyp.null_hypothesis.len() < 10 {
-                errors.push(
-                    "Hypothesis must have a meaningful null hypothesis (min 10 chars)".to_string(),
-                );
-            }
-            if !hyp.expected_outcome.is_empty()
-                && hyp.expected_outcome != "reject"
-                && hyp.expected_outcome != "fail_to_reject"
-            {
-                errors.push(format!(
-                    "Expected outcome must be 'reject' or 'fail_to_reject', got '{}'",
-                    hyp.expected_outcome
-                ));
-            }
-        } else {
-            errors.push("Experiment must have a hypothesis section".to_string());
-        }
-
-        // Falsification criteria validation
-        if let Some(ref fals) = self.falsification {
-            if fals.criteria.is_empty() && !fals.import_from_emc {
-                errors.push(
-                    "Experiment must have falsification criteria or import_from_emc=true"
-                        .to_string(),
-                );
-            }
-            for crit in &fals.criteria {
-                if crit.condition.is_empty() {
-                    errors.push(format!("Criterion '{}' must have a condition", crit.name));
-                }
-            }
-        } else {
-            errors.push("Experiment must have falsification section".to_string());
-        }
-
-        // Simulation duration validation
-        if let Some(ref sim) = self.simulation {
-            if let Some(ref dur) = sim.duration {
-                if dur.simulation <= 0.0 {
-                    errors.push("Simulation duration must be positive".to_string());
-                }
-                if dur.replications == 0 {
-                    errors.push("Replications must be at least 1".to_string());
-                }
-            }
-        }
+        self.validate_hypothesis(&mut errors);
+        self.validate_falsification(&mut errors);
+        self.validate_duration(&mut errors);
 
         if errors.is_empty() {
             Ok(())
         } else {
             Err(errors)
+        }
+    }
+
+    /// Hypothesis section checks for `validate_schema`.
+    fn validate_hypothesis(&self, errors: &mut Vec<String>) {
+        let Some(ref hyp) = self.hypothesis else {
+            errors.push("Experiment must have a hypothesis section".to_string());
+            return;
+        };
+        if hyp.null_hypothesis.len() < 10 {
+            errors.push(
+                "Hypothesis must have a meaningful null hypothesis (min 10 chars)".to_string(),
+            );
+        }
+        if !hyp.expected_outcome.is_empty()
+            && hyp.expected_outcome != "reject"
+            && hyp.expected_outcome != "fail_to_reject"
+        {
+            errors.push(format!(
+                "Expected outcome must be 'reject' or 'fail_to_reject', got '{}'",
+                hyp.expected_outcome
+            ));
+        }
+    }
+
+    /// Falsification section checks for `validate_schema`.
+    fn validate_falsification(&self, errors: &mut Vec<String>) {
+        let Some(ref fals) = self.falsification else {
+            errors.push("Experiment must have falsification section".to_string());
+            return;
+        };
+        if fals.criteria.is_empty() && !fals.import_from_emc {
+            errors.push(
+                "Experiment must have falsification criteria or import_from_emc=true".to_string(),
+            );
+        }
+        for crit in &fals.criteria {
+            if crit.condition.is_empty() {
+                errors.push(format!("Criterion '{}' must have a condition", crit.name));
+            }
+        }
+    }
+
+    /// Simulation duration checks for `validate_schema`.
+    fn validate_duration(&self, errors: &mut Vec<String>) {
+        let Some(dur) = self.simulation.as_ref().and_then(|s| s.duration.as_ref()) else {
+            return;
+        };
+        if dur.simulation <= 0.0 {
+            errors.push("Simulation duration must be positive".to_string());
+        }
+        if dur.replications == 0 {
+            errors.push("Replications must be at least 1".to_string());
         }
     }
 }
