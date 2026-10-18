@@ -257,4 +257,98 @@ mod tests {
         assert_eq!(panel.temp_status(75.0), "WARNING");
         assert_eq!(panel.temp_status(90.0), "CRITICAL");
     }
+
+    use presentar_core::{DrawCommand, RecordingCanvas};
+
+    /// Every text drawn, with its style colour, in draw order.
+    fn texts(c: &RecordingCanvas) -> Vec<(String, presentar_core::Color)> {
+        c.commands()
+            .iter()
+            .filter_map(|cmd| {
+                if let DrawCommand::Text { content, style, .. } = cmd {
+                    Some((content.clone(), style.color))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn has(c: &RecordingCanvas, needle: &str) -> bool {
+        texts(c).iter().any(|(t, _)| t.contains(needle))
+    }
+
+    #[test]
+    fn paint_empty_panel_shows_ok_status_and_no_optional_sections() {
+        let panel = ThermalPanelBrick::new();
+        let mut c = RecordingCanvas::new();
+        panel.paint(&mut c, 80.0, 24.0);
+        assert!(has(&c, "Thermal Monitor"));
+        assert!(has(&c, "0.0°C [OK]"));
+        assert!(!has(&c, "Other Sensors:"));
+    }
+
+    #[test]
+    fn paint_reports_status_and_colour_per_threshold() {
+        let mut panel = ThermalPanelBrick::new();
+        panel.cpu_temp = 90.0;
+        panel.gpu_temp = 75.0;
+        let mut c = RecordingCanvas::new();
+        panel.paint(&mut c, 80.0, 24.0);
+        let t = texts(&c);
+        let cpu = t
+            .iter()
+            .find(|(s, _)| s.contains("90.0°C [CRITICAL]"))
+            .expect("cpu line");
+        let gpu = t
+            .iter()
+            .find(|(s, _)| s.contains("75.0°C [WARNING]"))
+            .expect("gpu line");
+        assert_eq!(cpu.1, panel.temp_color(90.0));
+        assert_eq!(gpu.1, panel.temp_color(75.0));
+        assert_ne!(cpu.1, gpu.1);
+    }
+
+    #[test]
+    fn paint_histories_add_graph_output() {
+        let mut panel = ThermalPanelBrick::new();
+        let mut base = RecordingCanvas::new();
+        panel.paint(&mut base, 80.0, 24.0);
+        panel.cpu_temp_history = vec![40.0, 50.0, 60.0];
+        let mut cpu_only = RecordingCanvas::new();
+        panel.paint(&mut cpu_only, 80.0, 24.0);
+        panel.gpu_temp_history = vec![30.0, 45.0];
+        let mut both = RecordingCanvas::new();
+        panel.paint(&mut both, 80.0, 24.0);
+        assert!(cpu_only.command_count() > base.command_count());
+        assert!(both.command_count() > cpu_only.command_count());
+    }
+
+    #[test]
+    fn paint_lists_at_most_four_other_sensors() {
+        let mut panel = ThermalPanelBrick::new();
+        panel.sensors = (0..6)
+            .map(|i| SensorReading {
+                name: format!("s{i}"),
+                temp_c: 60.0 + i as f64 * 10.0,
+            })
+            .collect();
+        let mut c = RecordingCanvas::new();
+        panel.paint(&mut c, 80.0, 24.0);
+        assert!(has(&c, "Other Sensors:"));
+        assert!(has(&c, "s3: 90.0°C"));
+        assert!(!has(&c, "s4:"));
+        let t = texts(&c);
+        let s3 = t.iter().find(|(s, _)| s.starts_with("s3:")).expect("s3");
+        assert_eq!(s3.1, panel.temp_color(90.0));
+    }
+
+    #[test]
+    fn paint_gauge_caps_above_max_safe() {
+        let mut panel = ThermalPanelBrick::new();
+        panel.cpu_temp = 250.0;
+        let mut c = RecordingCanvas::new();
+        panel.paint(&mut c, 80.0, 24.0);
+        assert!(has(&c, "250.0°C [CRITICAL]"));
+    }
 }

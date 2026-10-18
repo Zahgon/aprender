@@ -124,3 +124,9 @@ falsification_tests:
     test: 'cargo test -p aprender-cbtop --lib bricks::panels::pcie::tests::paint_ (4 tests)'
     if_fails: 'the PCIe panel misreports bandwidth (measured 2026-10-18: paint uncovered, #5546)'
     mutation: 'make the TX line use rx_utilization(); paint_with_device_shows_link_and_utilisation must turn RED'
+  - id: FALSIFY-BIN-APRENDER-CBTOP-008
+    rule: 'Thermal panel paints temperature, status and sensors'
+    prediction: 'ThermalPanelBrick::paint prints CPU/GPU temperature with the threshold status and matching colour, draws history graphs only when history exists, and lists at most four other sensors'
+    test: 'cargo test -p aprender-cbtop --lib bricks::panels::thermal::tests::paint_ (5 tests)'
+    if_fails: 'the thermal panel shows the wrong status or too many sensors (measured 2026-10-18: paint uncovered, #5547)'
+    mutation: 'change the sensor .take(4) to .take(5); paint_lists_at_most_four_other_sensors must turn RED'
