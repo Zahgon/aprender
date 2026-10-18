@@ -78,6 +78,49 @@ ignored_keys_for() {
     rm -rf "${dir:?refusing to rm an empty path}"
 }
 
+# Flaky means fail. Echo one line per violation of the flaky policy in $1 (as of date $2, with
+# $3 the latest expiry a quarantine may carry):
+#   - [profile.ci] must set `flaky-result = "fail"` (absent = a flake silently passes);
+#   - a `flaky-result = "pass"` override, under profile.ci OR profile.default (nextest applies
+#     the default profile's overrides to ci too), is a quarantine row: the comment directly
+#     above its `[[profile.*.overrides]]` header must read
+#     `# quarantine owner=<who> expires=YYYY-MM-DD`, the expiry must be a real date, not before
+#     $2 and not after $3 (an open-ended quarantine is tolerance).
+# Plain digit classes, not `{4}`: the CI image's awk is mawk, which has no interval expressions.
+flaky_policy_violations_with() {
+    local awk_bin="$1"; shift
+    "$awk_bin" -v today="$2" -v horizon="$3" '
+        function bad(msg) { print msg }
+        /^\[profile\.ci\][[:space:]]*$/ { sect = "ci"; next }
+        /^\[\[profile\.(ci|default)\.overrides\]\]/ { sect = "ov"; q = lastc; lastc = ""; next }
+        /^\[/ { sect = "other"; lastc = ""; next }
+        /^#/ { if (sect != "ov") lastc = $0; next }
+        /^[[:space:]]*$/ { next }
+        { if (sect != "ov") lastc = "" }
+        sect == "ci" && /^[[:space:]]*flaky-result[[:space:]]*=[[:space:]]*["\047]fail["\047][[:space:]]*$/ { ok = 1 }
+        sect == "ov" && /^[[:space:]]*flaky-result[[:space:]]*=[[:space:]]*["\047]pass["\047]/ {
+            if (q !~ /^# quarantine owner=[^ ]+ expires=[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][[:space:]]*$/) {
+                bad("quarantine row without a `# quarantine owner=<who> expires=YYYY-MM-DD` comment above it")
+            } else {
+                e = q; sub(/.*expires=/, "", e); sub(/[[:space:]]*$/, "", e)
+                m = substr(e, 6, 2) + 0; d = substr(e, 9, 2) + 0
+                if (m < 1 || m > 12 || d < 1 || d > 31) bad("quarantine expiry " e " is not a date")
+                else if (e < today) bad("quarantine row expired " e " (today " today ")")
+                else if (e > horizon) bad("quarantine expiry " e " is past the horizon " horizon)
+            }
+        }
+        END { if (!ok) bad("[profile.ci] does not set flaky-result = \"fail\"") }
+    ' "$1" || printf 'flaky policy: awk failed, nothing was checked\n'
+}
+
+flaky_policy_violations() { flaky_policy_violations_with awk "$@"; }
+
+# Latest expiry a quarantine may carry: 30 days out (GNU date, else BSD date).
+flaky_horizon() {
+    date -u -d "$1 +30 days" +%F 2>/dev/null || date -u -j -v+30d -f %F "$1" +%F 2>/dev/null \
+        || printf '9999-99-99\n'
+}
+
 # ---------------------------------------------------------------------------
 if [ "${1:-}" = "--self-test" ]; then
     fails=0
@@ -103,8 +146,37 @@ if [ "${1:-}" = "--self-test" ]; then
         printf 'FAIL  row 2 reported [%s] for a valid config\n' "$got"; fails=1
     fi
 
+    # Rows 3+: the flaky policy ("flaky means fail; quarantine with an owner and an expiry").
+    T=2026-10-18
+    H=2026-11-17
+    n=2
+    fp_row() { # <name> <want-violations> <toml-body>; run once per awk on the box
+        local name="$1" want="$2" body="$3" a got
+        n=$((n + 1))
+        printf '%b' "$body" > "$SD/fp.toml"
+        for a in awk mawk gawk; do
+            command -v "$a" >/dev/null 2>&1 || continue
+            got="$(flaky_policy_violations_with "$a" "$SD/fp.toml" "$T" "$H" | wc -l)"
+            if [ "$got" -eq "$want" ]; then printf 'ok    row %s %s [%s]\n' "$n" "$name" "$a"
+            else printf 'FAIL  row %s %s [%s]: %s violation(s), wanted %s\n' "$n" "$name" "$a" "$got" "$want"; fails=1; fi
+        done
+    }
+    CI='[profile.ci]\nretries = 2\nflaky-result = "fail"\n'
+    Q='filter = "test(x)"\nflaky-result = "pass"\n'
+    fp_row 'absent flaky-result is reported' 1 '[profile.ci]\nretries = 2\n'
+    fp_row 'commented-out flaky-result is reported' 1 '[profile.ci]\n# flaky-result = "fail"\n'
+    fp_row 'flaky-result = "fail" is clean (control)' 0 "$CI"
+    fp_row 'quarantine row with no owner/expiry is reported' 1 "$CI[[profile.ci.overrides]]\n$Q"
+    fp_row 'quarantine row under profile.default is reported' 1 "$CI[[profile.default.overrides]]\n$Q"
+    fp_row 'indented single-quoted quarantine row is reported' 1 "$CI[[profile.ci.overrides]]\n  flaky-result = 'pass'\n"
+    fp_row 'expired quarantine row is reported' 1 "$CI# quarantine owner=pace expires=2026-10-01\n[[profile.ci.overrides]]\n$Q"
+    fp_row 'open-ended quarantine expiry is reported' 1 "$CI# quarantine owner=pace expires=2099-12-31\n[[profile.ci.overrides]]\n$Q"
+    fp_row 'expiry that is not a date is reported' 1 "$CI# quarantine owner=pace expires=2026-99-99\n[[profile.ci.overrides]]\n$Q"
+    fp_row 'a comment inside the previous row does not cover the next' 1 "$CI# quarantine owner=pace expires=2026-11-01\n[[profile.ci.overrides]]\nfilter = \"a\"\n# quarantine owner=pace expires=2026-11-01\n[[profile.ci.overrides]]\n$Q"
+    fp_row 'owned, unexpired, in-horizon quarantine row is clean (control)' 0 "$CI# quarantine owner=pace expires=2026-11-01\n[[profile.ci.overrides]]\n$Q[profile.ci.junit]\npath = \"junit.xml\"\n"
+
     [ "$fails" -eq 0 ] || { printf '\nSELF-TEST FAILED\n'; exit 1; }
-    printf '\nSELF-TEST PASSED (2/2)\n'
+    printf '\nSELF-TEST PASSED\n'
     exit 0
 fi
 
@@ -134,5 +206,13 @@ if [ -n "$FOUND" ]; then
     exit 1
 fi
 
-printf 'PASS: every key is understood.\n'
+TODAY="$(date -u +%F)"
+FLAKY="$(flaky_policy_violations "$CONFIG" "$TODAY" "$(flaky_horizon "$TODAY")")"
+if [ -n "$FLAKY" ]; then
+    printf '\nFAIL: flaky policy (flaky means fail; quarantine with an owner and an expiry):\n\n'
+    printf '%s\n' "$FLAKY" | sed 's|^|  |'
+    exit 1
+fi
+
+printf 'PASS: every key is understood and the flaky policy holds.\n'
 exit 0

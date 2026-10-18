@@ -23,6 +23,15 @@ wrapper-scripts = true
 # now fails on any key nextest ignores.
 [profile.ci]
 retries = 2
+# Flaky means fail (operator chart). With retries = 2 and no flaky-result, a test that fails
+# once and passes on retry is reported as a PASS: the gate accepts a flake silently. "fail"
+# keeps the retry (the flake is still re-run and named in the log and JUnit) but the run
+# exits non-zero. A known flake is quarantined, never tolerated: give it a
+# `[[profile.ci.overrides]]` row with `flaky-result = "pass"` directly under a comment
+#     # quarantine owner=<who> expires=YYYY-MM-DD
+# scripts/check_nextest_config_keys.sh refuses a row without owner+expiry, one past
+# its expiry, and one expiring more than 30 days out.
+flaky-result = "fail"
 # false, not true (PMAT-3587). fail-fast is a verdict-discarding default: on the first
 # failing test nextest cancels every test still queued and reports the one failure with
 # no count of what it did not measure. Measured on a 6-test probe whose 2nd test fails:
