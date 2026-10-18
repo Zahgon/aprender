@@ -11,6 +11,7 @@ STATE_DIR="${XDG_STATE_HOME:-"$DEFAULT_STATE"}/ci-queue-steward"
 APPLY=0
 SELFTEST=0
 FIXTURES=''
+LATENCY_FILE=
 MILESTONE=''
 MAX_WRITES=5
 
@@ -24,9 +25,24 @@ while [[ $# -gt 0 ]]; do
     --milestone) MILESTONE="$2"; shift 2 ;;
     --max-writes) MAX_WRITES="$2"; shift 2 ;;
     --tick) TICK_ARG="$2"; shift 2 ;;
+    --latency) LATENCY_FILE="$2"; shift 2 ;;
     *) echo "Unknown arg $1"; exit 1 ;;
   esac
 done
+
+# #5490 fix 2: report green -> enqueue latency over [{pr, green, enqueued}] (ISO times). A row with an
+# unreadable time makes the interval not_measured, never 0. Nearest-rank p90. Targets: p90 <= 10 min,
+# max <= 30 min; p90 > 30 min FALSIFIES the sign-off / head-match logic (check that first).
+if [[ -n "${LATENCY_FILE:-}" ]]; then
+  jq -r '
+    [ .[] | (try ((.enqueued | fromdateiso8601) - (.green | fromdateiso8601)) catch null) ] as $d |
+    ($d | map(select(. != null and . >= 0)) | sort | map(. / 60)) as $m |
+    if ($d | length) == 0 or ($m | length) != ($d | length) then "latency: n=\($d | length) verdict=not_measured"
+    else ($m[((($m | length) * 0.9) | ceil) - 1]) as $p90 | ($m | max) as $mx |
+      "latency: n=\($m | length) p90_min=\($p90) max_min=\($mx) verdict=\(if $p90 > 30 then "FALSIFIED" elif $p90 > 10 or $mx > 30 then "MISS" else "OK" end)"
+    end' "$LATENCY_FILE"
+  exit 0
+fi
 
 if [[ "$STATE_DIR" == *..* ]] || [[ "$STATE_DIR" != /* ]]; then
   echo 'refused: STATE_DIR must be absolute and not contain ..' >&2
@@ -75,6 +91,30 @@ def q3:
   select(($gate | length) > 0 and ($wt | length) > 0) |
   {rule: "Q3", type: "enqueue", target: ($pr | tostring), target_id: $pr_id};
 
+# Q5 (#5490 fix 2): enqueue a PR the moment its CURRENT head is green AND 2 non-author seats name that head.
+# A seat is a comment whose first line is "seat N, <who> @<full 40-hex head sha>"; a seat whose <who> appears in
+# any commit message of the PR (an Agent/Co-Authored-By trailer) belongs to the author and is not counted.
+def q5:
+  (($s1|.[0]).data.repository.mergeQueue.entries.nodes) as $mq |
+  ((($s1|.[0]).data.repository.pullRequests.nodes) // [])[] |
+  select(.isDraft == false and .mergeStateStatus != "DIRTY" and .mergeStateStatus != "BEHIND") |
+  .number as $pr | .id as $pr_id | .headRefOid as $sha |
+  select(($mq | map(select(.pullRequest.number == $pr)) | length) == 0) |
+  ((.commits.nodes // []) | map(select(.commit.oid == $sha))) as $head |
+  select(($head | length) == 1) |
+  ($head[0].commit.statusCheckRollup.contexts.nodes // []) as $checks |
+  ($checks | map({n: (.name // .context), c: (.conclusion // .state // "PENDING")})) as $cs |
+  select(($cs | map(select(.n == "ci / gate" and .c == "SUCCESS")) | length) > 0) |
+  select(($cs | map(select(.n == "workspace-test" and .c == "SUCCESS")) | length) > 0) |
+  select(($cs | map(select(.c | IN("SUCCESS", "SKIPPED", "NEUTRAL") | not)) | length) == 0) |
+  (((.commits.nodes // []) | map(.commit.message) | join("\n")) | ascii_downcase) as $msgs |
+  ([(.comments.nodes // [])[].body | split("\n")[0] |
+    capture("^seat (?<n>[0-9]+), (?<who>[^@]+[^@ ]) @(?<sha>[0-9a-f]{40})(?![0-9a-f])")? |
+    select(.sha == $sha) | .who | ascii_downcase |
+    select(. as $w | ($msgs | contains($w)) | not)] | unique) as $seats |
+  select(($seats | length) >= 2) |
+  {rule: "Q5", type: "enqueue", target: ($pr | tostring), target_id: $pr_id};
+
 def q4:
   (($s3|.[0]).runners | map(select(.name | startswith("intel")))) as $intel |
   ($intel | length) as $intel_cap |
@@ -90,7 +130,7 @@ def q4:
     {rule: "Q4", type: "report", target: $box, labels: ($labels | join(","))}
   else empty end;
 
-q1, q2, q3, q4
+q1, q2, q3, q4, q5
 '
 
 process_tick() {
@@ -174,7 +214,7 @@ process_tick() {
       continue
     fi
     
-    if [[ "$rule" == "Q1" ]]; then ((q1+=1)); elif [[ "$rule" == "Q2" ]]; then ((q2+=1)); elif [[ "$rule" == "Q3" ]]; then ((q3+=1)); elif [[ "$rule" == "Q4" ]]; then ((q4+=1)); fi
+    if [[ "$rule" == "Q1" ]]; then ((q1+=1)); elif [[ "$rule" == "Q2" ]]; then ((q2+=1)); elif [[ "$rule" == "Q3" || "$rule" == "Q5" ]]; then ((q3+=1)); elif [[ "$rule" == "Q4" ]]; then ((q4+=1)); fi
     
     if [[ "$rule" == "Q4" ]]; then
       labels=$(echo "$action" | jq -r '.labels')
@@ -211,7 +251,7 @@ process_tick() {
         run_id=$(echo "$action" | jq -r '.run_id')
         gh api graphql -f id="$target_id" -f query='mutation($id: ID!) { dequeuePullRequest(input: {pullRequestId: $id}) { clientMutationId } }'
         gh pr comment "$target" --body "Dequeued due to failure in required check: $job (run $run_id)"
-      elif [[ "$rule" == "Q3" ]]; then
+      elif [[ "$rule" == "Q3" || "$rule" == "Q5" ]]; then
         target_id=$(echo "$action" | jq -r '.target_id')
         gh api graphql -f id="$target_id" -f query='mutation($id: ID!) { enqueuePullRequest(input: {pullRequestId: $id}) { clientMutationId } }' || echo "refused by github"
       fi
@@ -254,8 +294,21 @@ if [[ "$SELFTEST" == 1 ]]; then
       case8_idle_gx10) grep -q "IDLE-NEXT-TO-QUEUE gx10" "$last_out" && echo "ok case8" || { echo "FAIL case8"; test_fail=1; } ;;
       case9_idle_noq) ! grep -q "IDLE-NEXT-TO-QUEUE" "$last_out" && echo "ok case9" || { echo "FAIL case9"; test_fail=1; } ;;
       case10_two_orphans) MAX_WRITES=1; process_tick "1400" "$case_dir/1400/s1.json" "$case_dir/1400/s2.json" "$case_dir/1400/s3.json" > "$STATE_DIR/out_1400_cap.log"; grep -q "refused:cap" "$STATE_DIR/out_1400_cap.log" && echo "ok case10" || { echo "FAIL case10"; test_fail=1; } ;;
+      q5_ok) grep -q "decision: Q5 300 .*action=planned" "$last_out" && echo "ok q5_ok" || { echo "FAIL q5_ok"; test_fail=1; } ;;
+      q5_*) ! grep -q "decision: Q5" "$last_out" && echo "ok $case_name" || { echo "FAIL $case_name"; test_fail=1; } ;;
     esac
   done
+
+  # #5490 fix 2: green -> enqueue latency (p90 <= 10 min, max <= 30 min; p90 > 30 min falsifies the head-match logic)
+  lat_row() { # lat_row NAME EXPECT
+    local out
+    out=$(bash "$0" --latency "tests/fixtures/ci_queue_steward_latency/$1.json" 2>&1 || true)
+    if grep -q "verdict=$2\$" <<< "$out"; then echo "ok latency_$1"; else echo "FAIL latency_$1: $out"; test_fail=1; fi
+  }
+  lat_row ok OK
+  lat_row p90_sample OK
+  lat_row falsifier FALSIFIED
+  lat_row unreadable not_measured
 
   exit $test_fail
 fi
@@ -292,6 +345,32 @@ if [[ -z "$FIXTURES" ]]; then
             position
             enqueuedAt
             headCommit { oid }
+          }
+        }
+      }
+      pullRequests(states: OPEN, baseRefName: "main", first: 30) {
+        nodes {
+          number
+          id
+          isDraft
+          mergeStateStatus
+          headRefOid
+          comments(last: 20) { nodes { body } }
+          commits(last: 30) {
+            nodes {
+              commit {
+                oid
+                message
+                statusCheckRollup {
+                  contexts(first: 100) {
+                    nodes {
+                      ... on CheckRun { name conclusion }
+                      ... on StatusContext { context state }
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
