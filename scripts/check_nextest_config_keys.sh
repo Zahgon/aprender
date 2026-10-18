@@ -92,11 +92,13 @@ flaky_policy_violations_with() {
     "$awk_bin" -v today="$2" -v horizon="$3" '
         function bad(msg) { print msg }
         /^\[profile\.ci\][[:space:]]*$/ { sect = "ci"; next }
-        /^\[\[profile\.(ci|default)\.overrides\]\]/ { sect = "ov"; q = lastc; lastc = ""; next }
+        /^[[:space:]]*\[\[/ { h = $0; gsub(/[[:space:]"\047]/, "", h); if (h ~ /^\[\[profile\.(ci|default)\.overrides\]\]/) { sect = "ov"; q = lastc } else sect = "other"; lastc = ""; next }
         /^\[/ { sect = "other"; lastc = ""; next }
-        /^#/ { if (sect != "ov") lastc = $0; next }
+        /^[[:space:]]*#/ { lastc = $0; next }
         /^[[:space:]]*$/ { next }
-        { if (sect != "ov") lastc = "" }
+        { lastc = "" }
+        sect != "ov" && /flaky-result[^#]*["\047]pass["\047]/ { bad("flaky-result = pass outside a [[profile.ci.overrides]] quarantine row (inline overrides are not allowed)") }
+        sect != "ov" && /overrides[[:space:]]*=/ { bad("inline overrides are not allowed; use [[profile.ci.overrides]] tables") }
         sect == "ci" && /^[[:space:]]*flaky-result[[:space:]]*=[[:space:]]*["\047]fail["\047][[:space:]]*$/ { ok = 1 }
         sect == "ov" && /^[[:space:]]*flaky-result[[:space:]]*=[[:space:]]*["\047]pass["\047]/ {
             if (q !~ /^# quarantine owner=[^ ]+ expires=[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][[:space:]]*$/) {
@@ -172,7 +174,10 @@ if [ "${1:-}" = "--self-test" ]; then
     fp_row 'expired quarantine row is reported' 1 "$CI# quarantine owner=pace expires=2026-10-01\n[[profile.ci.overrides]]\n$Q"
     fp_row 'open-ended quarantine expiry is reported' 1 "$CI# quarantine owner=pace expires=2099-12-31\n[[profile.ci.overrides]]\n$Q"
     fp_row 'expiry that is not a date is reported' 1 "$CI# quarantine owner=pace expires=2026-99-99\n[[profile.ci.overrides]]\n$Q"
-    fp_row 'a comment inside the previous row does not cover the next' 1 "$CI# quarantine owner=pace expires=2026-11-01\n[[profile.ci.overrides]]\nfilter = \"a\"\n# quarantine owner=pace expires=2026-11-01\n[[profile.ci.overrides]]\n$Q"
+    fp_row 'a comment mid-row does not cover the next row' 1 "$CI# quarantine owner=pace expires=2026-11-01\n[[profile.ci.overrides]]\nfilter = \"a\"\n# quarantine owner=pace expires=2026-11-01\nretries = 0\n[[profile.ci.overrides]]\n$Q"
+    fp_row 'two owned quarantine rows in a row are clean' 0 "$CI# quarantine owner=pace expires=2026-11-01\n[[profile.ci.overrides]]\n$Q# quarantine owner=pace expires=2026-11-01\n[[profile.ci.overrides]]\n$Q"
+    fp_row 'indented/spaced/quoted override header is still a quarantine row' 1 "$CI  [[ profile.\"ci\".overrides ]]\n$Q"
+    fp_row 'inline overrides array is reported' 2 "$CI"'overrides = [ { filter = "test(x)", flaky-result = "pass" } ]\n'
     fp_row 'owned, unexpired, in-horizon quarantine row is clean (control)' 0 "$CI# quarantine owner=pace expires=2026-11-01\n[[profile.ci.overrides]]\n$Q[profile.ci.junit]\npath = \"junit.xml\"\n"
 
     [ "$fails" -eq 0 ] || { printf '\nSELF-TEST FAILED\n'; exit 1; }
