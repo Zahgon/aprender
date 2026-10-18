@@ -159,7 +159,7 @@ falsification_tests:
     test: 'cargo test -p aprender-data --test cli_surface_gate unusable_input_is_rejected'
     if_fails: 'MEASURED 2026-09-26 (aprender-01): GREEN on an unmutated tree; no source mutation was run for this binary'
     mutation: 'make a rejection path return Ok(()) or unwrap the read; must turn RED on that row'
-  - id: FALSIFY-BIN-ALIMENTAR-007
+  - id: FALSIFY-BIN-ALIMENTAR-008
     rule: 'the .ald format rejects malformed input and round-trips every compression'
     prediction: 'dataset-type and compression codes round-trip and unknown codes are None; Header::from_bytes rejects short, bad-magic, unknown-type, unknown-compression and future-major input; save of no batches errors; a bit flip or truncation fails load'
     test: 'cargo test -p aprender-data --test format_edges'
