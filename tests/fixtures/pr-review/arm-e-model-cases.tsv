@@ -34,8 +34,13 @@ MATCH	us.anthropic.claude-opus-4-6-v1:0	a bedrock-style id, still the same famil
 MATCH	claude-sonnet-5-5	current quorum lane: the Sonnet 5.5 family
 MATCH	claude-haiku-5-5	current quorum lane: the Haiku 5.5 family
 MATCH	claude-opus-5-5	current cop model: same family as any Claude author
+MATCH	claude-haiku-4-5	previous haiku lane: same family
+MATCH	claude-sonnet-5-5-thinking	a thinking suffix on the current sonnet id
+MATCH	anthropic/claude-sonnet-5-5	vendor-prefixed current lane
 NO-MATCH	gemini-3.1-pro-high	agy models: a genuinely different vendor and family
 NO-MATCH	gemini-4-argon-high	current quorum lane: a genuinely different vendor and family
+NO-MATCH	gemini-4-argon-low	same argon family, other effort: still a second vendor
+NO-MATCH	gemini-3.8-flash-high	previous quorum lane id: still a second vendor
 NO-MATCH	gemini-3.1-pro-low	agy models
 NO-MATCH	gemini-3.7-flash-high	agy models
 NO-MATCH	gemini-3.7-flash-medium	agy models

@@ -429,7 +429,7 @@ cd "$REVIEW"              # written into the copy and deleted with it, at rc 0
 "$AGY" -p "$(cat .pr-review-prompt.md)" \
   --output-format json \
   --json-schema .pr-review-schema.json \
-  --model gemini-3.1-pro-high \
+  --model gemini-4-argon-high \
   --print-timeout 30m \
   --dangerously-skip-permissions \
   --add-dir "$PWD"
@@ -712,7 +712,7 @@ antigravity:
   attempted: 1                       # agy invocations; 0 under `consulted` is refused
   agy_version: "agy 1.1.22"
   binary_path: "/home/noah/.local/bin/agy"     # what `command -v agy` resolved to
-  model_id: "gemini-3.1-pro-high"              # the argv value, CHECKED (§3.E.2)
+  model_id: "gemini-4-argon-high"              # the argv value, CHECKED (§3.E.2)
   model_family: "google/gemini"
   exit_code: 0                                 # RECORDED, and it decides NOTHING (§3.E.4)
   agy_status: "SUCCESS"                        # .status, a diagnostic; wrong in BOTH directions
@@ -833,7 +833,7 @@ findings.sarif           # SARIF 2.1.0 — the findings, one run per consultatio
       "antigravity": { "status": "consulted|unreachable", "attempted": 1,
                        "agy_version": "agy 1.1.22",
                        "binary_path": "/home/noah/.local/bin/agy",
-                       "model_id": "gemini-3.1-pro-high",
+                       "model_id": "gemini-4-argon-high",
                        "model_family": "google/gemini",
                        "exit_code": 0, "duration_seconds": 9.52,
                        "usage": { "input_tokens": 0, "output_tokens": 0, "total_tokens": 0 },
