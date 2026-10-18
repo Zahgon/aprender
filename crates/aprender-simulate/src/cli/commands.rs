@@ -697,6 +697,10 @@ fn pr_flow(design: &str, json: bool, ov: &FlowOverrides, sha: &str) -> ExitCode 
         r.mq_util * 100.0,
         r.runs_per_pr
     );
+    println!(
+        "stages: run wall {:.1}  open->green {:.1}  green->armed {:.1}  armed->merged {:.1} min",
+        r.run_wall_min, r.checks_min, r.arm_min, r.mq_min
+    );
     ExitCode::SUCCESS
 }
 
@@ -724,9 +728,14 @@ fn pr_flow_sim_block(
         w_mean_min: mean(|r| r.w_mean_min),
         runs_per_pr: mean(|r| r.runs_per_pr),
         prs_per_pass: mean(|r| r.prs_per_pass),
+        run_wall_min: mean(|r| r.run_wall_min),
+        pass_wait_min: mean(|r| r.pass_wait_min),
+        pass_wall_min: mean(|r| r.pass_wall_min),
         ..Default::default()
     };
     let binding = crate::scenarios::binding_station(cfg, &avg);
+    let law = crate::scenarios::eq7_law(cfg, &avg);
+    let w_sim = mean(|r| r.w_mean_min);
     let base = crate::scenarios::preset(design)
         .map_or(0.0, |c| crate::scenarios::run_reference(&c).merged_per_h);
     let contract = crate::scenarios::reference_contract_ok();
@@ -751,7 +760,14 @@ fn pr_flow_sim_block(
         },
         "predicted": {
             "merged_h": m, "ci95_h": ci95,
-            "W_min_mean": mean(|r| r.w_mean_min), "L": mean(|r| r.l), "rho_a": mean(|r| r.rho_a), "rho_a_assumed": 0.95
+            "W_min_mean": w_sim, "L": mean(|r| r.l), "rho_a": mean(|r| r.rho_a), "rho_a_assumed": 0.95
+        },
+        "law": {
+            "eq": 7, "W_law_min": law.w_law_min(), "gap_pct": (w_sim - law.w_law_min()) / law.w_law_min() * 100.0,
+            "r": law.r, "w_min": law.w_min, "c_wall_min": law.c_wall_min, "t_fix_min": law.t_fix_min,
+            "t_arm_min": law.t_arm_min, "p_dirty": law.p_dirty, "t_reb_min": law.t_reb_min,
+            "wait_mq_min": law.wait_mq_min, "t_pass_min": law.t_pass_min, "w_pass_min": law.w_pass_min, "f": law.f,
+            "checks_min": law.checks_min(), "rebase_min": law.rebase_min(), "W_mq_min": law.w_mq_min()
         },
         "binding_station": binding,
         "optimum": {

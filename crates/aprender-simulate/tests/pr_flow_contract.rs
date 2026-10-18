@@ -107,3 +107,22 @@ fn json_block_reports_the_author_busy_fraction_beside_the_assumption() {
     assert!((0.0..=1.0).contains(&rho), "rho_a {rho}");
     assert!((v["predicted"]["rho_a_assumed"].as_f64().expect("assumed") - 0.95).abs() < 1e-9);
 }
+
+#[test]
+fn json_law_block_carries_eq7_within_2_percent_of_the_sim_on_design_d() {
+    let v: serde_json::Value = serde_json::from_str(&block("D")).expect("json");
+    let (sim, law) = (
+        num(&v, &["predicted", "W_min_mean"]),
+        num(&v, &["law", "W_law_min"]),
+    );
+    assert!(
+        (sim - law).abs() <= law * 0.02,
+        "sim W {sim:.1} vs law W {law:.1}"
+    );
+    let terms = num(&v, &["law", "checks_min"])
+        + num(&v, &["law", "t_arm_min"])
+        + num(&v, &["law", "rebase_min"])
+        + num(&v, &["law", "W_mq_min"]);
+    assert!((terms - law).abs() < 1e-9, "terms {terms} sum to {law}");
+    assert_eq!(num(&v, &["law", "p_dirty"]), 0.0);
+}

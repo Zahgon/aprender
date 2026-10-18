@@ -25,8 +25,8 @@ pub use epidemic::{SEIRConfig, SEIRScenario, SIRConfig, SIRScenario};
 pub use pendulum::{PendulumConfig, PendulumScenario};
 pub use portfolio::{PortfolioConfig, PortfolioScenario, VaRResult};
 pub use pr_flow::{
-    binding_station, bounds, preset, reference_contract_ok, run_pr_flow, run_reference,
-    PrFlowConfig, PrFlowResult, ReviewMode,
+    binding_station, bounds, eq7_law, preset, reference_contract_ok, run_pr_flow, run_reference,
+    Eq7Law, PrFlowConfig, PrFlowResult, ReviewMode,
 };
 pub use rocket::{RocketConfig, RocketScenario, StageSeparation};
 pub use satellite::{OrbitalElements, SatelliteScenario};

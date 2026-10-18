@@ -76,6 +76,18 @@ pub struct PrFlowResult {
     pub runs_per_pr: f64,
     /// Author busy fraction: share of author time not spent blocked on the WIP cap.
     pub rho_a: f64,
+    /// Mean wall of one PR-check run, start to verdict (runner wait + jobs + setup).
+    pub run_wall_min: f64,
+    /// Mean open to green checks, merged PRs only (eq 7 terms r(w+c_wall) + (r-1)t_fix).
+    pub checks_min: f64,
+    /// Mean green to armed (eq 7 term t_arm, plus any serial review).
+    pub arm_min: f64,
+    /// Mean armed to merged (eq 7 term W_mq).
+    pub mq_min: f64,
+    /// Mean armed to the start of the first merge pass that holds the PR (the wait in W_mq).
+    pub pass_wait_min: f64,
+    /// Mean wall of one merge pass, group formed to verdict (runner wait + jobs + setup).
+    pub pass_wall_min: f64,
 }
 
 #[derive(Clone, Copy)]
@@ -165,6 +177,8 @@ struct Sim {
     enq_at: Vec<f64>,
     groups: Vec<Vec<usize>>,
     group_jobs_left: Vec<usize>,
+    group_at: Vec<f64>,
+    pass_wall: (f64, u64),
     active: usize,
     timer_at: f64,
     sojourn: Vec<f64>,
@@ -173,6 +187,11 @@ struct Sim {
     rev_wait: VecDeque<usize>,
     green: Vec<bool>,
     rev_ok: Vec<bool>,
+    green_at: Vec<f64>,
+    run_at: Vec<f64>,
+    wall: (f64, u64),
+    stage_sum: [f64; 4],
+    pass_at: Vec<f64>,
     blocked_area: f64,
     last_t: f64,
     runs: u64,
@@ -192,6 +211,7 @@ impl Sim {
 
     fn start_run(&mut self, pr: usize) {
         self.runs += 1;
+        self.run_at[pr] = self.now;
         self.jobs_left[pr] = self.c.pr_jobs;
         let d = self.c.pr_runner_min / self.c.pr_jobs as f64;
         for _ in 0..self.c.pr_jobs {
@@ -220,6 +240,9 @@ impl Sim {
         self.jobs_left.push(0);
         self.green.push(false);
         self.rev_ok.push(false);
+        self.green_at.push(0.0);
+        self.run_at.push(0.0);
+        self.pass_at.push(-1.0);
         self.open += 1;
         self.prs_seen += 1;
         if self.c.rev_mode == ReviewMode::Concurrent {
@@ -244,9 +267,15 @@ impl Sim {
             }
             let take = self.c.mq_batch.min(self.queue.len());
             let members: Vec<usize> = self.queue.drain(..take).collect();
+            for &pr in &members {
+                if self.pass_at[pr] < self.enq_at[pr] {
+                    self.pass_at[pr] = self.now;
+                }
+            }
             self.groups.push(members);
             let g = self.groups.len() - 1;
             self.group_jobs_left.push(self.c.mq_jobs);
+            self.group_at.push(self.now);
             self.active += 1;
             let d = self.c.mq_runner_min / self.c.mq_jobs as f64;
             for _ in 0..self.c.mq_jobs {
@@ -272,6 +301,10 @@ impl Sim {
     fn pass_done(&mut self, g: usize) {
         self.active -= 1;
         let members = std::mem::take(&mut self.groups[g]);
+        if self.now >= self.warm {
+            self.pass_wall.0 += self.now - self.group_at[g];
+            self.pass_wall.1 += 1;
+        }
         if self.rng.gen_f64() < self.c.f {
             for pr in members.into_iter().rev() {
                 self.queue.push_front(pr);
@@ -308,8 +341,22 @@ impl Sim {
         }
     }
 
+    /// A PR-check run reached its verdict: red goes to fix, green goes on.
+    fn run_done(&mut self, pr: usize) {
+        if self.now >= self.warm {
+            self.wall.0 += self.now - self.run_at[pr];
+            self.wall.1 += 1;
+        }
+        if self.rng.gen_f64() < self.c.p_red {
+            self.at(self.c.t_fix_min, Ev::Fixed(pr));
+        } else {
+            self.checks_green(pr);
+        }
+    }
+
     fn checks_green(&mut self, pr: usize) {
         self.green[pr] = true;
+        self.green_at[pr] = self.now;
         match self.c.rev_mode {
             ReviewMode::Serial => self.request_review(pr),
             ReviewMode::Concurrent if self.rev_ok[pr] => self.at(self.c.t_arm_min, Ev::Armed(pr)),
@@ -334,6 +381,16 @@ impl Sim {
     fn merge(&mut self, pr: usize) {
         if self.now >= self.warm {
             self.sojourn.push(self.now - self.open_at[pr]);
+            let (open, green, armed) = (self.open_at[pr], self.green_at[pr], self.enq_at[pr]);
+            let stages = [
+                green - open,
+                armed - green,
+                self.now - armed,
+                self.pass_at[pr] - armed,
+            ];
+            for (s, d) in self.stage_sum.iter_mut().zip(stages) {
+                *s += d;
+            }
         }
         self.open -= 1;
         if let Some(a) = self.blocked.pop_front() {
@@ -353,10 +410,7 @@ impl Sim {
                 }
                 self.dispatch_pr();
             }
-            Ev::PrRun(pr) if self.rng.gen_f64() < self.c.p_red => {
-                self.at(self.c.t_fix_min, Ev::Fixed(pr));
-            }
-            Ev::PrRun(pr) => self.checks_green(pr),
+            Ev::PrRun(pr) => self.run_done(pr),
             Ev::Reviewed(pr) => self.reviewed(pr),
             Ev::Fixed(pr) => self.start_run(pr),
             Ev::Armed(pr) => {
@@ -397,6 +451,8 @@ pub fn run_pr_flow(c: &PrFlowConfig, seed: u64, hours: f64, warmup_h: f64) -> Pr
         enq_at: Vec::new(),
         groups: Vec::new(),
         group_jobs_left: Vec::new(),
+        group_at: Vec::new(),
+        pass_wall: (0.0, 0),
         active: 0,
         timer_at: -1.0,
         sojourn: Vec::new(),
@@ -410,6 +466,11 @@ pub fn run_pr_flow(c: &PrFlowConfig, seed: u64, hours: f64, warmup_h: f64) -> Pr
         rev_wait: VecDeque::new(),
         green: Vec::new(),
         rev_ok: Vec::new(),
+        green_at: Vec::new(),
+        run_at: Vec::new(),
+        wall: (0.0, 0),
+        stage_sum: [0.0; 4],
+        pass_at: Vec::new(),
         last_t: 0.0,
         runs: 0,
         prs_seen: 0,
@@ -458,6 +519,12 @@ impl Sim {
             mq_util: self.mq.busy_min / (span * self.mq.size as f64),
             runs_per_pr: self.runs as f64 / (self.prs_seen as f64).max(1.0),
             rho_a: 1.0 - self.blocked_area / (span * self.c.n.ceil().max(1.0)),
+            run_wall_min: self.wall.0 / (self.wall.1 as f64).max(1.0),
+            checks_min: self.stage_sum[0] / n.max(1.0),
+            arm_min: self.stage_sum[1] / n.max(1.0),
+            mq_min: self.stage_sum[2] / n.max(1.0),
+            pass_wait_min: self.stage_sum[3] / n.max(1.0),
+            pass_wall_min: self.pass_wall.0 / (self.pass_wall.1 as f64).max(1.0),
         }
     }
 }
@@ -526,6 +593,86 @@ pub fn binding_station(c: &PrFlowConfig, r: &PrFlowResult) -> &'static str {
         .map_or("none", |b| b.0)
 }
 
+/// Flow model eq 7, time open, term by term.
+///
+/// `W = r(w + c_wall) + (r-1)t_fix + t_arm + p_dirty/(1-p_dirty)(t_reb + r(w + c_wall) + (r-1)t_fix + t_arm) + W_mq`
+/// with `W_mq = wait_mq + (w_pass + t_pass)/(1-f)`. This line has no rebase, so `p_dirty = 0`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Eq7Law {
+    /// Runs per PR, `1/(1-p_red)` (eq 4).
+    pub r: f64,
+    /// Runner wait per run: the sim's mean run wall less `c_wall`.
+    pub w_min: f64,
+    /// Wall of one run with free runners: job minutes plus setup.
+    pub c_wall_min: f64,
+    pub t_fix_min: f64,
+    /// Green to armed, plus the review minutes when the review is serial.
+    pub t_arm_min: f64,
+    pub p_dirty: f64,
+    pub t_reb_min: f64,
+    /// Armed to the start of the first merge pass that holds the PR.
+    pub wait_mq_min: f64,
+    /// Wall of one merge pass with free runners: job minutes plus setup.
+    pub t_pass_min: f64,
+    /// Runner wait inside one merge pass: the sim's mean pass wall less `t_pass`.
+    pub w_pass_min: f64,
+    pub f: f64,
+}
+
+impl Eq7Law {
+    /// Open to green: `r(w + c_wall) + (r-1)t_fix`.
+    #[must_use]
+    pub fn checks_min(&self) -> f64 {
+        self.r * (self.w_min + self.c_wall_min) + (self.r - 1.0) * self.t_fix_min
+    }
+
+    /// Rebase loop: `p_dirty/(1-p_dirty)(t_reb + checks + t_arm)`.
+    #[must_use]
+    pub fn rebase_min(&self) -> f64 {
+        self.p_dirty / (1.0 - self.p_dirty) * (self.t_reb_min + self.checks_min() + self.t_arm_min)
+    }
+
+    /// `W_mq = wait_mq + (w_pass + t_pass)/(1-f)`: a flake sends the whole group round again.
+    #[must_use]
+    pub fn w_mq_min(&self) -> f64 {
+        self.wait_mq_min + (self.w_pass_min + self.t_pass_min) / (1.0 - self.f)
+    }
+
+    /// Eq 7, mean time open.
+    #[must_use]
+    pub fn w_law_min(&self) -> f64 {
+        self.checks_min() + self.t_arm_min + self.rebase_min() + self.w_mq_min()
+    }
+}
+
+/// Eq 7 evaluated on `c`, with the queue waits (`w`, `wait_mq`, `w_pass`) read from the run `r`.
+///
+/// `wait_mq` is the wait for a merge pass to start, not the batch timer: with one build at a
+/// time the slot is busy, so an armed PR waits out the pass in flight and any overflow.
+#[must_use]
+pub fn eq7_law(c: &PrFlowConfig, r: &PrFlowResult) -> Eq7Law {
+    let c_wall_min = c.pr_runner_min / c.pr_jobs.max(1) as f64 + c.pr_setup_min;
+    let t_pass_min = c.mq_runner_min / c.mq_jobs.max(1) as f64 + c.mq_setup_min;
+    let review = match c.rev_mode {
+        ReviewMode::Serial if c.rev_tiers.is_empty() => c.t_rev_min,
+        ReviewMode::Serial => c.rev_tiers.iter().sum::<f64>() / c.rev_tiers.len() as f64,
+        ReviewMode::Concurrent => 0.0,
+    };
+    Eq7Law {
+        r: 1.0 / (1.0 - c.p_red),
+        w_min: (r.run_wall_min - c_wall_min).max(0.0),
+        c_wall_min,
+        t_fix_min: c.t_fix_min,
+        t_arm_min: c.t_arm_min + review,
+        p_dirty: 0.0,
+        t_reb_min: 0.0,
+        wait_mq_min: r.pass_wait_min,
+        t_pass_min,
+        w_pass_min: (r.pass_wall_min - t_pass_min).max(0.0),
+        f: c.f,
+    }
+}
+
 /// The reference run: seeds 1..=5, 400 h, 20 h warm-up, averaged.
 #[must_use]
 pub fn run_reference(c: &PrFlowConfig) -> PrFlowResult {
@@ -541,6 +688,12 @@ pub fn run_reference(c: &PrFlowConfig) -> PrFlowResult {
         acc.mq_util += r.mq_util / 5.0;
         acc.runs_per_pr += r.runs_per_pr / 5.0;
         acc.rho_a += r.rho_a / 5.0;
+        acc.run_wall_min += r.run_wall_min / 5.0;
+        acc.checks_min += r.checks_min / 5.0;
+        acc.arm_min += r.arm_min / 5.0;
+        acc.mq_min += r.mq_min / 5.0;
+        acc.pass_wait_min += r.pass_wait_min / 5.0;
+        acc.pass_wall_min += r.pass_wall_min / 5.0;
     }
     acc
 }
@@ -715,6 +868,52 @@ mod tests {
                 r.l
             );
         }
+    }
+
+    #[test]
+    fn eq7_time_open_matches_the_sim_within_2_percent_on_design_d() {
+        let c = preset("D").expect("preset");
+        let r = run_reference(&c);
+        let law = eq7_law(&c, &r);
+        assert!(
+            within(r.w_mean_min, law.w_law_min(), 0.02),
+            "sim W {:.1} vs law W {:.1} ({law:?})",
+            r.w_mean_min,
+            law.w_law_min()
+        );
+    }
+
+    #[test]
+    fn eq7_terms_match_their_sim_stages() {
+        let c = preset("D").expect("preset");
+        let r = run_reference(&c);
+        let law = eq7_law(&c, &r);
+        assert!(within(r.checks_min, law.checks_min(), 0.02), "checks");
+        assert!(within(r.arm_min, law.t_arm_min, 0.02), "arm");
+        assert!(within(r.mq_min, law.w_mq_min(), 0.02), "W_mq");
+    }
+
+    #[test]
+    fn the_batch_timer_is_not_the_merge_queue_wait_with_one_build() {
+        // One build at a time keeps the build slot busy: an armed PR waits for the pass in
+        // flight (and any overflow past the batch size), not for the 5-minute batch timer.
+        let c = preset("D").expect("preset");
+        let r = run_reference(&c);
+        let timer = Eq7Law {
+            wait_mq_min: c.mq_wait_min,
+            ..eq7_law(&c, &r)
+        };
+        assert!(
+            !within(r.w_mean_min, timer.w_law_min(), 0.02),
+            "timer-wait law {:.1} matched sim {:.1}",
+            timer.w_law_min(),
+            r.w_mean_min
+        );
+        assert!(
+            r.pass_wait_min > 2.0 * c.mq_wait_min,
+            "wait {}",
+            r.pass_wait_min
+        );
     }
 
     #[test]

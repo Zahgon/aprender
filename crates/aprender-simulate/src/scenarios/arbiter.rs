@@ -129,6 +129,12 @@ fn run_mean(c: &PrFlowConfig, seeds: u64, hours: f64, warmup_h: f64) -> (PrFlowR
         mq_util: mean(|r| r.mq_util),
         runs_per_pr: mean(|r| r.runs_per_pr),
         rho_a: mean(|r| r.rho_a),
+        run_wall_min: mean(|r| r.run_wall_min),
+        checks_min: mean(|r| r.checks_min),
+        arm_min: mean(|r| r.arm_min),
+        mq_min: mean(|r| r.mq_min),
+        pass_wait_min: mean(|r| r.pass_wait_min),
+        pass_wall_min: mean(|r| r.pass_wall_min),
     };
     (r, 1.96 * (var / n).sqrt())
 }
