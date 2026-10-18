@@ -128,6 +128,7 @@ fn run_mean(c: &PrFlowConfig, seeds: u64, hours: f64, warmup_h: f64) -> (PrFlowR
         pr_util: mean(|r| r.pr_util),
         mq_util: mean(|r| r.mq_util),
         runs_per_pr: mean(|r| r.runs_per_pr),
+        rho_a: mean(|r| r.rho_a),
     };
     (r, 1.96 * (var / n).sqrt())
 }
@@ -194,7 +195,8 @@ pub fn evaluate(p: &Params, seeds: u64, hours: f64, warmup_h: f64) -> Value {
             "merged_h": actual.merged_per_h, "ci95_h": ci95,
             "W_min_mean": actual.w_mean_min, "W_min_p90": actual.w_p90_min, "L": actual.l,
             "pr_pool_util_pct": actual.pr_util * 100.0, "mq_util_pct": actual.mq_util * 100.0,
-            "runs_per_pr": actual.runs_per_pr
+            "runs_per_pr": actual.runs_per_pr,
+            "rho_a": actual.rho_a
         },
         "binding_station": binding,
         "optimum": {

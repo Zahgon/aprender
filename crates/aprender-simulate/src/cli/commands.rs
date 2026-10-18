@@ -739,7 +739,7 @@ fn pr_flow_sim_block(
         },
         "predicted": {
             "merged_h": m, "ci95_h": ci95,
-            "W_min_mean": mean(|r| r.w_mean_min), "L": mean(|r| r.l)
+            "W_min_mean": mean(|r| r.w_mean_min), "L": mean(|r| r.l), "rho_a": mean(|r| r.rho_a), "rho_a_assumed": 0.95
         },
         "binding_station": binding,
         "optimum": {

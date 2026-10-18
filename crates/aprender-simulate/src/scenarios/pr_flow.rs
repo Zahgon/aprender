@@ -61,6 +61,8 @@ pub struct PrFlowResult {
     pub pr_util: f64,
     pub mq_util: f64,
     pub runs_per_pr: f64,
+    /// Author busy fraction: share of author time not spent blocked on the WIP cap.
+    pub rho_a: f64,
 }
 
 #[derive(Clone, Copy)]
@@ -151,6 +153,7 @@ struct Sim {
     timer_at: f64,
     sojourn: Vec<f64>,
     l_area: f64,
+    blocked_area: f64,
     last_t: f64,
     runs: u64,
     prs_seen: u64,
@@ -328,6 +331,7 @@ pub fn run_pr_flow(c: &PrFlowConfig, seed: u64, hours: f64, warmup_h: f64) -> Pr
         timer_at: -1.0,
         sojourn: Vec::new(),
         l_area: 0.0,
+        blocked_area: 0.0,
         last_t: 0.0,
         runs: 0,
         prs_seen: 0,
@@ -347,6 +351,7 @@ pub fn run_pr_flow(c: &PrFlowConfig, seed: u64, hours: f64, warmup_h: f64) -> Pr
         let from = s.last_t.max(s.warm);
         if t > from {
             s.l_area += s.open as f64 * (t - from);
+            s.blocked_area += s.blocked.len() as f64 * (t - from);
         }
         s.last_t = t;
         s.now = t;
@@ -374,6 +379,7 @@ impl Sim {
             pr_util: self.pr.busy_min / (span * self.pr.size as f64),
             mq_util: self.mq.busy_min / (span * self.mq.size as f64),
             runs_per_pr: self.runs as f64 / (self.prs_seen as f64).max(1.0),
+            rho_a: 1.0 - self.blocked_area / (span * self.c.n.ceil().max(1.0)),
         }
     }
 }
@@ -453,6 +459,7 @@ pub fn run_reference(c: &PrFlowConfig) -> PrFlowResult {
         acc.pr_util += r.pr_util / 5.0;
         acc.mq_util += r.mq_util / 5.0;
         acc.runs_per_pr += r.runs_per_pr / 5.0;
+        acc.rho_a += r.rho_a / 5.0;
     }
     acc
 }
@@ -502,6 +509,19 @@ mod tests {
         let r = run_reference(&c);
         let dl = r.l - base.l;
         assert!(within(dl, 2.0, 0.1), "dL {dl}");
+    }
+
+    #[test]
+    fn author_busy_fraction_is_one_without_a_cap_and_falls_under_one_with_it() {
+        let mut c = roomy();
+        c.n = 10.0;
+        let free = run_reference(&c);
+        assert!(free.rho_a > 0.999, "free {}", free.rho_a);
+        let mut c = roomy();
+        c.n = 60.0;
+        c.cap = 2;
+        let capped = run_reference(&c);
+        assert!(capped.rho_a < 0.5, "capped {}", capped.rho_a);
     }
 
     #[test]

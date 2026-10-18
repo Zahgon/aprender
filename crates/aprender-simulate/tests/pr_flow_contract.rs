@@ -95,3 +95,15 @@ fn params_file_gives_actual_one_change_and_optimum_with_the_same_bytes() {
     let (ok, _) = run(&flags);
     assert!(!ok, "a malformed params file must fail, not print a number");
 }
+
+#[test]
+fn json_block_reports_the_author_busy_fraction_beside_the_assumption() {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_aprender-simulate"))
+        .args(["pr-flow", "--design", "D", "--json"])
+        .output()
+        .expect("run");
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    let rho = v["predicted"]["rho_a"].as_f64().expect("rho_a present");
+    assert!((0.0..=1.0).contains(&rho), "rho_a {rho}");
+    assert!((v["predicted"]["rho_a_assumed"].as_f64().expect("assumed") - 0.95).abs() < 1e-9);
+}
