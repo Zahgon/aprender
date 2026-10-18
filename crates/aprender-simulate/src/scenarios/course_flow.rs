@@ -4,6 +4,12 @@
 //! launch with no human step; Coursera courses wait for the daily 07:00 UTC submission batch.
 //! Shorts take priority over courses on the shared stations (render GPU, Chrome lane). Service
 //! times are Erlang-4 (gamma, coefficient of variation 0.5). Time is minutes from 00:00 UTC.
+//!
+//! Content Factory v2 (flow model B5) is opt-in through the config: every master fans out to
+//! R = 3 renditions with no split (eq 3), a rework loop sends a share alpha of masters back to
+//! build (eq 14), the GPU serves the trunk first while the recent course W exceeds a threshold
+//! (eq 5), LinkedIn feed renders share the GPU, and build work time (eq 2, sizing) is split
+//! from build elapsed time (eq 1, lead time). The defaults reproduce the original model.
 
 use std::collections::VecDeque;
 
@@ -20,11 +26,16 @@ const RENDER: usize = 3;
 const VERIFY: usize = 4;
 const CHROME: usize = 5;
 const NAMES: [&str; 6] = ["outline", "build", "design", "render", "verify", "chrome"];
+/// Renditions per master under fan-out (flow model eq 3): edX, Coursera, LinkedIn Learning.
+const FAN_OUT_R: f64 = 3.0;
+/// Completed courses the GPU priority rule averages to estimate the current W.
+const W_WINDOW: usize = 20;
 
 /// Inputs of the factory. Times are minutes per course; `*_lanes`/`builders`/`gpus` are servers.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CourseFlowConfig {
     pub builders: usize,
+    /// Builder-held work per build pass (flow model eq 2, sizing).
     pub build_min: f64,
     pub design_lanes: usize,
     pub design_min: f64,
@@ -40,6 +51,19 @@ pub struct CourseFlowConfig {
     pub verify_min: f64,
     /// Count a finished course as WIP until the daily batch releases it (flow model B6).
     pub batch_in_wip: bool,
+    /// Every master fans out to all R = 3 renditions, so every course takes the stage (eq 3).
+    pub fan_out: bool,
+    /// Share of masters the distinctness gate sends back to build (eq 14); 0 disables the loop.
+    pub rework_alpha: f64,
+    /// GPU serves the trunk first while the recent course W in days exceeds this; `None` keeps
+    /// Shorts first always.
+    pub trunk_first_w_days: Option<f64>,
+    /// LinkedIn feed renders per day on the GPU (eq 5's "+ 4").
+    pub linkedin_renders_per_day: f64,
+    /// GPU minutes per vertical or feed render (eq 5's t_v).
+    pub vertical_render_min: f64,
+    /// Wall-clock minutes from build start to build done (eq 1); below `build_min` it equals it.
+    pub build_elapsed_min: f64,
 }
 
 /// What one seeded run measured after the warm-up.
@@ -52,6 +76,16 @@ pub struct CourseFlowResult {
     pub util: [f64; 6],
     /// Mean hours a built course waits for the daily batch (courses that take the batch path).
     pub mean_batch_wait_h: f64,
+    /// Busy fraction of the stage lanes from course staging alone (eq 6).
+    pub stage_util: f64,
+    /// Platform launches per day: R per master under fan-out, one per course otherwise (eq 3).
+    pub launches_per_day: f64,
+    /// LinkedIn feed renders finished per day.
+    pub feed_renders_per_day: f64,
+    /// Mean builder-held hours per build pass (eq 2, sizing).
+    pub t_b_work_h: f64,
+    /// Mean hours from entering the build queue to leaving build, per pass (eq 1, lead time).
+    pub t_b_elapsed_h: f64,
 }
 
 impl CourseFlowResult {
@@ -73,6 +107,7 @@ struct Job {
 enum Ev {
     Start,
     ShortTick,
+    FeedTick,
     Done(usize, Job),
     Delay(Job),
     Batch,
@@ -82,6 +117,7 @@ fn pack(e: &Ev) -> SimEvent {
     let (name, st, j) = match e {
         Ev::Start => ("start", 0, None),
         Ev::ShortTick => ("short_tick", 0, None),
+        Ev::FeedTick => ("feed_tick", 0, None),
         Ev::Done(s, j) => ("done", *s, Some(*j)),
         Ev::Delay(j) => ("delay", 0, Some(*j)),
         Ev::Batch => ("batch", 0, None),
@@ -108,6 +144,7 @@ fn unpack(e: &SimEvent) -> Option<Ev> {
     Some(match name.as_str() {
         "start" => Ev::Start,
         "short_tick" => Ev::ShortTick,
+        "feed_tick" => Ev::FeedTick,
         "done" => Ev::Done((v >> 56) as usize, job),
         "delay" => Ev::Delay(job),
         "batch" => Ev::Batch,
@@ -123,6 +160,17 @@ struct Station {
     busy_min: f64,
 }
 
+/// Post-warm-up sums the v2 result fields are built from.
+#[derive(Default)]
+struct V2Tally {
+    stage_busy: f64,
+    build_work: f64,
+    build_work_n: u64,
+    build_elapsed: f64,
+    build_elapsed_n: u64,
+    feeds_done: u64,
+}
+
 struct Sim {
     c: CourseFlowConfig,
     rng: SimRng,
@@ -134,17 +182,56 @@ struct Sim {
     pending: usize,
     started_at: Vec<f64>,
     coursera: Vec<bool>,
+    build_in: Vec<f64>,
+    recent_w: VecDeque<f64>,
     batch_wait: Vec<(usize, f64)>,
     bw_sum: f64,
     bw_n: u64,
     sojourn: Vec<f64>,
     shorts_done: u64,
+    v2: V2Tally,
     in_system: usize,
     l_area: f64,
     last_t: f64,
 }
 
 impl Sim {
+    fn new(c: &CourseFlowConfig, seed: u64, warmup_d: f64) -> Self {
+        let size = [1, c.builders, c.design_lanes, c.gpus, 4, c.chrome_lanes];
+        Self {
+            c: c.clone(),
+            rng: SimRng::new(seed),
+            sched: EventScheduler::new(),
+            now: 0.0,
+            warm: warmup_d * DAY,
+            st: size
+                .iter()
+                .map(|&n| Station {
+                    free: n,
+                    size: n,
+                    hi: VecDeque::new(),
+                    lo: VecDeque::new(),
+                    busy_min: 0.0,
+                })
+                .collect(),
+            wip: 0,
+            pending: 0,
+            started_at: Vec::new(),
+            coursera: Vec::new(),
+            build_in: Vec::new(),
+            recent_w: VecDeque::new(),
+            batch_wait: Vec::new(),
+            bw_sum: 0.0,
+            bw_n: 0,
+            sojourn: Vec::new(),
+            shorts_done: 0,
+            v2: V2Tally::default(),
+            in_system: 0,
+            l_area: 0.0,
+            last_t: 0.0,
+        }
+    }
+
     fn at(&mut self, dt: f64, e: &Ev) {
         self.sched
             .schedule(SimTime::from_secs((self.now + dt) * 60.0), pack(e));
@@ -165,18 +252,44 @@ impl Sim {
         self.dispatch(s);
     }
 
+    /// The GPU priority rule: trunk first while the recent course W exceeds the threshold.
+    fn trunk_first(&self) -> bool {
+        let Some(limit) = self.c.trunk_first_w_days else {
+            return false;
+        };
+        let n = self.recent_w.len();
+        n > 0 && self.recent_w.iter().sum::<f64>() / n as f64 / DAY > limit
+    }
+
+    fn next_job(&mut self, s: usize) -> Option<(Job, f64)> {
+        let trunk = s == RENDER && self.trunk_first();
+        let st = &mut self.st[s];
+        if trunk {
+            st.lo.pop_front().or_else(|| st.hi.pop_front())
+        } else {
+            st.hi.pop_front().or_else(|| st.lo.pop_front())
+        }
+    }
+
+    fn account(&mut self, s: usize, job: Job, d: f64) {
+        self.st[s].busy_min += d;
+        if s == CHROME && !job.short {
+            self.v2.stage_busy += d;
+        }
+        if s == BUILD {
+            self.v2.build_work += d;
+            self.v2.build_work_n += 1;
+        }
+    }
+
     fn dispatch(&mut self, s: usize) {
         while self.st[s].free > 0 {
-            let Some((job, d)) = self.st[s]
-                .hi
-                .pop_front()
-                .or_else(|| self.st[s].lo.pop_front())
-            else {
+            let Some((job, d)) = self.next_job(s) else {
                 break;
             };
             self.st[s].free -= 1;
             if self.now >= self.warm {
-                self.st[s].busy_min += d;
+                self.account(s, job, d);
             }
             self.at(d, &Ev::Done(s, job));
         }
@@ -185,7 +298,8 @@ impl Sim {
     fn start_course(&mut self) {
         let id = self.started_at.len();
         self.started_at.push(self.now);
-        let cs = self.rng.gen_f64() < self.c.coursera_share;
+        self.build_in.push(self.now);
+        let cs = self.c.fan_out || self.rng.gen_f64() < self.c.coursera_share;
         self.coursera.push(cs);
         self.wip += 1;
         self.in_system += 1;
@@ -203,9 +317,14 @@ impl Sim {
 
     fn launch(&mut self, id: usize) {
         self.in_system -= 1;
+        let w = self.now - self.started_at[id];
         if self.now >= self.warm {
-            self.sojourn.push(self.now - self.started_at[id]);
+            self.sojourn.push(w);
         }
+        if self.recent_w.len() == W_WINDOW {
+            self.recent_w.pop_front();
+        }
+        self.recent_w.push_back(w);
     }
 
     fn leave_wip(&mut self) {
@@ -216,16 +335,55 @@ impl Sim {
         }
     }
 
+    /// Enter the build queue (first pass or rework); `j.step` is 1.
+    fn enter_build(&mut self, j: Job) {
+        self.build_in[j.id] = self.now;
+        let m = self.c.build_min;
+        self.enqueue(BUILD, j, m);
+    }
+
+    /// The builder is free; the build itself may still run on (eq 1 elapsed beyond eq 2 work).
+    fn after_build(&mut self, j: Job) {
+        let extra = self.c.build_elapsed_min - self.c.build_min;
+        if extra > 0.0 {
+            self.at(extra, &Ev::Delay(Job { step: 7, ..j }));
+        } else {
+            self.finish_build(j);
+        }
+    }
+
+    fn finish_build(&mut self, j: Job) {
+        if self.now >= self.warm {
+            self.v2.build_elapsed += self.now - self.build_in[j.id];
+            self.v2.build_elapsed_n += 1;
+        }
+        let m = self.c.design_min;
+        self.enqueue(DESIGN, Job { step: 2, ..j }, m);
+    }
+
+    /// The distinctness gate: rework a share alpha, else stage or launch directly.
+    fn after_verify(&mut self, j: Job) {
+        let a = self.c.rework_alpha;
+        if a > 0.0 && self.rng.gen_f64() < a {
+            self.enter_build(Job { step: 1, ..j });
+        } else if self.coursera[j.id] {
+            let m = self.c.stage_min;
+            self.enqueue(CHROME, Job { step: 5, ..j }, m);
+        } else {
+            self.at(15.0, &Ev::Delay(Job { step: 6, ..j }));
+        }
+    }
+
     fn course_next(&mut self, j: Job) {
         let c = self.c.clone();
         let nj = |step| Job { step, ..j };
         match j.step {
-            0 => self.enqueue(BUILD, nj(1), c.build_min),
-            1 => self.enqueue(DESIGN, nj(2), c.design_min),
+            0 => self.enter_build(nj(1)),
+            1 => self.after_build(j),
+            7 => self.finish_build(j),
             2 => self.enqueue(RENDER, nj(3), c.render_min),
             3 => self.enqueue(VERIFY, nj(4), c.verify_min),
-            4 if self.coursera[j.id] => self.enqueue(CHROME, nj(5), c.stage_min),
-            4 => self.at(15.0, &Ev::Delay(nj(6))),
+            4 => self.after_verify(j),
             5 => {
                 if !self.c.batch_in_wip {
                     self.leave_wip();
@@ -253,15 +411,23 @@ impl Sim {
         }
     }
 
+    /// Shorts run steps 0-3 (render, wait, upload); LinkedIn feed renders run steps 4-5.
     fn short_next(&mut self, j: Job) {
         let nj = |step| Job { step, ..j };
+        let tv = self.c.vertical_render_min;
         match j.step {
-            0 => self.enqueue(RENDER, nj(1), 5.0),
+            0 => self.enqueue(RENDER, nj(1), tv),
             1 => self.at(20.0, &Ev::Delay(nj(2))),
             2 => self.enqueue(CHROME, nj(3), 5.0),
-            _ => {
+            3 => {
                 if self.now >= self.warm {
                     self.shorts_done += 1;
+                }
+            }
+            4 => self.enqueue(RENDER, nj(5), tv),
+            _ => {
+                if self.now >= self.warm {
+                    self.v2.feeds_done += 1;
                 }
             }
         }
@@ -289,6 +455,14 @@ impl Sim {
                 );
                 self.at(DAY / self.c.shorts_per_day, &Ev::ShortTick);
             }
+            Ev::FeedTick => {
+                self.short_next(Job {
+                    short: true,
+                    id: 0,
+                    step: 4,
+                });
+                self.at(DAY / self.c.linkedin_renders_per_day, &Ev::FeedTick);
+            }
             Ev::Done(s, j) => {
                 self.st[s].free += 1;
                 self.dispatch(s);
@@ -306,6 +480,31 @@ impl Sim {
             }
         }
     }
+
+    fn result(&self, end: f64) -> CourseFlowResult {
+        let span = end - self.warm;
+        let n = self.sojourn.len() as f64;
+        let mut util = [0.0; 6];
+        for (u, st) in util.iter_mut().zip(&self.st) {
+            *u = st.busy_min / (span * st.size as f64);
+        }
+        let courses_per_day = n / span * DAY;
+        let r = if self.c.fan_out { FAN_OUT_R } else { 1.0 };
+        let per_h = |sum: f64, k: u64| sum / (k.max(1) as f64) / 60.0;
+        CourseFlowResult {
+            courses_per_day,
+            shorts_per_day: self.shorts_done as f64 / span * DAY,
+            lead_days: self.sojourn.iter().sum::<f64>() / n.max(1.0) / DAY,
+            l: self.l_area / span,
+            util,
+            mean_batch_wait_h: per_h(self.bw_sum, self.bw_n),
+            stage_util: self.v2.stage_busy / (span * self.c.chrome_lanes.max(1) as f64),
+            launches_per_day: courses_per_day * r,
+            feed_renders_per_day: self.v2.feeds_done as f64 / span * DAY,
+            t_b_work_h: per_h(self.v2.build_work, self.v2.build_work_n),
+            t_b_elapsed_h: per_h(self.v2.build_elapsed, self.v2.build_elapsed_n),
+        }
+    }
 }
 
 /// Run one seed for `days`, discarding the first `warmup_d`.
@@ -316,38 +515,12 @@ pub fn run_course_flow(
     days: f64,
     warmup_d: f64,
 ) -> CourseFlowResult {
-    let size = [1, c.builders, c.design_lanes, c.gpus, 4, c.chrome_lanes];
-    let mut s = Sim {
-        c: c.clone(),
-        rng: SimRng::new(seed),
-        sched: EventScheduler::new(),
-        now: 0.0,
-        warm: warmup_d * DAY,
-        st: size
-            .iter()
-            .map(|&n| Station {
-                free: n,
-                size: n,
-                hi: VecDeque::new(),
-                lo: VecDeque::new(),
-                busy_min: 0.0,
-            })
-            .collect(),
-        wip: 0,
-        pending: 0,
-        started_at: Vec::new(),
-        coursera: Vec::new(),
-        batch_wait: Vec::new(),
-        bw_sum: 0.0,
-        bw_n: 0,
-        sojourn: Vec::new(),
-        shorts_done: 0,
-        in_system: 0,
-        l_area: 0.0,
-        last_t: 0.0,
-    };
+    let mut s = Sim::new(c, seed, warmup_d);
     s.at(0.0, &Ev::Start);
     s.at(0.0, &Ev::ShortTick);
+    if c.linkedin_renders_per_day > 0.0 {
+        s.at(0.0, &Ev::FeedTick);
+    }
     s.at(7.0 * 60.0, &Ev::Batch);
     let end = days * DAY;
     while let Some(ev) = s.sched.next() {
@@ -365,23 +538,10 @@ pub fn run_course_flow(
             s.step(&e);
         }
     }
-    let span = end - s.warm;
-    let n = s.sojourn.len() as f64;
-    let mut util = [0.0; 6];
-    for (u, st) in util.iter_mut().zip(&s.st) {
-        *u = st.busy_min / (span * st.size as f64);
-    }
-    CourseFlowResult {
-        courses_per_day: n / span * DAY,
-        shorts_per_day: s.shorts_done as f64 / span * DAY,
-        lead_days: s.sojourn.iter().sum::<f64>() / n.max(1.0) / DAY,
-        l: s.l_area / span,
-        util,
-        mean_batch_wait_h: s.bw_sum / (s.bw_n.max(1) as f64) / 60.0,
-    }
+    s.result(end)
 }
 
-/// Named FLOW-006 factory cases.
+/// Named FLOW-006 factory cases, plus "factory-v2" (Content Factory v2, flow model B5).
 #[must_use]
 pub fn course_preset(name: &str) -> Option<CourseFlowConfig> {
     let mut c = CourseFlowConfig {
@@ -400,6 +560,12 @@ pub fn course_preset(name: &str) -> Option<CourseFlowConfig> {
         outline_min: 90.0,
         verify_min: 15.0,
         batch_in_wip: false,
+        fan_out: false,
+        rework_alpha: 0.0,
+        trunk_first_w_days: None,
+        linkedin_renders_per_day: 0.0,
+        vertical_render_min: 5.0,
+        build_elapsed_min: 0.0,
     };
     match name {
         "cal-today" => {
@@ -411,6 +577,12 @@ pub fn course_preset(name: &str) -> Option<CourseFlowConfig> {
         "nine-builders" => c.builders = 9,
         "coursera-24h" => c.stage_min = 1440.0,
         "render-300" => c.render_min = 300.0,
+        "factory-v2" => {
+            c.fan_out = true;
+            c.batch_in_wip = true;
+            c.trunk_first_w_days = Some(4.8);
+            c.linkedin_renders_per_day = 4.0;
+        }
         _ => return None,
     }
     Some(c)
@@ -428,20 +600,28 @@ pub fn course_cases() -> [&'static str; 5] {
     ]
 }
 
+fn add_scaled(a: &mut CourseFlowResult, r: &CourseFlowResult, w: f64) {
+    a.courses_per_day += r.courses_per_day * w;
+    a.shorts_per_day += r.shorts_per_day * w;
+    a.lead_days += r.lead_days * w;
+    a.l += r.l * w;
+    a.mean_batch_wait_h += r.mean_batch_wait_h * w;
+    a.stage_util += r.stage_util * w;
+    a.launches_per_day += r.launches_per_day * w;
+    a.feed_renders_per_day += r.feed_renders_per_day * w;
+    a.t_b_work_h += r.t_b_work_h * w;
+    a.t_b_elapsed_h += r.t_b_elapsed_h * w;
+    for i in 0..6 {
+        a.util[i] += r.util[i] * w;
+    }
+}
+
 /// The reference run: seeds 1..=5, 300 days, 20 days warm-up, averaged.
 #[must_use]
 pub fn run_course_reference(c: &CourseFlowConfig) -> CourseFlowResult {
     let mut a = CourseFlowResult::default();
     for seed in 1..=5 {
-        let r = run_course_flow(c, seed, 300.0, 20.0);
-        a.courses_per_day += r.courses_per_day / 5.0;
-        a.shorts_per_day += r.shorts_per_day / 5.0;
-        a.lead_days += r.lead_days / 5.0;
-        a.l += r.l / 5.0;
-        a.mean_batch_wait_h += r.mean_batch_wait_h / 5.0;
-        for i in 0..6 {
-            a.util[i] += r.util[i] / 5.0;
-        }
+        add_scaled(&mut a, &run_course_flow(c, seed, 300.0, 20.0), 0.2);
     }
     a
 }
@@ -454,24 +634,46 @@ pub fn apply_course_inputs(c: &mut CourseFlowConfig, v: &serde_json::Value) -> R
     let obj = v.as_object().ok_or("inputs must be a JSON object")?;
     for (k, x) in obj {
         let f = x.as_f64().ok_or_else(|| format!("{k}: not a number"))?;
-        match k.as_str() {
-            "builders" => c.builders = f as usize,
-            "build_min" => c.build_min = f,
-            "design_lanes" => c.design_lanes = f as usize,
-            "design_min" => c.design_min = f,
-            "gpus" => c.gpus = f as usize,
-            "render_min" => c.render_min = f,
-            "chrome_lanes" => c.chrome_lanes = f as usize,
-            "stage_min" => c.stage_min = f,
-            "coursera_share" => c.coursera_share = f,
-            "wip" => c.wip = f as usize,
-            "starts_per_day" => c.starts_per_day = f,
-            "shorts_per_day" => c.shorts_per_day = f,
-            "batch_in_wip" => c.batch_in_wip = f != 0.0,
-            _ => return Err(format!("unknown input: {k}")),
+        if !apply_v2_input(c, k, f) {
+            apply_base_input(c, k, f)?;
         }
     }
     Ok(())
+}
+
+fn apply_base_input(c: &mut CourseFlowConfig, k: &str, f: f64) -> Result<(), String> {
+    match k {
+        "builders" => c.builders = f as usize,
+        "build_min" => c.build_min = f,
+        "design_lanes" => c.design_lanes = f as usize,
+        "design_min" => c.design_min = f,
+        "gpus" => c.gpus = f as usize,
+        "render_min" => c.render_min = f,
+        "chrome_lanes" => c.chrome_lanes = f as usize,
+        "stage_min" => c.stage_min = f,
+        "coursera_share" => c.coursera_share = f,
+        "wip" => c.wip = f as usize,
+        "starts_per_day" => c.starts_per_day = f,
+        "shorts_per_day" => c.shorts_per_day = f,
+        "batch_in_wip" => c.batch_in_wip = f != 0.0,
+        _ => return Err(format!("unknown input: {k}")),
+    }
+    Ok(())
+}
+
+/// The Content Factory v2 inputs; returns false when `k` is not one of them.
+fn apply_v2_input(c: &mut CourseFlowConfig, k: &str, f: f64) -> bool {
+    match k {
+        "fan_out" => c.fan_out = f != 0.0,
+        "rework_alpha" => c.rework_alpha = f,
+        "trunk_first_w_days" => c.trunk_first_w_days = (f > 0.0).then_some(f),
+        "linkedin_renders_per_day" => c.linkedin_renders_per_day = f,
+        "vertical_render_min" => c.vertical_render_min = f,
+        "t_b_work_h" => c.build_min = f * 60.0,
+        "t_b_elapsed_h" => c.build_elapsed_min = f * 60.0,
+        _ => return false,
+    }
+    true
 }
 
 /// The `sim` block fields this scenario owns, in the shape the cops publish.
@@ -491,10 +693,19 @@ pub fn course_sim_block(
             "chrome_lanes": c.chrome_lanes, "stage_min": c.stage_min,
             "coursera_share": c.coursera_share, "wip": c.wip,
             "starts_per_day": c.starts_per_day, "shorts_per_day": c.shorts_per_day, "batch_in_wip": c.batch_in_wip,
+            "fan_out": c.fan_out, "rework_alpha": c.rework_alpha,
+            "trunk_first_w_days": c.trunk_first_w_days.unwrap_or(0.0),
+            "linkedin_renders_per_day": c.linkedin_renders_per_day,
+            "vertical_render_min": c.vertical_render_min,
+            "t_b_work_h": c.build_min / 60.0,
+            "t_b_elapsed_h": c.build_elapsed_min.max(c.build_min) / 60.0,
         },
         "predicted": {
             "courses_day": r.courses_per_day, "shorts_day": r.shorts_per_day,
             "lead_days": r.lead_days, "L": r.l, "mean_batch_wait_h": r.mean_batch_wait_h, "busiest_util_pct": util * 100.0,
+            "stage_util_pct": r.stage_util * 100.0, "launches_day": r.launches_per_day,
+            "feed_renders_day": r.feed_renders_per_day,
+            "t_b_work_h": r.t_b_work_h, "t_b_elapsed_h": r.t_b_elapsed_h,
         },
         "binding_station": station,
     })
@@ -718,25 +929,64 @@ mod tests {
         assert!((r.shorts_per_day - 5.0).abs() <= 0.1);
     }
 
-    /// GPU priority: on an overloaded GPU, trunk-first while W > 4.8 d ships more courses than
-    /// Shorts-first, and the Shorts pay for it.
+    /// Which job a free server at `s` takes when a Short and a course both wait, given the
+    /// recent course W in days. True means the course.
+    fn picks_course(s: usize, rule: Option<f64>, w_days: f64) -> bool {
+        let mut c = v2();
+        c.trunk_first_w_days = rule;
+        let mut sim = Sim::new(&c, 1, 0.0);
+        sim.recent_w.push_back(w_days * DAY);
+        let short = Job {
+            short: true,
+            id: 0,
+            step: 0,
+        };
+        let course = Job {
+            short: false,
+            id: 1,
+            step: 3,
+        };
+        sim.st[s].hi.push_back((short, 5.0));
+        sim.st[s].lo.push_back((course, 100.0));
+        !sim.next_job(s).expect("a waiting job").0.short
+    }
+
+    /// GPU priority: the trunk goes first while W > 4.8 d, else Shorts; other stations and the
+    /// rule switched off keep Shorts first.
     #[test]
-    fn trunk_first_while_w_over_threshold_wins_the_gpu() {
+    fn gpu_serves_trunk_first_only_while_w_is_over_the_threshold() {
+        assert!(
+            picks_course(RENDER, Some(4.8), 5.0),
+            "W 5.0 > 4.8: trunk first"
+        );
+        assert!(!picks_course(RENDER, Some(4.8), 4.5), "W 4.5: Shorts first");
+        assert!(!picks_course(RENDER, None, 9.0), "rule off: Shorts first");
+        assert!(
+            !picks_course(CHROME, Some(4.8), 9.0),
+            "stage lanes: Shorts first"
+        );
+    }
+
+    /// GPU priority reorders the queue and cannot add GPU minutes: Shorts are never dropped, so
+    /// on an overloaded GPU the courses/day is the same either way, and Shorts carry the wait.
+    #[test]
+    fn gpu_priority_conserves_gpu_minutes_under_overload() {
         let mut on = v2();
         on.render_min = 300.0;
         let mut off = on.clone();
         off.trunk_first_w_days = None;
         let a = run_course_reference(&on);
         let b = run_course_reference(&off);
+        assert!(a.util[RENDER] > 0.99 && b.util[RENDER] > 0.99);
         assert!(
-            a.courses_per_day >= b.courses_per_day + 0.08,
+            (a.courses_per_day - b.courses_per_day).abs() <= b.courses_per_day * 0.01,
             "trunk-first {:.3} vs shorts-first {:.3}",
             a.courses_per_day,
             b.courses_per_day
         );
         assert!(
             a.shorts_per_day < b.shorts_per_day,
-            "{:.2}",
+            "{:.3}",
             a.shorts_per_day
         );
     }
@@ -754,7 +1004,11 @@ mod tests {
             "{:.2}",
             r.t_b_work_h
         );
-        assert!(r.t_b_elapsed_h >= 60.0, "{:.2}", r.t_b_elapsed_h);
+        assert!(
+            (r.t_b_elapsed_h - 60.0).abs() <= 60.0 * 0.03,
+            "{:.2}",
+            r.t_b_elapsed_h
+        );
         assert!(
             (r.util[BUILD] - BUILD_LAW).abs() <= 0.02,
             "{:.3}",
