@@ -31,7 +31,7 @@ proof_obligations:
 - id: BEI-INV-001
   type: invariant
   property: in-place ReLU equals out-of-place ReLU
-  formal: 'relu_inplace(x) == relu(x)'
+  formal: '∀ x: relu_inplace(x) ≡ relu(x)'
   applies_to: relu_inplace_equals_relu
 - id: BEI-INV-002
   type: invariant

@@ -22,12 +22,12 @@ proof_obligations:
   - id: PVQDI-INV-001
     type: invariant
     property: "A tracked file yields a 40-hex sha and a 10-character Y-M-D date"
-    formal: "cargo test -p aprender-contracts --lib build_diff_info_reports_the_last_commit_of_a_tracked_file exits 0"
+    formal: "∀ tracked p: len(commit_hash(p)) = 40 ∧ len(last_modified(p)) = 10"
     applies_to: diff_info_is_sha_plus_date_only
   - id: PVQDI-INV-002
     type: invariant
     property: "A path with no git history yields None"
-    formal: "cargo test -p aprender-contracts --lib build_diff_info_is_none_for_a_path_git_has_no_history_for exits 0"
+    formal: "p ∉ git_history ⇒ build_diff_info(p) ≡ None"
     applies_to: diff_info_is_sha_plus_date_only
 
 falsification_tests:
