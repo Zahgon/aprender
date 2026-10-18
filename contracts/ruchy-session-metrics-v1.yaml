@@ -31,12 +31,12 @@ proof_obligations:
 - id: RSM-INV-001
   type: invariant
   property: best/final summaries follow the history, empty history yields None
-  formal: 'best_loss = min(loss_history); final_loss = last(loss_history); empty => None'
+  formal: 'best_loss = min(loss_history) ∧ final_loss = last(loss_history) ∧ loss_history = ∅ ⇒ best_loss = None'
   applies_to: session_metrics_summary
 - id: RSM-INV-002
   type: invariant
   property: diagnostic series do not count as session content
-  formal: 'add_lr / add_grad_norm preserve total_steps and is_empty'
+  formal: 'add_lr ∧ add_grad_norm preserves total_steps ∧ is_empty'
   applies_to: session_metrics_summary
 
 falsification_tests:
