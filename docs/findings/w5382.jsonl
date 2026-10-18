@@ -1,0 +1,1 @@
+{"id":"FND-20261019-5667-format-table-untested","session":"w5382","kind":"coverage-gap","where":"crates/aprender-test-lib/src/llm/score.rs:format_table","note":"ticket #5667; 3 tests + contract C-TEST-LIB-SCORECARD-TABLE; mutation (concurrency==1 flipped) RED->restored."}

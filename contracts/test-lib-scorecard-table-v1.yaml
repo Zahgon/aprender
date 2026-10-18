@@ -1,0 +1,48 @@
+metadata:
+  id: C-TEST-LIB-SCORECARD-TABLE
+  version: 1.0.0
+  created: '2026-10-19'
+  author: PAIML Engineering
+  kind: pattern
+  status: ACTIVE_ALGORITHM_LEVEL
+  description: |
+    Pins aprender-test-lib's format_table (#5667): the interactive (c=1) and
+    throughput (c>1) scorecard tables carry their own columns and rule width,
+    best-in-class cells are starred, absent metrics render as a dash, and the
+    star legend is the last line.
+  references:
+    - 'crates/aprender-test-lib/src/llm/score.rs (format_table, format_metric_cell)'
+
+equations:
+  scorecard_table_layout:
+    formula: |
+      concurrency == 1 -> interactive columns, 74-wide rule; concurrency > 1 -> throughput columns, 88-wide rule
+      cell(Some(m)) = score + ('*' if m.best else ' '); cell(None) = '-'
+    domain: Scorecard values
+    invariants:
+    - 'the legend "* = best in class" is the final line'
+
+proof_obligations:
+- id: STT-INV-001
+  type: invariant
+  property: table layout follows the concurrency level
+  formal: 'concurrency ≡ 1 ⇒ interactive columns ∧ concurrency ≠ 1 ⇒ throughput columns'
+  applies_to: scorecard_table_layout
+
+falsification_tests:
+- id: FALSIFY-TEST-LIB-SCORECARD-TABLE-001
+  rule: format_table picks columns by concurrency, stars best cells, dashes absent ones
+  prediction: 'c=1 shows TTFT and a 74-dash rule with no Aggr; c=8 shows Aggr and Scale with an 88-dash rule; empty metrics give five "   -" cells; output ends with the legend'
+  test: cargo test -p aprender-test-lib --features llm --test falsify_scorecard_format_table
+  if_fails: operators read the wrong scorecard columns, or a best-in-class runtime is not marked
+  ship_blocking: false
+  mutation: 'flip scorecard.concurrency == 1 to != 1 inside format_table; must turn RED'
+
+qa_gate:
+  id: QA-TEST-LIB-SCORECARD-TABLE-001
+  name: Scorecard table layout gate
+  description: format_table layout invariants hold
+  checks:
+  - scorecard_table_layout
+  pass_criteria: FALSIFY-TEST-LIB-SCORECARD-TABLE-001 passes
+  falsification: Any failure fails the gate
