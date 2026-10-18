@@ -1,0 +1,85 @@
+metadata:
+  version: "1.0.0"
+  created: "2026-10-18"
+  author: PAIML Engineering
+  registry: true
+  references:
+    - "Little, J.D.C. (1961), A Proof for the Queuing Formula L = lambda W."
+    - "Denning, P.J. and Buzen, J.P. (1978), The Operational Analysis of Queueing Network Models (utilization and forced flow laws)."
+    - "flow model spec, internal (eqs 1, 2, 3, 5, 6, 14)"
+  description: "course_flow Content Factory v2: fan-out to three renditions, rework loop, GPU priority, build work vs elapsed"
+
+name: course-flow-content-factory-v2
+version: "1.0.0"
+scope: "crates/aprender-simulate/src/scenarios/course_flow.rs"
+
+description: |
+  Content Factory v2 is opt-in on CourseFlowConfig; the defaults reproduce the
+  original course_flow model. With fan_out, every master fans out to R = 3
+  renditions with no split, so every course takes the staging lanes and the
+  stage busy fraction meets the utilization law. A rework loop sends a share
+  alpha of masters back to build, so build carries B / (1 - alpha) passes a day.
+  The GPU serves the trunk first while the recent course W exceeds a threshold,
+  else Shorts, and carries LinkedIn feed renders beside the Shorts. Build work
+  time (holds a builder; sizing) is split from build elapsed time (lead time).
+
+equations:
+  fan_out_forced_flow:
+    description: "launches per day = B * R with R = 3 (flow model eq 3)"
+    formula: "launches_per_day = 3 * courses_per_day"
+
+  stage_utilization:
+    description: "stage busy = B * t_sc / (1440 * lanes) = 5 * 360 / (1440 * 2) = 0.625 (flow model eq 6)"
+    formula: "|stage_util - B * t_sc / (1440 * lanes)| <= 0.02"
+
+  rework_build_utilization:
+    description: "build busy = B * t_b / (1440 * N_b) / (1 - alpha); at alpha = 0.16 that is 0.795 / 0.84 <= 0.95 (flow model eqs 2, 14)"
+    formula: "util_build <= 0.95 and |util_build - 0.795 / (1 - alpha)| <= 0.02"
+
+  gpu_utilization:
+    description: "GPU busy = (B * t_g + (B * k + 4) * t_v) / 1440 (flow model eq 5)"
+    formula: "|util_render - (B * t_g + (B * k + 4) * t_v) / 1440| <= 0.02"
+
+  gpu_priority_rule:
+    description: "trunk first while the recent course W > threshold, else Shorts; the rule reorders and cannot add GPU minutes"
+    formula: "pick(render) = course iff W_recent > w_threshold"
+
+  build_work_vs_elapsed:
+    description: "a builder holds t_b_work (sizing); lead time carries t_b_elapsed (flow model eqs 1, 2)"
+    formula: "util_build = B * t_b_work / (1440 * N_b) and dW = t_b_elapsed - t_b_work"
+
+falsification:
+  - id: FALSIFY-COURSE_FLOW_CF_V2_001
+    description: "the stage busy fraction matches the eq 6 law 62.5% within 2 points under fan-out"
+    test: "coursera_stage_matches_the_law_within_two_points in crates/aprender-simulate/src/scenarios/course_flow.rs"
+    evidence: "cargo test -p aprender-simulate --lib course_flow"
+
+  - id: FALSIFY-COURSE_FLOW_CF_V2_002
+    description: "at alpha = 0.16 build busy is at most 95% and within 2 points of 0.795 / (1 - alpha)"
+    test: "rework_at_alpha_016_keeps_build_at_or_under_95_percent in crates/aprender-simulate/src/scenarios/course_flow.rs"
+    evidence: "cargo test -p aprender-simulate --lib course_flow"
+
+  - id: FALSIFY-COURSE_FLOW_CF_V2_003
+    description: "fan-out launches three renditions per master; the legacy split launches one"
+    test: "fan_out_launches_three_renditions_per_master in crates/aprender-simulate/src/scenarios/course_flow.rs"
+    evidence: "cargo test -p aprender-simulate --lib course_flow"
+
+  - id: FALSIFY-COURSE_FLOW_CF_V2_004
+    description: "the GPU serves the trunk first only while W is over the threshold, and only on the GPU"
+    test: "gpu_serves_trunk_first_only_while_w_is_over_the_threshold in crates/aprender-simulate/src/scenarios/course_flow.rs"
+    evidence: "cargo test -p aprender-simulate --lib course_flow"
+
+  - id: FALSIFY-COURSE_FLOW_CF_V2_005
+    description: "GPU busy matches the eq 5 law with Shorts and four LinkedIn feed renders a day"
+    test: "gpu_carries_trunk_shorts_and_four_linkedin_renders in crates/aprender-simulate/src/scenarios/course_flow.rs"
+    evidence: "cargo test -p aprender-simulate --lib course_flow"
+
+  - id: FALSIFY-COURSE_FLOW_CF_V2_006
+    description: "build work sizes the station; build elapsed beyond work moves lead time, not build busy"
+    test: "build_work_sizes_the_station_and_elapsed_drives_lead_time in crates/aprender-simulate/src/scenarios/course_flow.rs"
+    evidence: "cargo test -p aprender-simulate --lib course_flow"
+
+  - id: FALSIFY-COURSE_FLOW_CF_V2_007
+    description: "the v2 inputs round-trip through the ledger inputs and the sim block"
+    test: "v2_inputs_round_trip_through_the_ledger_and_sim_block in crates/aprender-simulate/src/scenarios/course_flow.rs"
+    evidence: "cargo test -p aprender-simulate --lib course_flow"
