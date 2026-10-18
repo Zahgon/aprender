@@ -60,3 +60,38 @@ fn same_seeds_give_the_same_bytes() {
         assert_eq!(block(design), block(design), "{design}");
     }
 }
+
+#[test]
+fn params_file_gives_actual_one_change_and_optimum_with_the_same_bytes() {
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
+    let file = dir.join("pr-flow-params.json");
+    std::fs::write(
+        &file,
+        r#"{"repo":"x","design":"D","params":{"cap":10,"r_pr":28,"p_red":0.62}}"#,
+    )
+    .expect("write params");
+    let run = |args: &[&str]| {
+        let out = Command::new(BIN)
+            .args(["pr-flow", "--params"])
+            .arg(&file)
+            .args(args)
+            .output()
+            .expect("spawn");
+        (
+            out.status.success(),
+            String::from_utf8(out.stdout).expect("utf-8"),
+        )
+    };
+    let flags = ["--seeds", "2", "--hours", "100", "--warmup", "5", "--json"];
+    let (ok, a) = run(&flags);
+    assert!(ok);
+    assert_eq!(a, run(&flags).1, "same params must give the same bytes");
+    let v: serde_json::Value = serde_json::from_str(&a).expect("json");
+    for k in ["actual", "optimum", "one_change", "binding_station"] {
+        assert!(!v[k].is_null() || k == "binding_station", "missing {k}");
+    }
+    assert!(num(&v, &["optimum", "merged_h"]) > num(&v, &["actual", "merged_h"]));
+    std::fs::write(&file, "not json").expect("write bad");
+    let (ok, _) = run(&flags);
+    assert!(!ok, "a malformed params file must fail, not print a number");
+}

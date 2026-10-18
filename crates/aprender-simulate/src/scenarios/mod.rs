@@ -8,6 +8,7 @@
 //! - Portfolio risk (Monte Carlo `VaR`)
 //! - Epidemic models (SIR/SEIR)
 
+pub mod arbiter;
 pub mod bouncing_balls;
 pub mod climate;
 pub mod epidemic;
@@ -17,6 +18,7 @@ pub mod pr_flow;
 pub mod rocket;
 pub mod satellite;
 
+pub use arbiter::{evaluate, parse_params, Params};
 pub use bouncing_balls::{BouncingBallsConfig, BouncingBallsState};
 pub use climate::{ClimateConfig, ClimateScenario};
 pub use epidemic::{SEIRConfig, SEIRScenario, SIRConfig, SIRScenario};

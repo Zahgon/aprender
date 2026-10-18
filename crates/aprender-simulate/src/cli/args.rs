@@ -62,6 +62,7 @@ impl Cli {
 
 /// Available CLI commands.
 #[derive(Debug, Clone, PartialEq, Subcommand)]
+#[allow(clippy::large_enum_variant)] // PrFlow carries the measured-input overrides; parsed once at startup
 pub enum Commands {
     /// Run an experiment
     Run {
@@ -139,6 +140,18 @@ pub enum Commands {
         /// Comma-separated run ids the measured inputs came from.
         #[arg(long)]
         src_runs: Option<String>,
+        /// Arbiter params file for one repo (ARB-SOT-001 §3); prints {actual, one_change, optimum}.
+        #[arg(long)]
+        params: Option<PathBuf>,
+        /// Seeds 1..=N for `--params`.
+        #[arg(long, default_value_t = 5)]
+        seeds: u64,
+        /// Simulated hours per seed for `--params`.
+        #[arg(long, default_value_t = 400.0)]
+        hours: f64,
+        /// Warm-up hours discarded for `--params`.
+        #[arg(long, default_value_t = 20.0)]
+        warmup: f64,
         /// Commit the sim block is stamped with.
         #[arg(long, default_value = "unknown")]
         sha: String,

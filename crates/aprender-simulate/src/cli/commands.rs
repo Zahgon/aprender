@@ -55,26 +55,33 @@ pub fn run_cli(cli: Cli) -> ExitCode {
             pr_setup,
             observed_24h: obs24,
             src_runs: runs,
+            params,
+            seeds,
+            hours,
+            warmup,
             sha,
-        } => pr_flow(
-            &design,
-            json,
-            &FlowOverrides {
-                r_pr,
-                r_mq,
-                cap,
-                builds,
-                f,
-                n,
-                pr_min,
-                mq_min,
-                p_red,
-                pr_setup,
-                obs24,
-                runs,
-            },
-            &sha,
-        ),
+        } => match params {
+            Some(path) => pr_flow_params(&path, seeds, hours, warmup),
+            None => pr_flow(
+                &design,
+                json,
+                &FlowOverrides {
+                    r_pr,
+                    r_mq,
+                    cap,
+                    builds,
+                    f,
+                    n,
+                    pr_min,
+                    mq_min,
+                    p_red,
+                    pr_setup,
+                    obs24,
+                    runs,
+                },
+                &sha,
+            ),
+        },
         Commands::Validate { experiment_path } => validate_experiment(&experiment_path),
         Commands::Verify {
             experiment_path,
@@ -737,4 +744,25 @@ fn pr_flow_sim_block(
         "drift_pct_24h": ov.obs24.map(|o| (m - o / 24.0) / (o / 24.0) * 100.0)
     })
     .to_string()
+}
+
+/// `pr-flow --params <file>`: one repo's arbiter params in, `{actual, one_change, optimum}` out (one JSON line).
+fn pr_flow_params(path: &Path, seeds: u64, hours: f64, warmup: f64) -> ExitCode {
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("params: cannot read {}: {e}", path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    match crate::scenarios::parse_params(&text) {
+        Ok(p) => {
+            println!("{}", crate::scenarios::evaluate(&p, seeds, hours, warmup));
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            ExitCode::FAILURE
+        }
+    }
 }
