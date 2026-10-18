@@ -233,6 +233,18 @@ falsification_tests:
   site: crates/aprender-core/src/format/converter/write_model_config.rs::synthesize_arch_tests
   if_fails: GGUF round-trip loses arch identity — llama-cli rejects exported GGUF
 
+- id: FALSIFY-CONVERT-HF-ARCH-005
+  invariant: INV-CONVERT-HF-ARCH-004
+  rule: architecture-tensor-name-mapping-and-model-type-parse
+  prediction: >
+    Architecture::Qwen2.map_name("blk.7.attn_q.weight") =
+    "model.layers.7.self_attn.q_proj.weight"; from_model_type is
+    case-insensitive and maps aliases ("Qwen2.5" -> Qwen2, "mixtral" ->
+    Mistral); unknown types give None.
+  test_kind: unit
+  site: crates/aprender-core/tests/architecture_mapping_edges.rs
+  if_fails: GGUF import renames tensors wrongly or misclassifies the model family
+
 # ─── EQUATIONS ───────────────────────────────────────────────
 
 equations:
