@@ -28,7 +28,7 @@
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-BASELINE="$ROOT/scripts/pipe_grep_q_baseline.txt"
+BASELINE="${PIPE_GREP_Q_BASELINE:-$ROOT/scripts/pipe_grep_q_baseline.txt}"   # env override: the self-test verdict rows
 SELF="scripts/check_no_pipe_into_grep_q.sh"
 
 # The hazard: a pipe whose right-hand side is `grep -q`. `-qF`, `-qE`, `-qi`
@@ -159,6 +159,20 @@ self_test() {
     bad "M1  the mutant flagged $m of 3; the q requirement is not what makes H9/H10/H11 pass"
   fi
 
+  echo "=== the verdict: the baseline is a ceiling AND a floor (#5488) ==="
+  local n b; n=$(scan /dev/null) || n=-1
+  b=$(mktemp) || return 2
+  verdict_rc() { printf '%s\n' "$1" > "$b"; PIPE_GREP_Q_BASELINE=$b bash "${BASH_SOURCE[0]}" >/dev/null 2>&1; echo $?; }
+  if [ "$n" -ge 1 ]; then
+    [ "$(verdict_rc "$n")" -eq 0 ] && ok 'V1  baseline == measured passes' || bad 'V1  baseline == measured must pass'
+    [ "$(verdict_rc "$((n - 1))")" -eq 1 ] && ok 'V2  measured above the baseline fails' || bad 'V2  a rise must fail'
+    [ "$(verdict_rc "$((n + 1))")" -eq 1 ] && ok 'V3  measured below the baseline fails (no slack for new sites)' || bad 'V3  slack of 1 must fail'
+    [ "$(verdict_rc "$((n + 2))")" -eq 1 ] && ok 'V4  slack of 2 fails (the #5488 case)' || bad 'V4  slack of 2 must fail'
+  else
+    bad 'V0  the scan could not be measured, so the verdict rows did not run'
+  fi
+  rm -f "$b"
+
   printf '\n%s checks, %s failed\n' "$CHECKS" "$FAILED"
   [ "$FAILED" -eq 0 ]
 }
@@ -196,11 +210,13 @@ main() {
     cat "$findings"; rm -f "$findings"; return 1
   fi
   if [ "$count" -lt "$base" ]; then
-    echo "  PASS -- and $((base - count)) fewer than the ceiling. Lower it:"
-    echo "          bash $SELF --update"
-  else
-    echo "  PASS -- at the ceiling, which is not over it."
+    # Slack is headroom for a NEW site: at baseline 42 / measured 40, two fresh
+    # pipe-into-grep-q sites pass (aprender#5488). The ceiling follows the count down.
+    echo "FAIL: measured $count is below the baseline $base -- $((base - count)) site(s) of slack"
+    echo "      would let new ones in. Lower it: bash $SELF --update"
+    rm -f "$findings"; return 1
   fi
+  echo "  PASS -- at the ceiling, which is not over it."
   rm -f "$findings"; return 0
 }
 
