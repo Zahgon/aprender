@@ -96,11 +96,11 @@ flaky_policy_violations_with() {
         /^\[/ { sect = "other"; lastc = ""; next }
         /^[[:space:]]*#/ { lastc = $0; next }
         /^[[:space:]]*$/ { next }
-        { lastc = "" }
-        sect != "ov" && /flaky-result[^#]*["\047]pass["\047]/ { bad("flaky-result = pass outside a [[profile.ci.overrides]] quarantine row (inline overrides are not allowed)") }
+        { lastc = ""; nl = $0; sub(/[[:space:]]#.*/, "", nl); gsub(/[[:space:]"\047]/, "", nl) }
+        sect != "ov" && nl ~ /flaky-result=pass/ { bad("flaky-result = pass outside a [[profile.ci.overrides]] quarantine row (inline overrides are not allowed)") }
         sect != "ov" && /overrides[[:space:]]*=/ { bad("inline overrides are not allowed; use [[profile.ci.overrides]] tables") }
-        sect == "ci" && /^[[:space:]]*flaky-result[[:space:]]*=[[:space:]]*["\047]fail["\047][[:space:]]*$/ { ok = 1 }
-        sect == "ov" && /^[[:space:]]*flaky-result[[:space:]]*=[[:space:]]*["\047]pass["\047]/ {
+        sect == "ci" && nl == "flaky-result=fail" { ok = 1 }
+        sect == "ov" && nl == "flaky-result=pass" {
             if (q !~ /^# quarantine owner=[^ ]+ expires=[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][[:space:]]*$/) {
                 bad("quarantine row without a `# quarantine owner=<who> expires=YYYY-MM-DD` comment above it")
             } else {
@@ -178,6 +178,9 @@ if [ "${1:-}" = "--self-test" ]; then
     fp_row 'two owned quarantine rows in a row are clean' 0 "$CI# quarantine owner=pace expires=2026-11-01\n[[profile.ci.overrides]]\n$Q# quarantine owner=pace expires=2026-11-01\n[[profile.ci.overrides]]\n$Q"
     fp_row 'indented/spaced/quoted override header is still a quarantine row' 1 "$CI  [[ profile.\"ci\".overrides ]]\n$Q"
     fp_row 'inline overrides array is reported' 2 "$CI"'overrides = [ { filter = "test(x)", flaky-result = "pass" } ]\n'
+    fp_row 'quoted-key quarantine row is reported' 1 "$CI[[profile.ci.overrides]]\n\"flaky-result\" = \"pass\"\n"
+    fp_row "single-quoted key and value quarantine row is reported" 1 "$CI[[profile.ci.overrides]]\n'flaky-result' = 'pass'\n"
+    fp_row 'triple-quoted value quarantine row is reported' 1 "$CI[[profile.ci.overrides]]\nflaky-result = \"\"\"pass\"\"\"\n"
     fp_row 'owned, unexpired, in-horizon quarantine row is clean (control)' 0 "$CI# quarantine owner=pace expires=2026-11-01\n[[profile.ci.overrides]]\n$Q[profile.ci.junit]\npath = \"junit.xml\"\n"
 
     [ "$fails" -eq 0 ] || { printf '\nSELF-TEST FAILED\n'; exit 1; }
