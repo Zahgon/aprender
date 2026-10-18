@@ -100,6 +100,18 @@ pub enum Commands {
         /// Design: D, A, G or E.
         #[arg(long, default_value = "D", value_parser = ["D", "A", "G", "E"])]
         design: String,
+        /// Print the cycle-record "sim" block as one JSON line.
+        #[arg(long)]
+        json: bool,
+        /// Override the PR-check runner pool (measured input).
+        #[arg(long)]
+        r_pr: Option<usize>,
+        /// Override the merge-queue runner pool (measured input).
+        #[arg(long)]
+        r_mq: Option<usize>,
+        /// Commit the sim block is stamped with.
+        #[arg(long, default_value = "unknown")]
+        sha: String,
     },
     /// Validate experiment YAML against EDD v2 schema
     Validate {

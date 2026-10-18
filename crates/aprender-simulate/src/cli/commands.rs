@@ -40,7 +40,13 @@ pub fn run_cli(cli: Cli) -> ExitCode {
             duration,
             seed,
         } => render_svg(&domain, &format, &output, fps, duration, seed),
-        Commands::PrFlow { design } => pr_flow(&design),
+        Commands::PrFlow {
+            design,
+            json,
+            r_pr,
+            r_mq,
+            sha,
+        } => pr_flow(&design, json, r_pr, r_mq, &sha),
         Commands::Validate { experiment_path } => validate_experiment(&experiment_path),
         Commands::Verify {
             experiment_path,
@@ -567,11 +573,23 @@ fn render_bouncing_balls(
 }
 
 /// Print the reference run (5 seeds x 400 h, 20 h warm-up) of a named PR-flow design.
-fn pr_flow(design: &str) -> ExitCode {
-    let Some(cfg) = crate::scenarios::preset(design) else {
+fn pr_flow(
+    design: &str,
+    json: bool,
+    r_pr: Option<usize>,
+    r_mq: Option<usize>,
+    sha: &str,
+) -> ExitCode {
+    let Some(mut cfg) = crate::scenarios::preset(design) else {
         eprintln!("unknown design: {design}");
         return ExitCode::FAILURE;
     };
+    cfg.r_pr = r_pr.unwrap_or(cfg.r_pr);
+    cfg.r_mq = r_mq.unwrap_or(cfg.r_mq);
+    if json {
+        println!("{}", pr_flow_sim_block(design, &cfg, r_pr, r_mq, sha));
+        return ExitCode::SUCCESS;
+    }
     let r = crate::scenarios::run_reference(&cfg);
     println!(
         "design {design}: merged/h {:.2}  W mean {:.1} min  W p90 {:.1} min  L {:.2}",
@@ -585,4 +603,69 @@ fn pr_flow(design: &str) -> ExitCode {
         r.runs_per_pr
     );
     ExitCode::SUCCESS
+}
+
+/// The cycle-record "sim" block: seeds 1..=5, 400 h, 20 h warm-up, one JSON line.
+/// `optimum` and `drift_pct_24h` are null: neither is computed here.
+fn pr_flow_sim_block(
+    design: &str,
+    cfg: &crate::scenarios::PrFlowConfig,
+    r_pr: Option<usize>,
+    r_mq: Option<usize>,
+    sha: &str,
+) -> String {
+    let runs: Vec<_> = (1..=5)
+        .map(|s| crate::scenarios::run_pr_flow(cfg, s, 400.0, 20.0))
+        .collect();
+    let n = runs.len() as f64;
+    let mean = |f: fn(&crate::scenarios::PrFlowResult) -> f64| runs.iter().map(f).sum::<f64>() / n;
+    let m = mean(|r| r.merged_per_h);
+    let var = runs
+        .iter()
+        .map(|r| (r.merged_per_h - m).powi(2))
+        .sum::<f64>()
+        / (n - 1.0);
+    let ci95 = 1.96 * (var / n).sqrt();
+    let binding = if mean(|r| r.pr_util) >= mean(|r| r.mq_util) {
+        "pr_checks"
+    } else {
+        "merge_queue"
+    };
+    let contract = crate::scenarios::reference_contract_ok();
+    let src = |o: Option<usize>| {
+        if o.is_some() {
+            "measured"
+        } else {
+            "design_default"
+        }
+    };
+    serde_json::json!({
+        "aprender_sha": sha,
+        "scenario": "pr-flow",
+        "cli": format!(
+            "aprender-simulate pr-flow --design {design} --json --r-pr {} --r-mq {} --sha {sha}",
+            cfg.r_pr, cfg.r_mq
+        ),
+        "seeds": [1, 2, 3, 4, 5],
+        "hours": 400,
+        "inputs": {
+            "design": design, "cap": cfg.cap, "n": cfg.n, "t_author_min": cfg.t_author_min,
+            "r_pr": cfg.r_pr, "r_mq": cfg.r_mq, "builds": cfg.builds, "p_red": cfg.p_red,
+            "pr_runner_min": cfg.pr_runner_min, "f": cfg.f
+        },
+        "inputs_source": {
+            "t_author_min": "design_default", "n": "design_default", "cap": "design_default",
+            "r_pr": src(r_pr), "r_mq": src(r_mq), "p_red": "design_default",
+            "pr_runner_min": "design_default", "f": "design_default", "builds": "design_default"
+        },
+        "predicted": {
+            "merged_h": m, "ci95_h": ci95,
+            "W_min_mean": mean(|r| r.w_mean_min), "L": mean(|r| r.l)
+        },
+        "binding_station": binding,
+        "optimum": null,
+        "sim3_contract": if contract { "pass" } else { "fail" },
+        "drift_pct_24h": null
+    })
+    .to_string()
 }

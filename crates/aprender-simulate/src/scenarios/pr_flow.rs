@@ -415,6 +415,16 @@ pub fn run_reference(c: &PrFlowConfig) -> PrFlowResult {
     acc
 }
 
+/// SIM-3 contract: every design's merged/h is within 5% of its reference (D 20.08, A 4.96, G 12.55, E 21.37).
+#[must_use]
+pub fn reference_contract_ok() -> bool {
+    [("D", 20.08), ("A", 4.96), ("G", 12.55), ("E", 21.37)]
+        .iter()
+        .all(|(d, want)| {
+            preset(d).is_some_and(|c| (run_reference(&c).merged_per_h - want).abs() <= want * 0.05)
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
