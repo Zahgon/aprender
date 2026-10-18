@@ -54,6 +54,8 @@ pub fn run_cli(cli: Cli) -> ExitCode {
             p_red,
             pr_setup,
             t_rev,
+            rev_concurrent,
+            rev_lanes,
             observed_24h: obs24,
             src_runs: runs,
             params,
@@ -78,6 +80,8 @@ pub fn run_cli(cli: Cli) -> ExitCode {
                     p_red,
                     pr_setup,
                     t_rev,
+                    rev_concurrent,
+                    rev_lanes,
                     obs24,
                     runs,
                 },
@@ -623,6 +627,8 @@ struct FlowOverrides {
     p_red: Option<f64>,
     pr_setup: Option<f64>,
     t_rev: Option<f64>,
+    rev_concurrent: bool,
+    rev_lanes: Option<usize>,
     obs24: Option<f64>,
     runs: Option<String>,
 }
@@ -640,6 +646,10 @@ impl FlowOverrides {
         c.p_red = self.p_red.unwrap_or(c.p_red);
         c.pr_setup_min = self.pr_setup.unwrap_or(c.pr_setup_min);
         c.t_rev_min = self.t_rev.unwrap_or(c.t_rev_min);
+        if self.rev_concurrent {
+            c.rev_mode = crate::scenarios::ReviewMode::Concurrent;
+        }
+        c.rev_lanes = self.rev_lanes.unwrap_or(c.rev_lanes);
     }
 
     fn cli_flags(&self) -> String {
@@ -655,6 +665,8 @@ impl FlowOverrides {
             self.p_red.map(|v| format!(" --p-red {v}")),
             self.pr_setup.map(|v| format!(" --pr-setup {v}")),
             self.t_rev.map(|v| format!(" --t-rev {v}")),
+            self.rev_concurrent.then(|| " --rev-concurrent".to_string()),
+            self.rev_lanes.map(|v| format!(" --rev-lanes {v}")),
             self.obs24.map(|v| format!(" --observed-24h {v}")),
             self.runs.as_ref().map(|v| format!(" --src-runs {v}")),
         ];

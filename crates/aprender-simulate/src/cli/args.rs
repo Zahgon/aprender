@@ -137,6 +137,12 @@ pub enum Commands {
         /// Review wait per PR after green checks, minutes (default 0).
         #[arg(long)]
         t_rev: Option<f64>,
+        /// Run the review alongside the checks instead of after them.
+        #[arg(long)]
+        rev_concurrent: bool,
+        /// Parallel reviewers (0 = unlimited).
+        #[arg(long)]
+        rev_lanes: Option<usize>,
         /// Merged PRs in the last 24 h, from git (for drift_pct_24h).
         #[arg(long)]
         observed_24h: Option<f64>,

@@ -12,6 +12,13 @@ use crate::engine::scheduler::EventScheduler;
 use crate::engine::state::SimEvent;
 use crate::engine::SimTime;
 
+/// Where the review sits relative to the PR checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewMode {
+    Serial,
+    Concurrent,
+}
+
 /// Inputs of the line. Times are minutes; `*_runner_min` is the runner-minutes of one run.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PrFlowConfig {
@@ -28,6 +35,12 @@ pub struct PrFlowConfig {
     pub t_arm_min: f64,
     /// Review wait per PR after green checks, serial with arming; 0 = no review station.
     pub t_rev_min: f64,
+    /// Review runs alongside the checks (`Concurrent`) or after them (`Serial`).
+    pub rev_mode: ReviewMode,
+    /// Parallel reviewers; 0 = unlimited (no queue at the review station).
+    pub rev_lanes: usize,
+    /// Per-tier review minutes, handed out to PRs round-robin; empty = `t_rev_min` for all.
+    pub rev_tiers: Vec<f64>,
     pub r_mq: usize,
     pub mq_runner_min: f64,
     pub mq_jobs: usize,
@@ -72,6 +85,7 @@ enum Ev {
     PrRun(usize),
     Fixed(usize),
     Armed(usize),
+    Reviewed(usize),
     MqJob(usize),
     MqPass(usize),
     MqTimer,
@@ -85,6 +99,7 @@ impl Ev {
             Self::PrRun(i) => ("pr_run", i),
             Self::Fixed(i) => ("fixed", i),
             Self::Armed(i) => ("armed", i),
+            Self::Reviewed(i) => ("reviewed", i),
             Self::MqJob(i) => ("mq_job", i),
             Self::MqPass(i) => ("mq_pass", i),
             Self::MqTimer => ("mq_timer", 0),
@@ -106,6 +121,7 @@ impl Ev {
             "pr_run" => Self::PrRun(id),
             "fixed" => Self::Fixed(id),
             "armed" => Self::Armed(id),
+            "reviewed" => Self::Reviewed(id),
             "mq_job" => Self::MqJob(id),
             "mq_pass" => Self::MqPass(id),
             "mq_timer" => Self::MqTimer,
@@ -153,6 +169,10 @@ struct Sim {
     timer_at: f64,
     sojourn: Vec<f64>,
     l_area: f64,
+    rev_free: usize,
+    rev_wait: VecDeque<usize>,
+    green: Vec<bool>,
+    rev_ok: Vec<bool>,
     blocked_area: f64,
     last_t: f64,
     runs: u64,
@@ -198,8 +218,13 @@ impl Sim {
         self.open_at.push(self.now);
         self.enq_at.push(0.0);
         self.jobs_left.push(0);
+        self.green.push(false);
+        self.rev_ok.push(false);
         self.open += 1;
         self.prs_seen += 1;
+        if self.c.rev_mode == ReviewMode::Concurrent {
+            self.request_review(pr);
+        }
         self.start_run(pr);
         let t = self.exp(self.c.think_min(author));
         self.at(t, Ev::Author(author));
@@ -262,6 +287,50 @@ impl Sim {
         self.form_groups();
     }
 
+    /// Review minutes of `pr`: its round-robin tier, else the flat `t_rev_min`.
+    fn review_min(&self, pr: usize) -> f64 {
+        self.c
+            .rev_tiers
+            .get(pr % self.c.rev_tiers.len().max(1))
+            .copied()
+            .unwrap_or(self.c.t_rev_min)
+    }
+
+    /// Ask the review station for `pr`; a zero-minute review finishes inline (no event).
+    fn request_review(&mut self, pr: usize) {
+        if self.review_min(pr) <= 0.0 {
+            self.reviewed(pr);
+        } else if self.rev_free > 0 {
+            self.rev_free -= 1;
+            self.at(self.review_min(pr), Ev::Reviewed(pr));
+        } else {
+            self.rev_wait.push_back(pr);
+        }
+    }
+
+    fn checks_green(&mut self, pr: usize) {
+        self.green[pr] = true;
+        match self.c.rev_mode {
+            ReviewMode::Serial => self.request_review(pr),
+            ReviewMode::Concurrent if self.rev_ok[pr] => self.at(self.c.t_arm_min, Ev::Armed(pr)),
+            ReviewMode::Concurrent => {}
+        }
+    }
+
+    fn reviewed(&mut self, pr: usize) {
+        self.rev_ok[pr] = true;
+        if self.review_min(pr) > 0.0 {
+            self.rev_free = self.rev_free.saturating_add(1);
+            if let Some(next) = self.rev_wait.pop_front() {
+                self.rev_free -= 1;
+                self.at(self.review_min(next), Ev::Reviewed(next));
+            }
+        }
+        if self.green[pr] {
+            self.at(self.c.t_arm_min, Ev::Armed(pr));
+        }
+    }
+
     fn merge(&mut self, pr: usize) {
         if self.now >= self.warm {
             self.sojourn.push(self.now - self.open_at[pr]);
@@ -287,7 +356,8 @@ impl Sim {
             Ev::PrRun(pr) if self.rng.gen_f64() < self.c.p_red => {
                 self.at(self.c.t_fix_min, Ev::Fixed(pr));
             }
-            Ev::PrRun(pr) => self.at(self.c.t_arm_min + self.c.t_rev_min, Ev::Armed(pr)),
+            Ev::PrRun(pr) => self.checks_green(pr),
+            Ev::Reviewed(pr) => self.reviewed(pr),
             Ev::Fixed(pr) => self.start_run(pr),
             Ev::Armed(pr) => {
                 self.enq_at[pr] = self.now;
@@ -332,6 +402,14 @@ pub fn run_pr_flow(c: &PrFlowConfig, seed: u64, hours: f64, warmup_h: f64) -> Pr
         sojourn: Vec::new(),
         l_area: 0.0,
         blocked_area: 0.0,
+        rev_free: if c.rev_lanes == 0 {
+            usize::MAX
+        } else {
+            c.rev_lanes
+        },
+        rev_wait: VecDeque::new(),
+        green: Vec::new(),
+        rev_ok: Vec::new(),
         last_t: 0.0,
         runs: 0,
         prs_seen: 0,
@@ -408,6 +486,9 @@ pub fn preset(name: &str) -> Option<PrFlowConfig> {
         t_fix_min: 10.0,
         t_arm_min: 2.0,
         t_rev_min: 0.0,
+        rev_mode: ReviewMode::Serial,
+        rev_lanes: 0,
+        rev_tiers: Vec::new(),
         r_mq,
         mq_runner_min: rm,
         mq_jobs: 4,
@@ -522,6 +603,48 @@ mod tests {
         c.cap = 2;
         let capped = run_reference(&c);
         assert!(capped.rho_a < 0.5, "capped {}", capped.rho_a);
+    }
+
+    fn open_line() -> PrFlowConfig {
+        let mut c = roomy();
+        c.t_author_min = 600.0;
+        c.n = 200.0;
+        c.p_red = 0.0;
+        c
+    }
+
+    #[test]
+    fn concurrent_review_inside_the_check_wall_removes_the_serial_wait() {
+        let mut c = open_line();
+        let base = run_reference(&c).w_mean_min;
+        c.t_rev_min = 6.0;
+        let serial = run_reference(&c).w_mean_min;
+        c.rev_mode = ReviewMode::Concurrent;
+        let conc = run_reference(&c).w_mean_min;
+        assert!(
+            within(serial - base, 6.0, 0.05),
+            "serial adds {}",
+            serial - base
+        );
+        assert!(
+            within(serial - conc, 6.0, 0.05),
+            "concurrent saves {}",
+            serial - conc
+        );
+    }
+
+    #[test]
+    fn one_lane_queues_reviews_and_tiers_set_each_prs_time() {
+        let mut c = open_line();
+        c.t_rev_min = 6.0;
+        let free = run_reference(&c).w_mean_min;
+        c.rev_lanes = 1;
+        let one = run_reference(&c).w_mean_min;
+        assert!(one > free + 5.0, "one lane {one} vs unlimited {free}");
+        let mut t = open_line();
+        t.rev_tiers = vec![2.0, 10.0];
+        let tiered = run_reference(&t).w_mean_min - run_reference(&open_line()).w_mean_min;
+        assert!(within(tiered, 6.0, 0.1), "mean of tiers adds {tiered}");
     }
 
     #[test]
