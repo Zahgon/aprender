@@ -629,4 +629,195 @@ mod tests {
     fn unknown_case_is_none() {
         assert!(course_preset("nope").is_none());
     }
+
+    // ---- B5: Content Factory v2 (flow model eqs 2, 3, 5, 6, 14) ----
+
+    fn v2() -> CourseFlowConfig {
+        course_preset("factory-v2").expect("factory-v2 case")
+    }
+
+    /// Flow model eq 6 law: lanes busy = B * t_sc / (1440 * lanes) = 5 * 360 / (1440 * 2) = 62.5%.
+    const STAGE_LAW: f64 = 5.0 * 360.0 / (DAY * 2.0);
+
+    /// Flow model eq 2 law at N_b = 11, t_b = 42 h: 5 * 2520 / (1440 * 11) = 79.5%.
+    const BUILD_LAW: f64 = 5.0 * 2520.0 / (DAY * 11.0);
+
+    /// Eq 6: with every master fanned out (no split) the stage matches the law within 2 points.
+    #[test]
+    fn coursera_stage_matches_the_law_within_two_points() {
+        let r = run_course_reference(&v2());
+        assert!(
+            (r.stage_util - STAGE_LAW).abs() <= 0.02,
+            "stage sim {:.3} vs law {STAGE_LAW:.3}",
+            r.stage_util
+        );
+    }
+
+    /// The legacy split reproduces the recorded gap: share 0.4 of the law, not the law.
+    #[test]
+    fn the_legacy_split_is_the_recorded_gap() {
+        let r = got("design");
+        assert!(
+            (r.stage_util - 0.4 * STAGE_LAW).abs() <= 0.02,
+            "{:.3}",
+            r.stage_util
+        );
+    }
+
+    /// Eq 3: launches/day = B * R with R = 3; the legacy split launches each course once.
+    #[test]
+    fn fan_out_launches_three_renditions_per_master() {
+        let r = run_course_reference(&v2());
+        assert!((r.launches_per_day - 3.0 * r.courses_per_day).abs() < 1e-9);
+        assert!(
+            (r.courses_per_day - 4.92).abs() <= 4.92 * 0.05,
+            "{:.3}",
+            r.courses_per_day
+        );
+        let legacy = got("design");
+        assert!((legacy.launches_per_day - legacy.courses_per_day).abs() < 1e-9);
+    }
+
+    /// Eq 14: at alpha = 0.16 the build busy fraction is 79.5% / (1 - alpha) <= 95%, within 2 points.
+    #[test]
+    fn rework_at_alpha_016_keeps_build_at_or_under_95_percent() {
+        let mut c = v2();
+        c.rework_alpha = 0.16;
+        let r = run_course_reference(&c);
+        let law = BUILD_LAW / (1.0 - 0.16);
+        assert!(r.util[BUILD] <= 0.95, "build busy {:.3}", r.util[BUILD]);
+        assert!(
+            (r.util[BUILD] - law).abs() <= 0.02,
+            "build sim {:.3} vs law {law:.3}",
+            r.util[BUILD]
+        );
+    }
+
+    /// Eq 14 falsifier: alpha = 0 leaves the build at the eq 2 law, so the rework loop is what moved it.
+    #[test]
+    fn without_rework_build_sits_at_the_eq2_law() {
+        let r = run_course_reference(&v2());
+        assert!(
+            (r.util[BUILD] - BUILD_LAW).abs() <= 0.02,
+            "{:.3}",
+            r.util[BUILD]
+        );
+    }
+
+    /// Eq 5: GPU busy = (B * t_g + (B * k + 4) * t_v) / 1440 with k = 1, t_v = 5 min.
+    #[test]
+    fn gpu_carries_trunk_shorts_and_four_linkedin_renders() {
+        let r = run_course_reference(&v2());
+        let law = (5.0 * 100.0 + (5.0 + 4.0) * 5.0) / DAY;
+        assert!(
+            (r.util[RENDER] - law).abs() <= 0.02,
+            "gpu sim {:.3} vs law {law:.3}",
+            r.util[RENDER]
+        );
+        assert!((r.feed_renders_per_day - 4.0).abs() <= 0.1);
+        assert!((r.shorts_per_day - 5.0).abs() <= 0.1);
+    }
+
+    /// GPU priority: on an overloaded GPU, trunk-first while W > 4.8 d ships more courses than
+    /// Shorts-first, and the Shorts pay for it.
+    #[test]
+    fn trunk_first_while_w_over_threshold_wins_the_gpu() {
+        let mut on = v2();
+        on.render_min = 300.0;
+        let mut off = on.clone();
+        off.trunk_first_w_days = None;
+        let a = run_course_reference(&on);
+        let b = run_course_reference(&off);
+        assert!(
+            a.courses_per_day >= b.courses_per_day + 0.08,
+            "trunk-first {:.3} vs shorts-first {:.3}",
+            a.courses_per_day,
+            b.courses_per_day
+        );
+        assert!(
+            a.shorts_per_day < b.shorts_per_day,
+            "{:.2}",
+            a.shorts_per_day
+        );
+    }
+
+    /// Eq 2 vs eq 1: the builder holds t_b_work; lead time carries t_b_elapsed. Longer elapsed
+    /// time must move lead time and leave build busy at the sizing law.
+    #[test]
+    fn build_work_sizes_the_station_and_elapsed_drives_lead_time() {
+        let base = run_course_reference(&v2());
+        let mut c = v2();
+        c.build_elapsed_min = 60.0 * 60.0;
+        let r = run_course_reference(&c);
+        assert!(
+            (r.t_b_work_h - 42.0).abs() <= 42.0 * 0.03,
+            "{:.2}",
+            r.t_b_work_h
+        );
+        assert!(r.t_b_elapsed_h >= 60.0, "{:.2}", r.t_b_elapsed_h);
+        assert!(
+            (r.util[BUILD] - BUILD_LAW).abs() <= 0.02,
+            "{:.3}",
+            r.util[BUILD]
+        );
+        let dl = r.lead_days - base.lead_days;
+        assert!((dl - 0.75).abs() <= 0.15, "lead moved {dl:.3} d");
+        assert!(base.t_b_elapsed_h >= base.t_b_work_h);
+    }
+
+    /// The new inputs reach the model through the ledger and come back out in the sim block.
+    #[test]
+    fn v2_inputs_round_trip_through_the_ledger_and_sim_block() {
+        let mut c = course_preset("design").expect("case");
+        let v = serde_json::json!({
+            "fan_out": 1, "rework_alpha": 0.16, "trunk_first_w_days": 4.8,
+            "linkedin_renders_per_day": 4, "vertical_render_min": 6,
+            "t_b_work_h": 40, "t_b_elapsed_h": 50,
+        });
+        apply_course_inputs(&mut c, &v).expect("inputs");
+        assert!(c.fan_out);
+        assert!((c.rework_alpha - 0.16).abs() < 1e-12);
+        assert_eq!(c.trunk_first_w_days, Some(4.8));
+        assert!((c.build_min - 2400.0).abs() < 1e-9);
+        assert!((c.build_elapsed_min - 3000.0).abs() < 1e-9);
+        let r = run_course_flow(&c, 1, 30.0, 5.0);
+        let b = course_sim_block("design", &c, &r);
+        for k in [
+            "fan_out",
+            "rework_alpha",
+            "trunk_first_w_days",
+            "linkedin_renders_per_day",
+            "vertical_render_min",
+            "t_b_work_h",
+            "t_b_elapsed_h",
+        ] {
+            assert!(b["inputs"].get(k).is_some(), "inputs.{k}");
+        }
+        for k in [
+            "stage_util_pct",
+            "launches_day",
+            "t_b_work_h",
+            "t_b_elapsed_h",
+        ] {
+            assert!(b["predicted"].get(k).is_some(), "predicted.{k}");
+        }
+        let mut off = c.clone();
+        apply_course_inputs(&mut off, &serde_json::json!({"trunk_first_w_days": 0})).expect("off");
+        assert_eq!(off.trunk_first_w_days, None);
+    }
+
+    /// The v2 preset keeps the daily 07:00 batch and counts it inside WIP (flow model eq 1).
+    #[test]
+    fn v2_keeps_the_daily_batch_inside_wip() {
+        let c = v2();
+        assert!(c.batch_in_wip && c.fan_out);
+        let r = run_course_reference(&c);
+        assert!(r.mean_batch_wait_h > 0.5 && r.mean_batch_wait_h < 24.0);
+        let lam_w = r.courses_per_day * r.lead_days;
+        assert!(
+            (lam_w - r.l).abs() <= r.l * 0.005,
+            "{lam_w:.3} vs {:.3}",
+            r.l
+        );
+    }
 }
