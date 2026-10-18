@@ -553,6 +553,52 @@ mod tests {
         assert!((run_course_reference(&c).courses_per_day - 4.92).abs() > 4.92 * 0.05);
     }
 
+    fn with_batch_in_wip(name: &str) -> CourseFlowConfig {
+        let mut c = course_preset(name).expect("case");
+        c.batch_in_wip = true;
+        c
+    }
+
+    /// B6: the daily batch wait is measured and reported, not hidden.
+    #[test]
+    fn mean_batch_wait_is_reported_and_inside_a_day() {
+        let r = got("design");
+        assert!(
+            r.mean_batch_wait_h > 0.5 && r.mean_batch_wait_h < 24.0,
+            "mean batch wait {:.2} h",
+            r.mean_batch_wait_h
+        );
+    }
+
+    /// B6: with the batch wait counted inside WIP, Little's law holds within 0.5%,
+    /// and the WIP cap now binds on it, so it can only cost throughput.
+    #[test]
+    fn littles_law_holds_with_batch_wait_inside_wip() {
+        for name in ["design", "nine-builders", "coursera-24h"] {
+            let outside = got(name);
+            let r = run_course_reference(&with_batch_in_wip(name));
+            let lam_w = r.courses_per_day * r.lead_days;
+            assert!(
+                (lam_w - r.l).abs() <= r.l * 0.005,
+                "{name}: {lam_w:.3} vs {:.3}",
+                r.l
+            );
+            assert!(r.l <= 24.0 + 1e-9, "{name}: L {:.2} over the cap", r.l);
+            assert!(
+                r.courses_per_day <= outside.courses_per_day + 0.02,
+                "{name}"
+            );
+        }
+    }
+
+    /// B6 falsifier: counting the batch wait inside WIP must change the answer, or the flag is dead.
+    #[test]
+    fn batch_in_wip_is_not_a_no_op() {
+        let a = got("coursera-24h");
+        let b = run_course_reference(&with_batch_in_wip("coursera-24h"));
+        assert!((a.courses_per_day - b.courses_per_day).abs() > 1e-6 || (a.l - b.l).abs() > 1e-6);
+    }
+
     #[test]
     fn unknown_case_is_none() {
         assert!(course_preset("nope").is_none());
