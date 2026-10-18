@@ -817,6 +817,18 @@ fn margin_of(band: &Value, path: &Path) -> Result<Option<f64>> {
     }
 }
 
+/// SHA-256 of the running executable, computed once per process (#5446). The
+/// binary cannot change under a running process, and in a test build it is
+/// hundreds of MB: hashing it per `build_provenance` call made every test that
+/// builds provenance cost 60-240 s.
+fn current_exe_sha256(exe: &Path) -> Result<String> {
+    static HASH: std::sync::OnceLock<std::result::Result<String, String>> =
+        std::sync::OnceLock::new();
+    HASH.get_or_init(|| sha256_file(exe).map_err(|e| format!("cannot hash {}: {e}", exe.display())))
+        .clone()
+        .map_err(CliError::InvalidInput)
+}
+
 /// §4.2.2 — who measured, what served, and what the pinned comparator was.
 ///
 /// `binary_*` stay the CLIENT's, unchanged from v2.2 so existing readers keep
@@ -838,8 +850,7 @@ fn build_provenance(input: ProvenanceInput<'_>) -> Result<Provenance> {
     } = input;
     let exe = std::env::current_exe()
         .map_err(|e| CliError::InvalidInput(format!("cannot resolve current_exe: {e}")))?;
-    let binary_sha256 = sha256_file(&exe)
-        .map_err(|e| CliError::InvalidInput(format!("cannot hash {}: {e}", exe.display())))?;
+    let binary_sha256 = current_exe_sha256(&exe)?;
     let compute_class = ComputeClass::from_str(args.compute_class)
         .map_err(|e| CliError::InvalidInput(format!("--compute-class: {e}")))?;
 
