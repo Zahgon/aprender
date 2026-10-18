@@ -441,7 +441,7 @@ fn serve_router(state: realizar::api::AppState, config: &ServerConfig) -> Result
 
     // Create realizar's full inference router (Ollama-parity endpoints).
     // --no-cors / --no-metrics must reach the router, not stop at the banner.
-    let app = create_router_with_config(state, config.router_config());
+    let app = gate_router(create_router_with_config(state, config.router_config()));
 
     // Create tokio runtime and run server
     let runtime = tokio::runtime::Runtime::new()
@@ -560,7 +560,7 @@ fn start_gguf_server_gpu_batched(
         let state = state.with_batch_config(batch_tx, batch_config);
 
         // Create router
-        let app = create_router_with_config(state, router_config);
+        let app = gate_router(create_router_with_config(state, router_config));
 
         let listener = tokio::net::TcpListener::bind(&bind_addr)
             .await

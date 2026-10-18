@@ -750,7 +750,7 @@ fn start_gguf_server_cuda(
             #[cfg(not(feature = "cuda"))]
             let state = state.with_verbose(config.verbose);
 
-            let app = create_router_with_config(state, config.router_config());
+            let app = gate_router(create_router_with_config(state, config.router_config()));
             run_server_async(app, &config.bind_addr(), "CUDA-optimized")
         }
         Err(e) => {
