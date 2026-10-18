@@ -1,0 +1,115 @@
+name: Release
+
+# "Ship it". Everything that says the tree is good ran on the PR and on the rc cut
+# (rc-cut.yml). This workflow re-runs NONE of it: no coverage, no build, no dogfood
+# (BLD-002, FLOW-008 F3). It plans from recorded evidence, then publishes in separate
+# lanes so one red lane does not block the others.
+#
+# HARD GATE kept: clean-room green on the exact tagged commit. cascade-publish.sh
+# enforces it itself (fail-closed, no flag); `plan` also refuses when the rc is missing.
+#
+# Lanes:  plan -> assets (promote the rc bytes, no rebuild)
+#              -> crates (cascade-publish.sh, behind the crates-io environment)
+#         summary reports each lane; a red lane is named, the other still runs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      rc_tag:
+        description: 'rc tag to promote, e.g. v0.71.0-rc.2'
+        required: true
+        type: string
+
+permissions:
+  contents: write   # create the final tag and release
+  actions: read
+
+concurrency:
+  group: release-${{ inputs.rc_tag }}
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || secrets.GITHUB_TOKEN }}
+
+jobs:
+  plan:
+    runs-on: [self-hosted, Linux, X64, clean-room]
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.p.outputs.version }}
+      tag: ${{ steps.p.outputs.tag }}
+      sha: ${{ steps.p.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+      - id: p
+        name: Plan from the rc (reads only)
+        env:
+          RC: ${{ inputs.rc_tag }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$RC" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$' || { echo "::error::rc_tag '$RC' is not vX.Y.Z-rc.N"; exit 1; }
+          tag=${RC%-rc.*}; ver=${tag#v}
+          [ "$(gh release view "$RC" --json isPrerelease -q .isPrerelease)" = true ] || { echo "::error::$RC is not a prerelease"; exit 1; }
+          if gh release view "$tag" >/dev/null 2>&1; then echo "::error::$tag already released"; exit 1; fi
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$RC" -q .sha)
+          bash scripts/check_release_assets.sh "$RC"
+          { echo "version=$ver"; echo "tag=$tag"; echo "sha=$sha"; } >> "$GITHUB_OUTPUT"
+          echo "plan: $RC ($sha) -> $tag" >> "$GITHUB_STEP_SUMMARY"
+
+  assets:
+    needs: plan
+    runs-on: [self-hosted, Linux, X64, clean-room]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+      - name: Promote the rc bytes (no rebuild)
+        env:
+          RC: ${{ inputs.rc_tag }}
+        run: bash scripts/release/promote_rc.sh "$RC"
+
+  crates:
+    needs: plan
+    runs-on: [self-hosted, Linux, X64, clean-room]
+    timeout-minutes: 240
+    # Publishing a crate is irreversible (yank only): a reviewer approves this environment.
+    environment: crates-io
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          fetch-depth: 0
+      - name: Tag the commit locally (cascade-publish.sh's clean-room gate resolves the tag)
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: git tag "$TAG"
+      - name: Cascade publish (clean-room gate inside, fail-closed)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: |
+          # cascade-publish.sh reads ~/.cargo/credentials.toml; a stale env token causes 403
+          mkdir -p "$HOME/.cargo"
+          printf '[registry]\ntoken = "%s"\n' "$CARGO_REGISTRY_TOKEN" > "$HOME/.cargo/credentials.toml"
+          chmod 600 "$HOME/.cargo/credentials.toml"
+          unset CARGO_REGISTRY_TOKEN
+          rm -f .cargo/config.toml
+          bash scripts/cascade-publish.sh
+
+  summary:
+    needs: [plan, assets, crates]
+    if: always()
+    runs-on: [self-hosted, Linux, X64, clean-room]
+    steps:
+      - name: Per-lane result
+        env:
+          PLAN: ${{ needs.plan.result }}
+          ASSETS: ${{ needs.assets.result }}
+          CRATES: ${{ needs.crates.result }}
+        run: |
+          printf 'plan=%s assets=%s crates=%s\n' "$PLAN" "$ASSETS" "$CRATES" | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "$PLAN" = success ] && [ "$ASSETS" = success ] && [ "$CRATES" = success ]

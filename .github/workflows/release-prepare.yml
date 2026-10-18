@@ -1,0 +1,61 @@
+name: Release Prepare
+
+# "Is it good?" lives on the PR; "ship it" lives in release.yml. This is the first half:
+# a bot bumps the version and opens ONE PR. It builds nothing, tests nothing and publishes
+# nothing (BLD-002, FLOW-008 F3). The bump PR then goes through the ordinary merge path.
+#
+# The CHANGELOG section is NOT drafted here: scripts/release/prepare_bump.sh needs the T-2
+# GO receipt and streak receipt, which live on the cop host. The PR is opened as a DRAFT
+# with a placeholder section; a human or the release worker curates it and marks it ready.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version X.Y.Z (no leading v)'
+        required: true
+        type: string
+
+permissions:
+  contents: write        # push release-X.Y.Z
+  pull-requests: write   # open the bump PR
+
+concurrency:
+  group: release-prepare-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: [self-hosted, Linux, X64, clean-room]
+    timeout-minutes: 30
+    steps:
+      - name: Version shape
+        env:
+          V: ${{ inputs.version }}
+        run: |
+          printf '%s' "$V" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::version '$V' is not X.Y.Z"; exit 1; }
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+      - name: Bump
+        env:
+          V: ${{ inputs.version }}
+        run: |
+          bash scripts/bump-version.sh "$V"
+          bash scripts/bump-version.sh --check
+      - name: Commit, push, open the draft PR
+        env:
+          V: ${{ inputs.version }}
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name  "aprender-release-bot"
+          git config user.email "noreply@paiml.com"
+          git checkout -b "release-$V"
+          git add -A
+          git commit -m "chore(release): bump to $V"
+          git push origin "release-$V"
+          gh pr create --draft --base main --head "release-$V" \
+            --title "chore(release): $V" \
+            --body "Version bump for **$V** (release-prepare.yml). Curate the CHANGELOG section, then mark ready. Publishing is release.yml, run by hand after this merges and the rc is cut."
