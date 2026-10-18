@@ -113,6 +113,18 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Run a FLOW-006 course-factory case; --json prints the sim block
+    CourseFlow {
+        /// Case: cal-today, design, nine-builders, coursera-24h or render-300.
+        #[arg(long)]
+        case: String,
+        /// JSON file of measured inputs from the ledger; overrides the case.
+        #[arg(long)]
+        inputs: Option<std::path::PathBuf>,
+        /// Print the sim block as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Validate experiment YAML against EDD v2 schema
     Validate {
         /// Path to the experiment YAML file.

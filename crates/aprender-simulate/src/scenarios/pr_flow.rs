@@ -277,11 +277,10 @@ impl Sim {
                 self.at(self.c.t_fix_min, Ev::Fixed(pr));
             }
             Ev::PrRun(pr) => self.at(self.c.t_arm_min, Ev::Armed(pr)),
-            Ev::Fixed(pr) => self.start_run(pr),
+            Ev::Fixed(pr) | Ev::Rebased(pr) => self.start_run(pr),
             Ev::Armed(pr) if self.c.p_dirty > 0.0 && self.rng.gen_f64() < self.c.p_dirty => {
                 self.at(self.c.t_rebase_min, Ev::Rebased(pr));
             }
-            Ev::Rebased(pr) => self.start_run(pr),
             Ev::Armed(pr) if self.c.builds == 0 => self.merge(pr),
             Ev::Armed(pr) => {
                 self.enq_at[pr] = self.now;

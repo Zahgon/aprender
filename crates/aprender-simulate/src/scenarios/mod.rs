@@ -10,6 +10,7 @@
 
 pub mod bouncing_balls;
 pub mod climate;
+pub mod course_flow;
 pub mod epidemic;
 pub mod pendulum;
 pub mod portfolio;
@@ -20,6 +21,10 @@ pub mod satellite;
 
 pub use bouncing_balls::{BouncingBallsConfig, BouncingBallsState};
 pub use climate::{ClimateConfig, ClimateScenario};
+pub use course_flow::{
+    apply_course_inputs, course_cases, course_preset, course_sim_block, run_course_flow,
+    run_course_reference, CourseFlowConfig, CourseFlowResult,
+};
 pub use epidemic::{SEIRConfig, SEIRScenario, SIRConfig, SIRScenario};
 pub use pendulum::{PendulumConfig, PendulumScenario};
 pub use portfolio::{PortfolioConfig, PortfolioScenario, VaRResult};

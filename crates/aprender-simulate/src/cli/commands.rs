@@ -42,6 +42,7 @@ pub fn run_cli(cli: Cli) -> ExitCode {
         } => render_svg(&domain, &format, &output, fps, duration, seed),
         Commands::PrFlow { design } => pr_flow(&design),
         Commands::RepoFlow { case, inputs, json } => repo_flow(&case, inputs.as_deref(), json),
+        Commands::CourseFlow { case, inputs, json } => course_flow(&case, inputs.as_deref(), json),
         Commands::Validate { experiment_path } => validate_experiment(&experiment_path),
         Commands::Verify {
             experiment_path,
@@ -614,6 +615,38 @@ fn repo_flow(case: &str, inputs: Option<&Path>, json: bool) -> ExitCode {
             r.w_mean_min,
             r.l,
             r.pr_util * 100.0
+        );
+    }
+    ExitCode::SUCCESS
+}
+
+/// Print the reference run of a course-factory case, optionally with the ledger's inputs.
+fn course_flow(case: &str, inputs: Option<&Path>, json: bool) -> ExitCode {
+    let Some(mut cfg) = crate::scenarios::course_preset(case) else {
+        eprintln!("unknown case: {case}");
+        return ExitCode::FAILURE;
+    };
+    if let Some(p) = inputs {
+        let applied = std::fs::read_to_string(p)
+            .map_err(|e| e.to_string())
+            .and_then(|s| serde_json::from_str(&s).map_err(|e| e.to_string()))
+            .and_then(|v| crate::scenarios::apply_course_inputs(&mut cfg, &v));
+        if let Err(e) = applied {
+            eprintln!("inputs: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
+    let r = crate::scenarios::run_course_reference(&cfg);
+    if json {
+        println!("{}", crate::scenarios::course_sim_block(case, &cfg, &r));
+    } else {
+        let (st, u) = r.busiest();
+        println!(
+            "case {case}: courses/day {:.2}  shorts/day {:.2}  lead {:.1} d  busiest {st} {:.0}%",
+            r.courses_per_day,
+            r.shorts_per_day,
+            r.lead_days,
+            u * 100.0
         );
     }
     ExitCode::SUCCESS

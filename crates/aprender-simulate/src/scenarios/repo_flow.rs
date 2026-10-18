@@ -1,4 +1,6 @@
-//! Scenario "repo-flow": the FLOW-006 repo template (SIM-6, #5511). The PR-flow line with the
+//! Scenario "repo-flow": the FLOW-006 repo template (SIM-6, #5511).
+//!
+//! The PR-flow line with the
 //! merge queue optional (`builds == 0` merges on arm) and the conflict step: an armed PR is found
 //! dirty with `p_dirty` and waits `t_rebase_min` for a rebase and a rerun. One parameter file per
 //! repo; inputs come from the KPI report, never typed.
@@ -116,6 +118,57 @@ pub fn run_repo_reference(c: &PrFlowConfig) -> PrFlowResult {
     acc
 }
 
+/// Override the case with the ledger's measured inputs (a JSON object); unknown keys are refused.
+///
+/// # Errors
+/// Returns the offending key or type when the object holds something the model does not read.
+pub fn apply_inputs(c: &mut PrFlowConfig, v: &serde_json::Value) -> Result<(), String> {
+    let obj = v.as_object().ok_or("inputs must be a JSON object")?;
+    for (k, x) in obj {
+        let f = x.as_f64().ok_or_else(|| format!("{k}: not a number"))?;
+        match k.as_str() {
+            "cap" => c.cap = f as usize,
+            "N" => c.n = f as usize,
+            "t_author_min" => c.t_author_min = f,
+            "R_pr" => c.r_pr = f as usize,
+            "pr_runner_min" => c.pr_runner_min = f,
+            "p_red" => c.p_red = f,
+            "t_fix_min" => c.t_fix_min = f,
+            "t_arm_min" => c.t_arm_min = f,
+            "p_dirty" => c.p_dirty = f,
+            "t_rebase_min" => c.t_rebase_min = f,
+            _ => return Err(format!("unknown input: {k}")),
+        }
+    }
+    Ok(())
+}
+
+/// The `sim` block fields this scenario owns: scenario, seeds, hours, inputs, predicted, binding.
+#[must_use]
+pub fn sim_block(case: &str, c: &PrFlowConfig, r: &PrFlowResult) -> serde_json::Value {
+    let binding = if r.pr_util > 0.85 {
+        "ci_pool"
+    } else if r.l >= c.cap as f64 * 0.95 {
+        "cap"
+    } else {
+        "supply"
+    };
+    serde_json::json!({
+        "scenario": format!("repo-flow:{case}"),
+        "seeds": 5, "hours": 400, "warmup_h": 20,
+        "inputs": {
+            "cap": c.cap, "N": c.n, "t_author_min": c.t_author_min, "R_pr": c.r_pr,
+            "pr_runner_min": c.pr_runner_min, "p_red": c.p_red, "t_fix_min": c.t_fix_min,
+            "t_arm_min": c.t_arm_min, "p_dirty": c.p_dirty, "t_rebase_min": c.t_rebase_min,
+        },
+        "predicted": {
+            "merged_h": r.merged_per_h, "W_min_mean": r.w_mean_min, "W_min_p90": r.w_p90_min,
+            "L": r.l, "pr_pool_util_pct": r.pr_util * 100.0, "runs_per_pr": r.runs_per_pr,
+        },
+        "binding_station": binding,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,55 +246,4 @@ mod tests {
     fn unknown_case_is_none() {
         assert!(repo_preset("nope").is_none());
     }
-}
-
-/// Override the case with the ledger's measured inputs (a JSON object); unknown keys are refused.
-///
-/// # Errors
-/// Returns the offending key or type when the object holds something the model does not read.
-pub fn apply_inputs(c: &mut PrFlowConfig, v: &serde_json::Value) -> Result<(), String> {
-    let obj = v.as_object().ok_or("inputs must be a JSON object")?;
-    for (k, x) in obj {
-        let f = x.as_f64().ok_or_else(|| format!("{k}: not a number"))?;
-        match k.as_str() {
-            "cap" => c.cap = f as usize,
-            "N" => c.n = f as usize,
-            "t_author_min" => c.t_author_min = f,
-            "R_pr" => c.r_pr = f as usize,
-            "pr_runner_min" => c.pr_runner_min = f,
-            "p_red" => c.p_red = f,
-            "t_fix_min" => c.t_fix_min = f,
-            "t_arm_min" => c.t_arm_min = f,
-            "p_dirty" => c.p_dirty = f,
-            "t_rebase_min" => c.t_rebase_min = f,
-            _ => return Err(format!("unknown input: {k}")),
-        }
-    }
-    Ok(())
-}
-
-/// The `sim` block fields this scenario owns: scenario, seeds, hours, inputs, predicted, binding.
-#[must_use]
-pub fn sim_block(case: &str, c: &PrFlowConfig, r: &PrFlowResult) -> serde_json::Value {
-    let binding = if r.pr_util > 0.85 {
-        "ci_pool"
-    } else if r.l >= c.cap as f64 * 0.95 {
-        "cap"
-    } else {
-        "supply"
-    };
-    serde_json::json!({
-        "scenario": format!("repo-flow:{case}"),
-        "seeds": 5, "hours": 400, "warmup_h": 20,
-        "inputs": {
-            "cap": c.cap, "N": c.n, "t_author_min": c.t_author_min, "R_pr": c.r_pr,
-            "pr_runner_min": c.pr_runner_min, "p_red": c.p_red, "t_fix_min": c.t_fix_min,
-            "t_arm_min": c.t_arm_min, "p_dirty": c.p_dirty, "t_rebase_min": c.t_rebase_min,
-        },
-        "predicted": {
-            "merged_h": r.merged_per_h, "W_min_mean": r.w_mean_min, "W_min_p90": r.w_p90_min,
-            "L": r.l, "pr_pool_util_pct": r.pr_util * 100.0, "runs_per_pr": r.runs_per_pr,
-        },
-        "binding_station": binding,
-    })
 }
