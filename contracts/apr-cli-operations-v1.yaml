@@ -265,6 +265,11 @@ falsification_tests:
   prediction: The timestamp in a cbtop report matches the UTC date at the moment it was generated, on both headless paths
   test: commands::cbtop::tests::test_chrono_timestamp_is_current_utc_date
   if_fails: Persisted CI provenance is stamped with a stale hardcoded date
+- id: FALSIFY-OPS-015
+  rule: benchmark summaries use the sample standard deviation and the t interval
+  prediction: stat_summary of [2,4,6] has mean 4, stddev 2 and a 95% margin of t(3)*2/sqrt(3); one sample collapses the interval; an empty slice yields zeros
+  test: llm::benchmark::tests::stat_summary_computes_mean_stddev_and_t_interval
+  if_fails: benchmark confidence intervals are wrong, so a speed claim rests on a wrong error bar
 kani_harnesses:
 - id: KANI-OPS-001
   obligation: ReadOnly commands have no side effects
