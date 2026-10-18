@@ -1,0 +1,17 @@
+# pr-open-cap-v1 -- the open-PR cap, in one place (#5518). scripts/pr_open_cap.sh reads
+# `pr_open_cap`; scripts/check_pr_open_cap.sh is the case table. Raising the cap is a
+# separate ruling (#5508) and a one-line edit here.
+name: pr-open-cap
+version: "1.0.0"
+scope: Refuse to open a PR, drafts included, when the repo already has pr_open_cap open PRs.
+status: active
+pr_open_cap: 10
+metadata:
+  kind: pattern
+  description: The open-PR cap value and the entry-point check that enforces it.
+  version: "1.0.0"
+  created: '2026-10-18'
+  last_modified: '2026-10-18'
+  author: PAIML Engineering
+  references:
+    - 'scripts/pr_open_cap.sh, scripts/gh_pr_create.sh, scripts/check_pr_open_cap.sh'
