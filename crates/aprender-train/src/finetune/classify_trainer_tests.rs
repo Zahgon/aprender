@@ -5099,3 +5099,80 @@ fn test_coverage_card_confusion_raw_formatting() {
     assert!(out.contains("```"));
     assert!(out.contains("Predicted"));
 }
+
+// =========================================================================
+// save_apr_checkpoint (Refs #5536)
+// =========================================================================
+
+fn ckpt_trainer(num_classes: usize) -> ClassifyTrainer {
+    let config = TrainingConfig {
+        epochs: 1,
+        val_split: 0.2,
+        checkpoint_dir: PathBuf::from("/tmp/unused_ckpt_5536"),
+        ..TrainingConfig::default()
+    };
+    ClassifyTrainer::new(tiny_pipeline(num_classes), make_corpus(20, num_classes), config)
+        .expect("valid trainer")
+}
+
+fn ckpt_metrics() -> EpochMetrics {
+    EpochMetrics {
+        epoch: 3,
+        train_loss: 0.5,
+        train_accuracy: 0.75,
+        val_loss: 0.6,
+        val_accuracy: 0.7,
+        learning_rate: 2.5e-3,
+        epoch_time_ms: 10,
+        samples_per_sec: 1.0,
+    }
+}
+
+#[test]
+fn test_save_apr_checkpoint_roundtrips_metadata_and_tensors() {
+    use aprender::serialization::apr::AprReader;
+    let trainer = ckpt_trainer(3);
+    let dir = tempfile::tempdir().expect("tempdir");
+    trainer.save_apr_checkpoint(dir.path(), 3, &ckpt_metrics()).expect("save");
+
+    let reader = AprReader::open(dir.path().join("model.apr")).expect("open model.apr");
+    let meta = |k: &str| reader.get_metadata(k).unwrap_or_else(|| panic!("missing {k}")).clone();
+    assert_eq!(meta("__checkpoint__.schema_version"), serde_json::json!("1.2.0"));
+    assert_eq!(meta("epoch"), serde_json::json!(3));
+    assert_eq!(meta("num_classes"), serde_json::json!(3));
+    assert_eq!(meta("lora_rank"), serde_json::json!(4));
+    assert_eq!(meta("architecture"), serde_json::json!("qwen2_classify"));
+
+    let weight = reader.read_tensor_f32("classifier.weight").expect("weight");
+    let expected = trainer.pipeline.classifier.weight.data().to_vec();
+    assert_eq!(weight, expected, "classifier weights must round-trip exactly");
+    assert_eq!(reader.read_tensor_f32("classifier.bias").expect("bias").len(), 3);
+    assert_eq!(reader.read_tensor_f32("__training__.epoch").expect("epoch"), vec![3.0]);
+    let lr = reader.read_tensor_f32("__training__.learning_rate").expect("lr");
+    assert!((lr[0] - 2.5e-3).abs() < 1e-9);
+    assert_eq!(reader.read_tensor_f32("__training__.optimizer.step").expect("step").len(), 1);
+    // F-CKPT-001: every LoRA pair is present
+    assert!(reader.read_tensor_f32("lora.0.q_proj.lora_a").is_ok());
+    assert!(reader.read_tensor_f32("lora.0.v_proj.lora_b").is_ok());
+}
+
+#[test]
+fn test_save_apr_checkpoint_rejects_nan_classifier_weight() {
+    let mut trainer = ckpt_trainer(3);
+    trainer.pipeline.classifier.weight.data_mut()[0] = f32::NAN;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let err = trainer.save_apr_checkpoint(dir.path(), 0, &ckpt_metrics()).unwrap_err();
+    assert!(err.to_string().contains("F-CKPT-007"), "{err}");
+    assert!(err.to_string().contains("classifier.weight"), "{err}");
+    assert!(!dir.path().join("model.apr").exists(), "no file may be written on NaN");
+}
+
+#[test]
+fn test_save_apr_checkpoint_rejects_inf_classifier_bias() {
+    let mut trainer = ckpt_trainer(3);
+    trainer.pipeline.classifier.bias.data_mut()[0] = f32::INFINITY;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let err = trainer.save_apr_checkpoint(dir.path(), 0, &ckpt_metrics()).unwrap_err();
+    assert!(err.to_string().contains("classifier.bias"), "{err}");
+    assert!(!dir.path().join("model.apr").exists());
+}
