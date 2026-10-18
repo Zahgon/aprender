@@ -93,6 +93,14 @@ read_baseline() {
   printf '%s\n' "$v"
 }
 
+# over | slack | tight. Measured below the baseline is slack: a site could be
+# re-added within it and still pass, so the baseline must be lowered to match.
+verdict() {
+  if [ "$1" -gt "$2" ]; then echo over
+  elif [ "$1" -lt "$2" ]; then echo slack
+  else echo tight; fi
+}
+
 # ---------------------------------------------------------------- case table
 # Every row is a string put to the SHIPPED regex, both polarities. The patterns
 # were wrong five times in this repo's history and every one was caught by a
@@ -159,6 +167,11 @@ self_test() {
     bad "M1  the mutant flagged $m of 3; the q requirement is not what makes H9/H10/H11 pass"
   fi
 
+  echo "=== the ratchet is tight: slack below the baseline is not a pass (#5488) ==="
+  [ "$(verdict 40 42)" = slack ] && ok 'V1  measured 40 vs baseline 42 is slack (was a PASS)' || bad 'V1  slack not refused'
+  [ "$(verdict 43 42)" = over ]  && ok 'V2  measured 43 vs baseline 42 is over' || bad 'V2  a rise not refused'
+  [ "$(verdict 42 42)" = tight ] && ok 'V3  measured 42 vs baseline 42 is tight' || bad 'V3  at-ceiling not accepted'
+
   printf '\n%s checks, %s failed\n' "$CHECKS" "$FAILED"
   [ "$FAILED" -eq 0 ]
 }
@@ -195,12 +208,14 @@ main() {
     echo
     cat "$findings"; rm -f "$findings"; return 1
   fi
-  if [ "$count" -lt "$base" ]; then
-    echo "  PASS -- and $((base - count)) fewer than the ceiling. Lower it:"
+  if [ "$(verdict "$count" "$base")" = slack ]; then
+    echo
+    echo "FAIL: $count sites, $((base - count)) below the baseline $base. Slack lets a pipe be"
+    echo "      re-added unnoticed (#5488). Ratchet down in this change:"
     echo "          bash $SELF --update"
-  else
-    echo "  PASS -- at the ceiling, which is not over it."
+    rm -f "$findings"; return 1
   fi
+  echo "  PASS -- at the ceiling, which is not over it."
   rm -f "$findings"; return 0
 }
 
