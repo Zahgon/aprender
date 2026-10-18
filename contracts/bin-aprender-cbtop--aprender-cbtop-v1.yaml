@@ -112,3 +112,9 @@ falsification_tests:
     test: 'scripts/check_surface_audit_bins.sh (aprender#4476)'
     if_fails: 'a shipped command has no audited row (observed 2026-09-27: 4 of 4 leaves ledgered, plus the root row `aprender-cbtop (interactive TUI; --headless)` added 2026-09-27, GREEN)'
     mutation: 'delete every aprender-cbtop row; must turn RED naming aprender-cbtop'
+  - id: FALSIFY-BIN-APRENDER-CBTOP-006
+    rule: 'TUI main content renders the live state'
+    prediction: 'render_main_content prints RUNNING/STOPPED, the formatted metrics, and shows the per-core, hardware, memory, GPU, network and disk boxes only when their data and the screen height allow'
+    test: 'cargo test -p aprender-cbtop --lib render::tests (7 tests)'
+    if_fails: 'the cbtop main view shows stale or missing panels (measured 2026-10-18: render_main_content uncovered, #5541)'
+    mutation: 'invert the is_running status branch; app::render::tests::running_and_stopped_status_are_distinct must turn RED'

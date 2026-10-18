@@ -2,6 +2,8 @@
 
 mod formatters;
 mod panels;
+#[cfg(test)]
+mod tests;
 
 use presentar_core::{Canvas, Point, Rect, TextStyle};
 use presentar_terminal::direct::DirectTerminalCanvas;
