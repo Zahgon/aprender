@@ -1848,6 +1848,22 @@ jobs:
           heal_path /mnt/nvme-raid0/cargo-ci/home "$GUARD_CARGO_HOME/registry"
           printf 'target dir: %s\n' "$GUARD_TARGET_DIR"
           printf 'cargo home: %s (registry/ .package-cache .package-cache-mutate travel together)\n' "$GUARD_CARGO_HOME"
+          # A2 (pace quorum 2026-10-19 23:30Z): the guard steps run on the HOST, so their cargo
+          # builds (m5 builds pv: 1267-1517 s on x86-main, #5544/#5449 killed at 3563-3567 s)
+          # never saw the sccache the workspace-test containers share. Take the binary out of the
+          # CI image and wrap rustc with it. The cargo build itself stays: no prebuilt pv, no
+          # PV_BIN, so Row 5 still builds what it judges. No shared cache dir on this host, or
+          # no sccache in the image: carry on uncached, exactly as before.
+          if [ -d /home/noah/data/sccache ] \
+            && docker run --rm --user "$(id -u):$(id -g)" -v "$RUNNER_TEMP:/out" "$IMAGE" cp /usr/local/cargo/bin/sccache /out/sccache-host; then
+            echo "RUSTC_WRAPPER=$RUNNER_TEMP/sccache-host" >> "$GITHUB_ENV"
+            echo "SCCACHE_DIR=/home/noah/data/sccache" >> "$GITHUB_ENV"
+            echo "SCCACHE_CACHE_SIZE=50G" >> "$GITHUB_ENV"
+            echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+            printf 'sccache: wrapping rustc with %s/sccache-host\n' "$RUNNER_TEMP"
+          else
+            printf 'sccache: unavailable here, guard-cargo builds uncached\n'
+          fi
       # #4415 (operator A4, 2026-09-25): ONE step runs every guard step of guard-cargo-steps
       # below, keeps going past a red one, and reports every failure. GitHub would
       # stop this job at its first red step, and the others would never be seen.
@@ -1916,7 +1932,11 @@ jobs:
       # of `PMAT_BIN` proves nothing about which binary the gate ends up running.
       # It found `pmat analyze reachability` bare in BOTH copies on its first run.
       - name: The release runner must not resolve a verifier through PATH
-        run: setsid --wait bash scripts/check_verifier_pinning.sh
+        run: |
+          rc=0
+          setsid --wait bash scripts/check_verifier_pinning.sh || rc=$?
+          if [ -n "${RUSTC_WRAPPER:-}" ]; then "$RUSTC_WRAPPER" --show-stats || true; fi
+          exit "$rc"
       # One runner, one prose, and the user-scope copy stays a <=70-line shim
       # that fails CLOSED. The cap lives here, in the repo on protected main;
       # the file it caps lives at user scope, where it could otherwise raise its
