@@ -26,6 +26,8 @@ pub struct PrFlowConfig {
     pub p_red: f64,
     pub t_fix_min: f64,
     pub t_arm_min: f64,
+    /// Review wait per PR after green checks, serial with arming; 0 = no review station.
+    pub t_rev_min: f64,
     pub r_mq: usize,
     pub mq_runner_min: f64,
     pub mq_jobs: usize,
@@ -282,7 +284,7 @@ impl Sim {
             Ev::PrRun(pr) if self.rng.gen_f64() < self.c.p_red => {
                 self.at(self.c.t_fix_min, Ev::Fixed(pr));
             }
-            Ev::PrRun(pr) => self.at(self.c.t_arm_min, Ev::Armed(pr)),
+            Ev::PrRun(pr) => self.at(self.c.t_arm_min + self.c.t_rev_min, Ev::Armed(pr)),
             Ev::Fixed(pr) => self.start_run(pr),
             Ev::Armed(pr) => {
                 self.enq_at[pr] = self.now;
@@ -399,6 +401,7 @@ pub fn preset(name: &str) -> Option<PrFlowConfig> {
         p_red,
         t_fix_min: 10.0,
         t_arm_min: 2.0,
+        t_rev_min: 0.0,
         r_mq,
         mq_runner_min: rm,
         mq_jobs: 4,
@@ -482,6 +485,23 @@ mod tests {
         c.r_mq = 10_000;
         c.builds = 100;
         c
+    }
+
+    #[test]
+    fn six_minutes_of_review_adds_about_two_to_l_at_20_per_hour() {
+        let mut c = roomy();
+        c.t_author_min = 600.0;
+        c.n = 200.0;
+        let base = run_reference(&c);
+        assert!(
+            within(base.merged_per_h, 20.0, 0.05),
+            "lambda {}",
+            base.merged_per_h
+        );
+        c.t_rev_min = 6.0;
+        let r = run_reference(&c);
+        let dl = r.l - base.l;
+        assert!(within(dl, 2.0, 0.1), "dL {dl}");
     }
 
     #[test]

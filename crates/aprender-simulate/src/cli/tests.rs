@@ -408,6 +408,9 @@ fn test_every_subcommand_is_reachable() {
         (vec!["aprender-simulate", "render"], |c| {
             matches!(c, Commands::Render { .. })
         }),
+        (vec!["aprender-simulate", "pr-flow"], |c| {
+            matches!(c, Commands::PrFlow { .. })
+        }),
         (vec!["aprender-simulate", "validate", "e.yaml"], |c| {
             matches!(c, Commands::Validate { .. })
         }),
@@ -435,7 +438,7 @@ fn test_every_subcommand_is_reachable() {
     // Non-vacuity: the table must cover every variant of `Commands`.
     assert_eq!(
         cases.len(),
-        9,
+        10,
         "add the new subcommand to this table when Commands grows"
     );
     assert_eq!(

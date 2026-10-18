@@ -134,6 +134,9 @@ pub enum Commands {
         /// Measured queue wait per PR run, minutes.
         #[arg(long)]
         pr_setup: Option<f64>,
+        /// Review wait per PR after green checks, minutes (default 0).
+        #[arg(long)]
+        t_rev: Option<f64>,
         /// Merged PRs in the last 24 h, from git (for drift_pct_24h).
         #[arg(long)]
         observed_24h: Option<f64>,

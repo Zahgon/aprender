@@ -53,6 +53,7 @@ pub fn run_cli(cli: Cli) -> ExitCode {
             mq_min,
             p_red,
             pr_setup,
+            t_rev,
             observed_24h: obs24,
             src_runs: runs,
             params,
@@ -76,6 +77,7 @@ pub fn run_cli(cli: Cli) -> ExitCode {
                     mq_min,
                     p_red,
                     pr_setup,
+                    t_rev,
                     obs24,
                     runs,
                 },
@@ -620,6 +622,7 @@ struct FlowOverrides {
     mq_min: Option<f64>,
     p_red: Option<f64>,
     pr_setup: Option<f64>,
+    t_rev: Option<f64>,
     obs24: Option<f64>,
     runs: Option<String>,
 }
@@ -636,6 +639,7 @@ impl FlowOverrides {
         c.mq_runner_min = self.mq_min.unwrap_or(c.mq_runner_min);
         c.p_red = self.p_red.unwrap_or(c.p_red);
         c.pr_setup_min = self.pr_setup.unwrap_or(c.pr_setup_min);
+        c.t_rev_min = self.t_rev.unwrap_or(c.t_rev_min);
     }
 
     fn cli_flags(&self) -> String {
@@ -650,6 +654,7 @@ impl FlowOverrides {
             self.mq_min.map(|v| format!(" --mq-min {v}")),
             self.p_red.map(|v| format!(" --p-red {v}")),
             self.pr_setup.map(|v| format!(" --pr-setup {v}")),
+            self.t_rev.map(|v| format!(" --t-rev {v}")),
             self.obs24.map(|v| format!(" --observed-24h {v}")),
             self.runs.as_ref().map(|v| format!(" --src-runs {v}")),
         ];
@@ -724,7 +729,7 @@ fn pr_flow_sim_block(
             "design": design, "cap": cfg.cap, "n": cfg.n, "t_author_min": cfg.t_author_min,
             "r_pr": cfg.r_pr, "r_mq": cfg.r_mq, "builds": cfg.builds, "p_red": cfg.p_red,
             "pr_runner_min": cfg.pr_runner_min, "mq_runner_min": cfg.mq_runner_min,
-            "pr_setup_min": cfg.pr_setup_min, "f": cfg.f
+            "pr_setup_min": cfg.pr_setup_min, "t_rev_min": cfg.t_rev_min, "f": cfg.f
         },
         "inputs_source": {
             "t_author_min": "design_default", "n": src(ov.n.is_some()), "cap": src(ov.cap.is_some()),
