@@ -391,5 +391,5 @@ qa_gate:
   - intercept_penalty_exclusion
   - convergence_error_mapping
   - logit_finiteness
-  pass_criteria: All 12 falsification tests pass, including the two in-band negative controls (FALSIFY-MH-002, FALSIFY-MH-006)
+  pass_criteria: All 13 falsification tests pass, including the two in-band negative controls (FALSIFY-MH-002, FALSIFY-MH-006)
   falsification: Substitute lambda*W for 2*lambda*W in the gradient, or 1/(C*n) for 1/(2*C*n) in the relation
