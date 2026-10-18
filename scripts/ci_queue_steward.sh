@@ -92,7 +92,7 @@ def q3:
   {rule: "Q3", type: "enqueue", target: ($pr | tostring), target_id: $pr_id};
 
 # Q5 (#5490 fix 2): enqueue a PR the moment its CURRENT head is green AND 2 non-author seats name that head.
-# A seat is a comment whose first line is "seat N, <who> @<full 40-hex head sha>"; a seat whose <who> appears in
+# A seat is a PR comment or review body whose first line is "seat N, <who> @<full 40-hex head sha>"; a seat whose <who> appears in
 # any commit message of the PR (an Agent/Co-Authored-By trailer) belongs to the author and is not counted.
 # Q5: BEHIND is allowed (the queue tests the merge_group commit on top of current main); DIRTY/CONFLICTING, draft, red and a stale-head seat are refused.
 def q5:
@@ -109,7 +109,7 @@ def q5:
   select(($cs | map(select(.n == "workspace-test" and .c == "SUCCESS")) | length) > 0) |
   select(($cs | map(select(.c | IN("SUCCESS", "SKIPPED", "NEUTRAL") | not)) | length) == 0) |
   (((.commits.nodes // []) | map(.commit.message) | join("\n")) | ascii_downcase) as $msgs |
-  ([(.comments.nodes // [])[].body | split("\n")[0] |
+  ([((.comments.nodes // []) + (.reviews.nodes // []))[].body | split("\n")[0] |
     capture("^seat (?<n>[0-9]+), (?<who>[^@]+[^@ ]) @(?<sha>[0-9a-f]{40})(?![0-9a-f])")? |
     select(.sha == $sha) | .who | ascii_downcase |
     select(. as $w | ($msgs | contains($w)) | not)] | unique) as $seats |
@@ -295,7 +295,7 @@ if [[ "$SELFTEST" == 1 ]]; then
       case8_idle_gx10) grep -q "IDLE-NEXT-TO-QUEUE gx10" "$last_out" && echo "ok case8" || { echo "FAIL case8"; test_fail=1; } ;;
       case9_idle_noq) ! grep -q "IDLE-NEXT-TO-QUEUE" "$last_out" && echo "ok case9" || { echo "FAIL case9"; test_fail=1; } ;;
       case10_two_orphans) MAX_WRITES=1; process_tick "1400" "$case_dir/1400/s1.json" "$case_dir/1400/s2.json" "$case_dir/1400/s3.json" > "$STATE_DIR/out_1400_cap.log"; grep -q "refused:cap" "$STATE_DIR/out_1400_cap.log" && echo "ok case10" || { echo "FAIL case10"; test_fail=1; } ;;
-      q5_ok | q5_behind) grep -q "decision: Q5 300 .*action=planned" "$last_out" && echo "ok $case_name" || { echo "FAIL $case_name"; test_fail=1; } ;;
+      q5_ok | q5_behind | q5_review_seats) grep -q "decision: Q5 300 .*action=planned" "$last_out" && echo "ok $case_name" || { echo "FAIL $case_name"; test_fail=1; } ;;
       q5_*) ! grep -q "decision: Q5" "$last_out" && echo "ok $case_name" || { echo "FAIL $case_name"; test_fail=1; } ;;
     esac
   done
@@ -357,6 +357,7 @@ if [[ -z "$FIXTURES" ]]; then
           mergeStateStatus
           headRefOid
           comments(last: 20) { nodes { body } }
+          reviews(last: 20) { nodes { body } }
           commits(last: 30) {
             nodes {
               commit {
