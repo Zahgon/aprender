@@ -1,0 +1,1 @@
+{"id":"FND-20261018-apr-cli-from-pairs-untested","session":"w5382","kind":"coverage-gap","where":"crates/apr-cli/src/commands/hang_trace_classifier.rs:TraceDirListing::from_pairs","note":"public constructor had no direct test; the module tests build listings by hand, so from_pairs pairing was unexercised. Covered by 3 tests + FALSIFY-CRUX-F-14-004; mutation (reverse sizes) RED."}
