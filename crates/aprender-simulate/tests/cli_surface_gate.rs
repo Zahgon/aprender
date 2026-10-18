@@ -18,6 +18,7 @@ const UNKNOWN_SUB: &[&str] = &["no-such-subcommand"];
 const SUBCOMMANDS: &[&str] = &[
     "run",
     "render",
+    "pr-flow",
     "validate",
     "verify",
     "emc-check",
