@@ -1,6 +1,7 @@
 use super::*;
 use crate::finetune::classify_eval_report::{
-    restore_class_weights_from_metadata, ClassifyEvalReport, SSC_LABELS,
+    evaluate_checkpoint, restore_checkpoint_weights, restore_class_weights_from_metadata,
+    ClassifyEvalReport, SSC_LABELS,
 };
 use crate::finetune::{ClassifyConfig, ClassifyPipeline};
 use crate::transformer::TransformerConfig;
@@ -5098,4 +5099,140 @@ fn test_coverage_card_confusion_raw_formatting() {
     assert!(out.contains("### Raw Counts"));
     assert!(out.contains("```"));
     assert!(out.contains("Predicted"));
+}
+
+// =========================================================================
+// restore_checkpoint_weights / evaluate_checkpoint (#5537)
+// =========================================================================
+
+/// Write a classifier-only safetensors checkpoint whose bias strongly favours `class`.
+fn write_biased_checkpoint(dir: &std::path::Path, pipe: &ClassifyPipeline, class: usize) {
+    std::fs::create_dir_all(dir).unwrap();
+    let w = pipe.classifier.weight.data().len();
+    let nc = pipe.config.num_classes;
+    let weight = vec![0.0f32; w];
+    let mut bias = vec![0.0f32; nc];
+    bias[class] = 50.0;
+    let wb: &[u8] = bytemuck::cast_slice(&weight);
+    let bb: &[u8] = bytemuck::cast_slice(&bias);
+    let views = vec![
+        (
+            "classifier.weight",
+            safetensors::tensor::TensorView::new(safetensors::tensor::Dtype::F32, vec![w], wb)
+                .unwrap(),
+        ),
+        (
+            "classifier.bias",
+            safetensors::tensor::TensorView::new(safetensors::tensor::Dtype::F32, vec![nc], bb)
+                .unwrap(),
+        ),
+    ];
+    std::fs::write(dir.join("model.safetensors"), safetensors::serialize(views, None).unwrap())
+        .unwrap();
+}
+
+#[test]
+fn test_restore_checkpoint_weights_overwrites_classifier() {
+    let dir = std::env::temp_dir().join("entrenar_test_rcw_ok");
+    let mut pipe = tiny_pipeline(2);
+    write_biased_checkpoint(&dir, &pipe, 1);
+    restore_checkpoint_weights(&mut pipe, &dir).unwrap();
+    let bias = pipe.classifier.bias.data();
+    assert_eq!(bias.as_slice().unwrap(), &[0.0, 50.0]);
+    assert!(pipe.classifier.weight.data().iter().all(|&v| v == 0.0));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn test_restore_checkpoint_weights_missing_file_is_io_error() {
+    let dir = std::env::temp_dir().join("entrenar_test_rcw_missing");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut pipe = tiny_pipeline(2);
+    let err = restore_checkpoint_weights(&mut pipe, &dir).unwrap_err();
+    assert!(matches!(err, crate::Error::Io(_)), "{err:?}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn test_restore_checkpoint_weights_corrupt_file_is_serialization_error() {
+    let dir = std::env::temp_dir().join("entrenar_test_rcw_corrupt");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("model.safetensors"), b"not safetensors").unwrap();
+    let mut pipe = tiny_pipeline(2);
+    let err = restore_checkpoint_weights(&mut pipe, &dir).unwrap_err();
+    assert!(matches!(err, crate::Error::Serialization(_)), "{err:?}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+fn eval_fixture(name: &str, class: usize) -> (std::path::PathBuf, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("entrenar_test_evalckpt_{name}"));
+    std::fs::remove_dir_all(&dir).ok();
+    let pipe = tiny_pipeline(2);
+    write_biased_checkpoint(&dir, &pipe, class);
+    std::fs::write(
+        dir.join("adapter_config.json"),
+        r#"{"peft_type":"LORA","r":4,"lora_alpha":4.0,"target_modules":["q_proj","v_proj"],"lora_dropout":0.0,"bias":"none"}"#,
+    )
+    .unwrap();
+    let data = dir.join("test.jsonl");
+    std::fs::write(
+        &data,
+        "{\"input\":\"alpha\",\"label\":0}\n{\"input\":\"beta\",\"label\":1}\n{\"input\":\"gamma\",\"label\":1}\n",
+    )
+    .unwrap();
+    (dir, data)
+}
+
+fn eval_config() -> ClassifyConfig {
+    ClassifyConfig { num_classes: 2, lora_rank: 4, lora_alpha: 4.0, ..ClassifyConfig::default() }
+}
+
+#[test]
+fn test_evaluate_checkpoint_uses_restored_weights() {
+    let (dir, data) = eval_fixture("ok", 1);
+    let labels = vec!["a".to_string(), "b".to_string()];
+    let report =
+        evaluate_checkpoint(&dir, &data, &TransformerConfig::tiny(), eval_config(), &labels)
+            .unwrap();
+    assert_eq!(report.total_samples, 3);
+    // bias +50 on class 1 forces every prediction to class 1: column 0 is empty.
+    assert_eq!(report.confusion_matrix, vec![vec![0, 1], vec![0, 2]]);
+    assert!((report.accuracy - 2.0 / 3.0).abs() < 1e-9);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn test_evaluate_checkpoint_follows_checkpoint_not_defaults() {
+    let (dir, data) = eval_fixture("flip", 0);
+    let labels = vec!["a".to_string(), "b".to_string()];
+    let report =
+        evaluate_checkpoint(&dir, &data, &TransformerConfig::tiny(), eval_config(), &labels)
+            .unwrap();
+    assert_eq!(report.confusion_matrix, vec![vec![1, 0], vec![2, 0]]);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn test_evaluate_checkpoint_invalid_adapter_config_is_serialization_error() {
+    let (dir, data) = eval_fixture("badcfg", 1);
+    std::fs::write(dir.join("adapter_config.json"), "{ nope").unwrap();
+    let err = evaluate_checkpoint(&dir, &data, &TransformerConfig::tiny(), eval_config(), &[])
+        .unwrap_err();
+    assert!(matches!(err, crate::Error::Serialization(_)), "{err:?}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn test_evaluate_checkpoint_missing_test_data_errors() {
+    let (dir, _) = eval_fixture("nodata", 1);
+    let err = evaluate_checkpoint(
+        &dir,
+        &dir.join("absent.jsonl"),
+        &TransformerConfig::tiny(),
+        eval_config(),
+        &[],
+    )
+    .unwrap_err();
+    assert!(matches!(err, crate::Error::Io(_)), "{err:?}");
+    std::fs::remove_dir_all(&dir).ok();
 }
