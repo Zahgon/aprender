@@ -94,10 +94,11 @@ def q3:
 # Q5 (#5490 fix 2): enqueue a PR the moment its CURRENT head is green AND 2 non-author seats name that head.
 # A seat is a comment whose first line is "seat N, <who> @<full 40-hex head sha>"; a seat whose <who> appears in
 # any commit message of the PR (an Agent/Co-Authored-By trailer) belongs to the author and is not counted.
+# Q5: BEHIND is allowed (the queue tests the merge_group commit on top of current main); DIRTY/CONFLICTING, draft, red and a stale-head seat are refused.
 def q5:
   (($s1|.[0]).data.repository.mergeQueue.entries.nodes) as $mq |
   ((($s1|.[0]).data.repository.pullRequests.nodes) // [])[] |
-  select(.isDraft == false and .mergeStateStatus != "DIRTY" and .mergeStateStatus != "BEHIND") |
+  select(.isDraft == false and .mergeStateStatus != "DIRTY") |
   .number as $pr | .id as $pr_id | .headRefOid as $sha |
   select(($mq | map(select(.pullRequest.number == $pr)) | length) == 0) |
   ((.commits.nodes // []) | map(select(.commit.oid == $sha))) as $head |
@@ -294,7 +295,7 @@ if [[ "$SELFTEST" == 1 ]]; then
       case8_idle_gx10) grep -q "IDLE-NEXT-TO-QUEUE gx10" "$last_out" && echo "ok case8" || { echo "FAIL case8"; test_fail=1; } ;;
       case9_idle_noq) ! grep -q "IDLE-NEXT-TO-QUEUE" "$last_out" && echo "ok case9" || { echo "FAIL case9"; test_fail=1; } ;;
       case10_two_orphans) MAX_WRITES=1; process_tick "1400" "$case_dir/1400/s1.json" "$case_dir/1400/s2.json" "$case_dir/1400/s3.json" > "$STATE_DIR/out_1400_cap.log"; grep -q "refused:cap" "$STATE_DIR/out_1400_cap.log" && echo "ok case10" || { echo "FAIL case10"; test_fail=1; } ;;
-      q5_ok) grep -q "decision: Q5 300 .*action=planned" "$last_out" && echo "ok q5_ok" || { echo "FAIL q5_ok"; test_fail=1; } ;;
+      q5_ok | q5_behind) grep -q "decision: Q5 300 .*action=planned" "$last_out" && echo "ok $case_name" || { echo "FAIL $case_name"; test_fail=1; } ;;
       q5_*) ! grep -q "decision: Q5" "$last_out" && echo "ok $case_name" || { echo "FAIL $case_name"; test_fail=1; } ;;
     esac
   done
