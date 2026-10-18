@@ -1,5 +1,5 @@
 //! Public-API edge cases for the .ald dataset format (coverage ticket, Rule 7).
-//! Contract: FALSIFY-BIN-ALIMENTAR-009.
+//! Contract: FALSIFY-BIN-ALIMENTAR-007.
 
 use std::sync::Arc;
 
