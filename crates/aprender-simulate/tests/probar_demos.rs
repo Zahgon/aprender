@@ -88,7 +88,7 @@ impl DemoEngineObject for TspEngine {
 /// Create an engine from YAML by detecting demo type.
 fn create_engine_from_yaml(yaml: &str) -> Result<Box<dyn DemoEngineObject>, DemoError> {
     // Parse YAML to determine demo type
-    let value: serde_yaml::Value = serde_yaml::from_str(yaml)?;
+    let value: serde_json::Value = serde_saphyr::from_str(yaml)?;
 
     let demo_type = value
         .get("simulation")

@@ -291,7 +291,7 @@ impl DemoEngine for TspEngine {
     type StepResult = TspStepResult;
 
     fn from_yaml(yaml: &str) -> Result<Self, DemoError> {
-        let config: TspConfig = serde_yaml::from_str(yaml)?;
+        let config: TspConfig = serde_saphyr::from_str(yaml)?;
         Ok(Self::from_config(config))
     }
 

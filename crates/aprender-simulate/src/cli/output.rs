@@ -226,7 +226,7 @@ pub fn print_emc_report(report: &EmcComplianceReport) {
 /// * `errors` - List of validation errors
 /// * `warnings` - List of validation warnings
 pub fn print_emc_validation_results(
-    yaml: &serde_yaml::Value,
+    yaml: &serde_json::Value,
     errors: &[String],
     warnings: &[String],
 ) {

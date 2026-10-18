@@ -58,7 +58,7 @@ pub enum SimError {
 
     /// YAML parsing error.
     #[error("YAML parsing error: {0}")]
-    YamlParse(#[from] serde_yaml::Error),
+    YamlParse(#[from] serde_saphyr::Error),
 
     /// Validation error.
     #[error("Validation error: {0}")]
