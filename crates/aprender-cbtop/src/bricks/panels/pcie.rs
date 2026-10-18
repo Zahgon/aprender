@@ -304,4 +304,93 @@ mod tests {
         assert_eq!(PciePanelBrick::format_bandwidth(1.5), "1.50 GB/s");
         assert_eq!(PciePanelBrick::format_bandwidth(0.5), "512 MB/s");
     }
+
+    use presentar_core::{DrawCommand, RecordingCanvas};
+
+    /// Every text drawn, with its style colour, in draw order.
+    fn texts(c: &RecordingCanvas) -> Vec<(String, presentar_core::Color)> {
+        c.commands()
+            .iter()
+            .filter_map(|cmd| {
+                if let DrawCommand::Text { content, style, .. } = cmd {
+                    Some((content.clone(), style.color))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn has(c: &RecordingCanvas, needle: &str) -> bool {
+        texts(c).iter().any(|(t, _)| t.contains(needle))
+    }
+
+    fn device(tx: f64, rx: f64) -> PcieDevice {
+        PcieDevice {
+            name: "RTX".to_string(),
+            gen: PcieGen::Gen4,
+            lanes: 16,
+            tx_bandwidth: tx,
+            rx_bandwidth: rx,
+        }
+    }
+
+    #[test]
+    fn paint_without_device_says_none_detected() {
+        let panel = PciePanelBrick::new();
+        let mut c = RecordingCanvas::new();
+        panel.paint(&mut c, 100.0, 24.0);
+        assert!(has(&c, "PCIe Monitor"));
+        assert!(has(&c, "No PCIe GPU detected"));
+        assert!(!has(&c, "TX (H"));
+        assert!(!has(&c, "TX History:"));
+        assert!(has(&c, "Total TX:") && has(&c, "Total RX:"));
+    }
+
+    #[test]
+    fn paint_with_device_shows_link_and_utilisation() {
+        let mut panel = PciePanelBrick::new();
+        panel.gpu_device = Some(device(15.75, 7.875));
+        let mut c = RecordingCanvas::new();
+        panel.paint(&mut c, 100.0, 24.0);
+        assert!(!has(&c, "No PCIe GPU detected"));
+        assert!(has(&c, "RTX - PCIe Gen4 x16 (Max: 31.50 GB/s)"));
+        assert!(has(&c, "15.75 GB/s (50.0%)"));
+        assert!(has(&c, "7.88 GB/s (25.0%)"));
+    }
+
+    #[test]
+    fn paint_histories_draw_labels_and_graphs() {
+        let mut panel = PciePanelBrick::new();
+        let mut base = RecordingCanvas::new();
+        panel.paint(&mut base, 100.0, 24.0);
+        panel.tx_history = vec![1.0, 2.0, 3.0];
+        let mut tx = RecordingCanvas::new();
+        panel.paint(&mut tx, 100.0, 24.0);
+        assert!(has(&tx, "TX History:") && !has(&tx, "RX History:"));
+        panel.rx_history = vec![0.5, 1.5];
+        let mut both = RecordingCanvas::new();
+        panel.paint(&mut both, 100.0, 24.0);
+        assert!(has(&both, "RX History:"));
+        assert!(tx.command_count() > base.command_count());
+        assert!(both.command_count() > tx.command_count());
+    }
+
+    #[test]
+    fn paint_totals_use_byte_formatting() {
+        let mut panel = PciePanelBrick::new();
+        panel.total_tx_bytes = 3 * 1024 * 1024 * 1024;
+        panel.total_rx_bytes = 0;
+        let mut c = RecordingCanvas::new();
+        panel.paint(&mut c, 100.0, 24.0);
+        let t = texts(&c);
+        let i = t.iter().position(|(s, _)| s == "Total TX:").expect("label");
+        assert_eq!(
+            t[i + 1].0,
+            PciePanelBrick::format_bytes(3 * 1024 * 1024 * 1024)
+        );
+        let j = t.iter().position(|(s, _)| s == "Total RX:").expect("label");
+        assert_eq!(t[j + 1].0, PciePanelBrick::format_bytes(0));
+        assert_ne!(t[i + 1].0, t[j + 1].0);
+    }
 }

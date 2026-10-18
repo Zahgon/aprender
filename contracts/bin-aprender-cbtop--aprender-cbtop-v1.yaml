@@ -118,3 +118,9 @@ falsification_tests:
     test: 'cargo test -p aprender-cbtop --lib render::tests (7 tests)'
     if_fails: 'the cbtop main view shows stale or missing panels (measured 2026-10-18: render_main_content uncovered, #5541)'
     mutation: 'invert the is_running status branch; app::render::tests::running_and_stopped_status_are_distinct must turn RED'
+  - id: FALSIFY-BIN-APRENDER-CBTOP-007
+    rule: 'PCIe panel paints the link and its bandwidth'
+    prediction: 'PciePanelBrick::paint prints the device link line and TX/RX utilisation when a device exists, "No PCIe GPU detected" otherwise, the history sections only when history exists, and the byte totals'
+    test: 'cargo test -p aprender-cbtop --lib bricks::panels::pcie::tests::paint_ (4 tests)'
+    if_fails: 'the PCIe panel misreports bandwidth (measured 2026-10-18: paint uncovered, #5546)'
+    mutation: 'make the TX line use rx_utilization(); paint_with_device_shows_link_and_utilisation must turn RED'
