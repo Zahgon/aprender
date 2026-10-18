@@ -28,7 +28,7 @@
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-BASELINE="$ROOT/scripts/pipe_grep_q_baseline.txt"
+BASELINE="${PIPE_GREP_Q_BASELINE:-$ROOT/scripts/pipe_grep_q_baseline.txt}"   # env seam: the self-test judges the live tree against a planted baseline
 SELF="scripts/check_no_pipe_into_grep_q.sh"
 
 # The hazard: a pipe whose right-hand side is `grep -q`. `-qF`, `-qE`, `-qi`
@@ -148,6 +148,19 @@ self_test() {
   else bad 'O4  `||` earlier on the line masked a real pipe'; fi
   CHECKS=$((CHECKS+1))
 
+  echo "=== the ratchet: slack and excess both refuse, equality passes (#5488) ==="
+  local tb cnt rc; tb=$(mktemp) || return 2
+  printf '99999\n' > "$tb"
+  cnt=$(PIPE_GREP_Q_BASELINE="$tb" bash "$ROOT/$SELF" 2>&1 | sed -n 's/.*measured \([0-9][0-9]*\).*/\1/p')
+  case "$cnt" in ''|*[!0-9]*) bad "R0  could not read the measured count (got '$cnt')"; cnt=0 ;; esac
+  printf '%s\n' "$((cnt + 1))" > "$tb"; PIPE_GREP_Q_BASELINE="$tb" bash "$ROOT/$SELF" >/dev/null 2>&1; rc=$?
+  if [ "$rc" -eq 1 ]; then ok 'R1  baseline above the measured count (slack) is refused'; else bad "R1  slack passed (rc $rc)"; fi
+  printf '%s\n' "$((cnt - 1))" > "$tb"; PIPE_GREP_Q_BASELINE="$tb" bash "$ROOT/$SELF" >/dev/null 2>&1; rc=$?
+  if [ "$rc" -eq 1 ]; then ok 'R2  baseline below the measured count (excess) is refused'; else bad "R2  excess passed (rc $rc)"; fi
+  printf '%s\n' "$cnt" > "$tb"; PIPE_GREP_Q_BASELINE="$tb" bash "$ROOT/$SELF" >/dev/null 2>&1; rc=$?
+  if [ "$rc" -eq 0 ]; then ok 'R3  baseline equal to the measured count passes'; else bad "R3  equality refused (rc $rc)"; fi
+  rm -f "${tb:?}"
+
   echo "=== the mutation: drop the q requirement and H9/H10/H11 must go RED ==="
   local mutant='\|[[:space:]]*grep[[:space:]]+-' m=0
   grep -qE "$mutant" <<<'  cmd | grep -c X'   && m=$((m+1))
@@ -196,8 +209,11 @@ main() {
     cat "$findings"; rm -f "$findings"; return 1
   fi
   if [ "$count" -lt "$base" ]; then
-    echo "  PASS -- and $((base - count)) fewer than the ceiling. Lower it:"
+    # #5488: slack is a free allowance. At 42 vs 40, reverting one fixed site to a pipe still passed.
+    echo "FAIL: $((base - count)) fewer than the ceiling ($count < $base). The baseline must equal the measured count, or"
+    echo "      the next regression hides inside the slack. Lower it:"
     echo "          bash $SELF --update"
+    rm -f "$findings"; return 1
   else
     echo "  PASS -- at the ceiling, which is not over it."
   fi
