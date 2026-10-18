@@ -118,3 +118,9 @@ falsification_tests:
     test: 'cargo test -p aprender-cbtop --lib optimize::bottleneck'
     if_fails: 'a bottleneck lands in the wrong severity band or an unstable run goes unreported'
     mutation: 'change a threshold (< 0.50 to <= 0.50) or CV > 15.0 to >= 15.0; must turn RED'
+  - id: FALSIFY-BIN-APRENDER-CBTOP-007
+    rule: 'render_hardware_box draws five rows, truncates names to the inner width and advances y by 7 (#5564)'
+    prediction: 'with a GPU the GPU row names it; without one it reads "Not detected" and the closing bar sits at box_width; a 100-char name is cut to inner_width - 10'
+    test: 'cargo test -p aprender-cbtop --lib hardware_box_tests'
+    if_fails: 'the hardware panel shows the wrong row, overflows its box, or the next panel overlaps it'
+    mutation: 'ignore hardware.gpu_name (always take the else branch); must turn RED'
