@@ -22,12 +22,12 @@ proof_obligations:
   - id: SEV-INV-001
     type: invariant
     property: "Only failing tests are reported, as EDD-07 Critical with FAIL context"
-    formal: "cargo test -p aprender-simulate --lib test_validate_verification_tests_failure_is_edd07_critical_with_context exits 0"
+    formal: "∀ t ∈ {test_validate_verification_tests_failure_is_edd07_critical_with_context}: exit(t) = 0"
     applies_to: edd07_reports_exactly_the_failing_tests
   - id: SEV-INV-002
     type: invariant
     property: "Failures accumulate in the validator across runs"
-    formal: "cargo test -p aprender-simulate --lib test_validate_verification_tests_failures_accumulate_in_validator exits 0"
+    formal: "∀ t ∈ {test_validate_verification_tests_failures_accumulate_in_validator}: exit(t) = 0"
     applies_to: edd07_reports_exactly_the_failing_tests
 
 falsification_tests:
