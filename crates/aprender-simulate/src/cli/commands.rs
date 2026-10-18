@@ -40,6 +40,7 @@ pub fn run_cli(cli: Cli) -> ExitCode {
             duration,
             seed,
         } => render_svg(&domain, &format, &output, fps, duration, seed),
+        Commands::PrFlow { design } => pr_flow(&design),
         Commands::Validate { experiment_path } => validate_experiment(&experiment_path),
         Commands::Verify {
             experiment_path,
@@ -563,4 +564,25 @@ fn render_bouncing_balls(
         }
     }
     Ok(())
+}
+
+/// Print the reference run (5 seeds x 400 h, 20 h warm-up) of a named PR-flow design.
+fn pr_flow(design: &str) -> ExitCode {
+    let Some(cfg) = crate::scenarios::preset(design) else {
+        eprintln!("unknown design: {design}");
+        return ExitCode::FAILURE;
+    };
+    let r = crate::scenarios::run_reference(&cfg);
+    println!(
+        "design {design}: merged/h {:.2}  W mean {:.1} min  W p90 {:.1} min  L {:.2}",
+        r.merged_per_h, r.w_mean_min, r.w_p90_min, r.l
+    );
+    println!(
+        "PRs/pass {:.2}  PR util {:.0}%  MQ util {:.0}%  runs/PR {:.2}",
+        r.prs_per_pass,
+        r.pr_util * 100.0,
+        r.mq_util * 100.0,
+        r.runs_per_pr
+    );
+    ExitCode::SUCCESS
 }

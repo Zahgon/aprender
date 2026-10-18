@@ -95,6 +95,12 @@ pub enum Commands {
         #[arg(long, default_value_t = 42)]
         seed: u64,
     },
+    /// Run the aprender PR-flow scenario (FLOW-005) for a named design
+    PrFlow {
+        /// Design: D, A, G or E.
+        #[arg(long, default_value = "D", value_parser = ["D", "A", "G", "E"])]
+        design: String,
+    },
     /// Validate experiment YAML against EDD v2 schema
     Validate {
         /// Path to the experiment YAML file.

@@ -1,0 +1,479 @@
+//! Scenario "pr-flow": the aprender PR line as a discrete-event model (FLOW-005 SIM-2, #5511).
+//!
+//! Six components, in minutes, seeded: authors on a pull system, the WIP cap, PR checks on a
+//! runner pool (red with `p_red`, then fix and rerun), the arm delay, the merge queue (batch,
+//! minimum wait, build limit, runner pool, flake sends the whole group back) and merge.
+//! Events ride `engine::scheduler`, time is `SimTime`, randomness is `SimRng`.
+
+use std::collections::VecDeque;
+
+use crate::engine::rng::SimRng;
+use crate::engine::scheduler::EventScheduler;
+use crate::engine::state::SimEvent;
+use crate::engine::SimTime;
+
+/// Inputs of the line. Times are minutes; `*_runner_min` is the runner-minutes of one run.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PrFlowConfig {
+    pub cap: usize,
+    pub n: usize,
+    pub t_author_min: f64,
+    pub r_pr: usize,
+    pub pr_runner_min: f64,
+    pub pr_jobs: usize,
+    pub pr_setup_min: f64,
+    pub p_red: f64,
+    pub t_fix_min: f64,
+    pub t_arm_min: f64,
+    pub r_mq: usize,
+    pub mq_runner_min: f64,
+    pub mq_jobs: usize,
+    pub mq_setup_min: f64,
+    pub builds: usize,
+    pub mq_batch: usize,
+    pub mq_wait_min: f64,
+    pub f: f64,
+}
+
+/// What one seeded run measured after the warm-up.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PrFlowResult {
+    pub merged_per_h: f64,
+    pub w_mean_min: f64,
+    pub w_p90_min: f64,
+    pub l: f64,
+    pub prs_per_pass: f64,
+    pub pr_util: f64,
+    pub mq_util: f64,
+    pub runs_per_pr: f64,
+}
+
+#[derive(Clone, Copy)]
+enum Ev {
+    Author(usize),
+    PrJob(usize),
+    PrRun(usize),
+    Fixed(usize),
+    Armed(usize),
+    MqJob(usize),
+    MqPass(usize),
+    MqTimer,
+}
+
+impl Ev {
+    fn pack(self) -> SimEvent {
+        let (name, id) = match self {
+            Self::Author(i) => ("author", i),
+            Self::PrJob(i) => ("pr_job", i),
+            Self::PrRun(i) => ("pr_run", i),
+            Self::Fixed(i) => ("fixed", i),
+            Self::Armed(i) => ("armed", i),
+            Self::MqJob(i) => ("mq_job", i),
+            Self::MqPass(i) => ("mq_pass", i),
+            Self::MqTimer => ("mq_timer", 0),
+        };
+        SimEvent::Custom {
+            name: name.into(),
+            data: (id as u64).to_le_bytes().to_vec(),
+        }
+    }
+
+    fn unpack(e: &SimEvent) -> Option<Self> {
+        let SimEvent::Custom { name, data } = e else {
+            return None;
+        };
+        let id = usize::try_from(u64::from_le_bytes(data.as_slice().try_into().ok()?)).ok()?;
+        Some(match name.as_str() {
+            "author" => Self::Author(id),
+            "pr_job" => Self::PrJob(id),
+            "pr_run" => Self::PrRun(id),
+            "fixed" => Self::Fixed(id),
+            "armed" => Self::Armed(id),
+            "mq_job" => Self::MqJob(id),
+            "mq_pass" => Self::MqPass(id),
+            "mq_timer" => Self::MqTimer,
+            _ => return None,
+        })
+    }
+}
+
+/// A pool of identical runners with a FIFO of waiting jobs `(owner, minutes)`.
+struct Pool {
+    free: usize,
+    size: usize,
+    waiting: VecDeque<(usize, f64)>,
+    busy_min: f64,
+}
+
+impl Pool {
+    fn new(size: usize) -> Self {
+        Self {
+            free: size,
+            size,
+            waiting: VecDeque::new(),
+            busy_min: 0.0,
+        }
+    }
+}
+
+struct Sim {
+    c: PrFlowConfig,
+    rng: SimRng,
+    sched: EventScheduler,
+    now: f64,
+    warm: f64,
+    open: usize,
+    blocked: VecDeque<usize>,
+    open_at: Vec<f64>,
+    jobs_left: Vec<usize>,
+    pr: Pool,
+    mq: Pool,
+    queue: VecDeque<usize>,
+    enq_at: Vec<f64>,
+    groups: Vec<Vec<usize>>,
+    group_jobs_left: Vec<usize>,
+    active: usize,
+    timer_at: f64,
+    sojourn: Vec<f64>,
+    l_area: f64,
+    last_t: f64,
+    runs: u64,
+    prs_seen: u64,
+    passes: u64,
+}
+
+impl Sim {
+    fn at(&mut self, dt: f64, e: Ev) {
+        self.sched
+            .schedule(SimTime::from_secs((self.now + dt) * 60.0), e.pack());
+    }
+
+    fn exp(&mut self, mean: f64) -> f64 {
+        -mean * (1.0 - self.rng.gen_f64()).ln()
+    }
+
+    fn start_run(&mut self, pr: usize) {
+        self.runs += 1;
+        self.jobs_left[pr] = self.c.pr_jobs;
+        let d = self.c.pr_runner_min / self.c.pr_jobs as f64;
+        for _ in 0..self.c.pr_jobs {
+            self.pr.waiting.push_back((pr, d));
+        }
+        self.dispatch_pr();
+    }
+
+    fn dispatch_pr(&mut self) {
+        while self.pr.free > 0 {
+            let Some((pr, d)) = self.pr.waiting.pop_front() else {
+                break;
+            };
+            self.pr.free -= 1;
+            if self.now >= self.warm {
+                self.pr.busy_min += d;
+            }
+            self.at(d, Ev::PrJob(pr));
+        }
+    }
+
+    fn open_pr(&mut self, author: usize) {
+        let pr = self.open_at.len();
+        self.open_at.push(self.now);
+        self.enq_at.push(0.0);
+        self.jobs_left.push(0);
+        self.open += 1;
+        self.prs_seen += 1;
+        self.start_run(pr);
+        let t = self.exp(self.c.t_author_min);
+        self.at(t, Ev::Author(author));
+    }
+
+    fn form_groups(&mut self) {
+        while self.active < self.c.builds && !self.queue.is_empty() {
+            let head = self.enq_at[self.queue[0]];
+            let ready =
+                self.queue.len() >= self.c.mq_batch || self.now >= head + self.c.mq_wait_min;
+            if !ready {
+                if self.timer_at < self.now {
+                    self.timer_at = head + self.c.mq_wait_min;
+                    self.at(self.timer_at - self.now, Ev::MqTimer);
+                }
+                return;
+            }
+            let take = self.c.mq_batch.min(self.queue.len());
+            let members: Vec<usize> = self.queue.drain(..take).collect();
+            self.groups.push(members);
+            let g = self.groups.len() - 1;
+            self.group_jobs_left.push(self.c.mq_jobs);
+            self.active += 1;
+            let d = self.c.mq_runner_min / self.c.mq_jobs as f64;
+            for _ in 0..self.c.mq_jobs {
+                self.mq.waiting.push_back((g, d));
+            }
+        }
+        self.dispatch_mq();
+    }
+
+    fn dispatch_mq(&mut self) {
+        while self.mq.free > 0 {
+            let Some((g, d)) = self.mq.waiting.pop_front() else {
+                break;
+            };
+            self.mq.free -= 1;
+            if self.now >= self.warm {
+                self.mq.busy_min += d;
+            }
+            self.at(d, Ev::MqJob(g));
+        }
+    }
+
+    fn pass_done(&mut self, g: usize) {
+        self.active -= 1;
+        let members = std::mem::take(&mut self.groups[g]);
+        if self.rng.gen_f64() < self.c.f {
+            for pr in members.into_iter().rev() {
+                self.queue.push_front(pr);
+            }
+        } else {
+            if self.now >= self.warm {
+                self.passes += 1;
+            }
+            for pr in members {
+                self.merge(pr);
+            }
+        }
+        self.form_groups();
+    }
+
+    fn merge(&mut self, pr: usize) {
+        if self.now >= self.warm {
+            self.sojourn.push(self.now - self.open_at[pr]);
+        }
+        self.open -= 1;
+        if let Some(a) = self.blocked.pop_front() {
+            self.open_pr(a);
+        }
+    }
+
+    fn step(&mut self, e: Ev) {
+        match e {
+            Ev::Author(a) if self.open < self.c.cap => self.open_pr(a),
+            Ev::Author(a) => self.blocked.push_back(a),
+            Ev::PrJob(pr) => {
+                self.pr.free += 1;
+                self.jobs_left[pr] -= 1;
+                if self.jobs_left[pr] == 0 {
+                    self.at(self.c.pr_setup_min, Ev::PrRun(pr));
+                }
+                self.dispatch_pr();
+            }
+            Ev::PrRun(pr) if self.rng.gen_f64() < self.c.p_red => {
+                self.at(self.c.t_fix_min, Ev::Fixed(pr));
+            }
+            Ev::PrRun(pr) => self.at(self.c.t_arm_min, Ev::Armed(pr)),
+            Ev::Fixed(pr) => self.start_run(pr),
+            Ev::Armed(pr) => {
+                self.enq_at[pr] = self.now;
+                self.queue.push_back(pr);
+                self.form_groups();
+            }
+            Ev::MqJob(g) => {
+                self.mq.free += 1;
+                self.group_jobs_left[g] -= 1;
+                if self.group_jobs_left[g] == 0 {
+                    self.at(self.c.mq_setup_min, Ev::MqPass(g));
+                }
+                self.dispatch_mq();
+            }
+            Ev::MqPass(g) => self.pass_done(g),
+            Ev::MqTimer => self.form_groups(),
+        }
+    }
+}
+
+/// Run one seed for `hours`, discarding the first `warmup_h`.
+#[must_use]
+pub fn run_pr_flow(c: &PrFlowConfig, seed: u64, hours: f64, warmup_h: f64) -> PrFlowResult {
+    let mut s = Sim {
+        c: c.clone(),
+        rng: SimRng::new(seed),
+        sched: EventScheduler::new(),
+        now: 0.0,
+        warm: warmup_h * 60.0,
+        open: 0,
+        blocked: VecDeque::new(),
+        open_at: Vec::new(),
+        jobs_left: Vec::new(),
+        pr: Pool::new(c.r_pr),
+        mq: Pool::new(c.r_mq),
+        queue: VecDeque::new(),
+        enq_at: Vec::new(),
+        groups: Vec::new(),
+        group_jobs_left: Vec::new(),
+        active: 0,
+        timer_at: -1.0,
+        sojourn: Vec::new(),
+        l_area: 0.0,
+        last_t: 0.0,
+        runs: 0,
+        prs_seen: 0,
+        passes: 0,
+    };
+    s.timer_at = -1.0;
+    for a in 0..c.n {
+        let t = s.exp(c.t_author_min);
+        s.at(t, Ev::Author(a));
+    }
+    let end = hours * 60.0;
+    while let Some(ev) = s.sched.next() {
+        let t = ev.time.as_secs_f64() / 60.0;
+        if t > end {
+            break;
+        }
+        let from = s.last_t.max(s.warm);
+        if t > from {
+            s.l_area += s.open as f64 * (t - from);
+        }
+        s.last_t = t;
+        s.now = t;
+        if let Some(e) = Ev::unpack(&ev.event) {
+            s.step(e);
+        }
+    }
+    s.summary(end)
+}
+
+impl Sim {
+    fn summary(&mut self, end: f64) -> PrFlowResult {
+        let span = end - self.warm;
+        let n = self.sojourn.len() as f64;
+        self.sojourn.sort_by(f64::total_cmp);
+        let p90 = self
+            .sojourn
+            .get(((n * 0.9) as usize).min(self.sojourn.len().saturating_sub(1)));
+        PrFlowResult {
+            merged_per_h: n / span * 60.0,
+            w_mean_min: self.sojourn.iter().sum::<f64>() / n.max(1.0),
+            w_p90_min: p90.copied().unwrap_or(0.0),
+            l: self.l_area / span,
+            prs_per_pass: n / (self.passes as f64).max(1.0),
+            pr_util: self.pr.busy_min / (span * self.pr.size as f64),
+            mq_util: self.mq.busy_min / (span * self.mq.size as f64),
+            runs_per_pr: self.runs as f64 / (self.prs_seen as f64).max(1.0),
+        }
+    }
+}
+
+/// Named FLOW-005 designs. `rm` is runner-minutes per run; the fast tier (24) has a shorter
+/// wall. Setup minutes are the overheads the spec leaves open, calibrated to the reference.
+#[must_use]
+pub fn preset(name: &str) -> Option<PrFlowConfig> {
+    let (cap, r_pr, r_mq, builds, rm, p_red, fast) = match name {
+        "D" => (30, 38, 4, 1, 72.0, 0.2, false),
+        "A" => (10, 40, 4, 5, 89.2, 0.2, false),
+        "G" => (10, 12, 8, 2, 24.0, 0.1, true),
+        "E" => (30, 12, 4, 1, 24.0, 0.1, true),
+        _ => return None,
+    };
+    let setup = if fast { 9.0 } else { 7.7 };
+    Some(PrFlowConfig {
+        cap,
+        n: 11,
+        t_author_min: 30.0,
+        r_pr,
+        pr_runner_min: rm,
+        pr_jobs: 4,
+        pr_setup_min: if fast { 15.0 } else { setup },
+        p_red,
+        t_fix_min: 10.0,
+        t_arm_min: 2.0,
+        r_mq,
+        mq_runner_min: rm,
+        mq_jobs: 4,
+        mq_setup_min: setup,
+        builds,
+        mq_batch: 10,
+        mq_wait_min: 5.0,
+        f: 0.02,
+    })
+}
+
+/// The reference run: seeds 1..=5, 400 h, 20 h warm-up, averaged.
+#[must_use]
+pub fn run_reference(c: &PrFlowConfig) -> PrFlowResult {
+    let mut acc = PrFlowResult::default();
+    for seed in 1..=5 {
+        let r = run_pr_flow(c, seed, 400.0, 20.0);
+        acc.merged_per_h += r.merged_per_h / 5.0;
+        acc.w_mean_min += r.w_mean_min / 5.0;
+        acc.w_p90_min += r.w_p90_min / 5.0;
+        acc.l += r.l / 5.0;
+        acc.prs_per_pass += r.prs_per_pass / 5.0;
+        acc.pr_util += r.pr_util / 5.0;
+        acc.mq_util += r.mq_util / 5.0;
+        acc.runs_per_pr += r.runs_per_pr / 5.0;
+    }
+    acc
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const WANT: [(&str, f64); 4] = [("D", 20.08), ("A", 4.96), ("G", 12.55), ("E", 21.37)];
+
+    fn within(got: f64, want: f64, tol: f64) -> bool {
+        (got - want).abs() <= want * tol
+    }
+
+    #[test]
+    fn merges_per_hour_match_the_reference_within_5_percent() {
+        for (name, want) in WANT {
+            let r = run_reference(&preset(name).expect("preset"));
+            assert!(
+                within(r.merged_per_h, want, 0.05),
+                "{name}: {:.2} vs {want}",
+                r.merged_per_h
+            );
+        }
+    }
+
+    #[test]
+    fn littles_law_holds_within_half_a_percent() {
+        for (name, _) in WANT {
+            let r = run_reference(&preset(name).expect("preset"));
+            let lam_w = r.merged_per_h * r.w_mean_min / 60.0;
+            assert!(
+                within(lam_w, r.l, 0.005),
+                "{name}: lambda*W {lam_w:.3} vs L {:.3}",
+                r.l
+            );
+        }
+    }
+
+    #[test]
+    fn same_seed_same_output() {
+        let c = preset("D").expect("preset");
+        assert_eq!(
+            run_pr_flow(&c, 7, 100.0, 5.0),
+            run_pr_flow(&c, 7, 100.0, 5.0)
+        );
+    }
+
+    #[test]
+    fn a_reverted_design_shows_red() {
+        // D with a single merge-queue runner is not D: the 5% band must reject it.
+        let mut c = preset("D").expect("preset");
+        c.r_mq = 1;
+        let r = run_reference(&c);
+        assert!(
+            !within(r.merged_per_h, 20.08, 0.05),
+            "mutant passed at {:.2}",
+            r.merged_per_h
+        );
+    }
+
+    #[test]
+    fn unknown_preset_is_none() {
+        assert!(preset("Z").is_none());
+    }
+}
