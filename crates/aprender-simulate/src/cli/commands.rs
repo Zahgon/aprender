@@ -53,11 +53,13 @@ pub fn run_cli(cli: Cli) -> ExitCode {
             mq_min,
             p_red,
             pr_setup,
+            observed_24h: obs24,
+            src_runs: runs,
             sha,
         } => pr_flow(
             &design,
             json,
-            FlowOverrides {
+            &FlowOverrides {
                 r_pr,
                 r_mq,
                 cap,
@@ -68,6 +70,8 @@ pub fn run_cli(cli: Cli) -> ExitCode {
                 mq_min,
                 p_red,
                 pr_setup,
+                obs24,
+                runs,
             },
             &sha,
         ),
@@ -597,7 +601,7 @@ fn render_bouncing_balls(
 }
 
 /// Measured inputs that replace a design's defaults; each is labelled `measured` in the sim block.
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone)]
 struct FlowOverrides {
     r_pr: Option<usize>,
     r_mq: Option<usize>,
@@ -609,6 +613,8 @@ struct FlowOverrides {
     mq_min: Option<f64>,
     p_red: Option<f64>,
     pr_setup: Option<f64>,
+    obs24: Option<f64>,
+    runs: Option<String>,
 }
 
 impl FlowOverrides {
@@ -637,20 +643,22 @@ impl FlowOverrides {
             self.mq_min.map(|v| format!(" --mq-min {v}")),
             self.p_red.map(|v| format!(" --p-red {v}")),
             self.pr_setup.map(|v| format!(" --pr-setup {v}")),
+            self.obs24.map(|v| format!(" --observed-24h {v}")),
+            self.runs.as_ref().map(|v| format!(" --src-runs {v}")),
         ];
         parts.into_iter().flatten().collect()
     }
 }
 
 /// Print the reference run (5 seeds x 400 h, 20 h warm-up) of a named PR-flow design.
-fn pr_flow(design: &str, json: bool, ov: FlowOverrides, sha: &str) -> ExitCode {
+fn pr_flow(design: &str, json: bool, ov: &FlowOverrides, sha: &str) -> ExitCode {
     let Some(mut cfg) = crate::scenarios::preset(design) else {
         eprintln!("unknown design: {design}");
         return ExitCode::FAILURE;
     };
     ov.apply(&mut cfg);
     if json {
-        println!("{}", pr_flow_sim_block(design, &cfg, &ov, sha));
+        println!("{}", pr_flow_sim_block(design, &cfg, ov, sha));
         return ExitCode::SUCCESS;
     }
     let r = crate::scenarios::run_reference(&cfg);
@@ -706,12 +714,14 @@ fn pr_flow_sim_block(
         "inputs": {
             "design": design, "cap": cfg.cap, "n": cfg.n, "t_author_min": cfg.t_author_min,
             "r_pr": cfg.r_pr, "r_mq": cfg.r_mq, "builds": cfg.builds, "p_red": cfg.p_red,
-            "pr_runner_min": cfg.pr_runner_min, "f": cfg.f
+            "pr_runner_min": cfg.pr_runner_min, "mq_runner_min": cfg.mq_runner_min,
+            "pr_setup_min": cfg.pr_setup_min, "f": cfg.f
         },
         "inputs_source": {
             "t_author_min": "design_default", "n": src(ov.n.is_some()), "cap": src(ov.cap.is_some()),
-            "r_pr": src(ov.r_pr.is_some()), "r_mq": src(ov.r_mq.is_some()), "p_red": "design_default",
-            "pr_runner_min": "design_default", "f": src(ov.f.is_some()), "builds": src(ov.builds.is_some())
+            "r_pr": src(ov.r_pr.is_some()), "r_mq": src(ov.r_mq.is_some()), "p_red": src(ov.p_red.is_some()),
+            "pr_runner_min": src(ov.pr_min.is_some()), "mq_runner_min": src(ov.mq_min.is_some()),
+            "pr_setup_min": src(ov.pr_setup.is_some()), "f": src(ov.f.is_some()), "builds": src(ov.builds.is_some())
         },
         "predicted": {
             "merged_h": m, "ci95_h": ci95,
@@ -723,7 +733,8 @@ fn pr_flow_sim_block(
             "gap_h": base - m, "gap_pct": if base > 0.0 { (base - m) / base * 100.0 } else { 0.0 }
         },
         "sim3_contract": if contract { "pass" } else { "fail" },
-        "drift_pct_24h": null
+        "observed_24h": ov.obs24, "source_runs": ov.runs,
+        "drift_pct_24h": ov.obs24.map(|o| (m - o / 24.0) / (o / 24.0) * 100.0)
     })
     .to_string()
 }

@@ -133,6 +133,12 @@ pub enum Commands {
         /// Measured queue wait per PR run, minutes.
         #[arg(long)]
         pr_setup: Option<f64>,
+        /// Merged PRs in the last 24 h, from git (for drift_pct_24h).
+        #[arg(long)]
+        observed_24h: Option<f64>,
+        /// Comma-separated run ids the measured inputs came from.
+        #[arg(long)]
+        src_runs: Option<String>,
         /// Commit the sim block is stamped with.
         #[arg(long, default_value = "unknown")]
         sha: String,
