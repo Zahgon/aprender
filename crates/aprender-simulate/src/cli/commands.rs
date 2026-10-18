@@ -41,6 +41,7 @@ pub fn run_cli(cli: Cli) -> ExitCode {
             seed,
         } => render_svg(&domain, &format, &output, fps, duration, seed),
         Commands::PrFlow { design } => pr_flow(&design),
+        Commands::RepoFlow { case, inputs, json } => repo_flow(&case, inputs.as_deref(), json),
         Commands::Validate { experiment_path } => validate_experiment(&experiment_path),
         Commands::Verify {
             experiment_path,
@@ -584,5 +585,36 @@ fn pr_flow(design: &str) -> ExitCode {
         r.mq_util * 100.0,
         r.runs_per_pr
     );
+    ExitCode::SUCCESS
+}
+
+/// Print the reference run of a repo case, optionally with the ledger's inputs, as text or JSON.
+fn repo_flow(case: &str, inputs: Option<&Path>, json: bool) -> ExitCode {
+    let Some(mut cfg) = crate::scenarios::repo_preset(case) else {
+        eprintln!("unknown case: {case}");
+        return ExitCode::FAILURE;
+    };
+    if let Some(p) = inputs {
+        let applied = std::fs::read_to_string(p)
+            .map_err(|e| e.to_string())
+            .and_then(|s| serde_json::from_str(&s).map_err(|e| e.to_string()))
+            .and_then(|v| crate::scenarios::apply_inputs(&mut cfg, &v));
+        if let Err(e) = applied {
+            eprintln!("inputs: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
+    let r = crate::scenarios::run_repo_reference(&cfg);
+    if json {
+        println!("{}", crate::scenarios::sim_block(case, &cfg, &r));
+    } else {
+        println!(
+            "case {case}: merged/h {:.3}  W mean {:.1} min  L {:.2}  pool {:.0}%",
+            r.merged_per_h,
+            r.w_mean_min,
+            r.l,
+            r.pr_util * 100.0
+        );
+    }
     ExitCode::SUCCESS
 }

@@ -14,6 +14,7 @@ pub mod epidemic;
 pub mod pendulum;
 pub mod portfolio;
 pub mod pr_flow;
+pub mod repo_flow;
 pub mod rocket;
 pub mod satellite;
 
@@ -23,5 +24,6 @@ pub use epidemic::{SEIRConfig, SEIRScenario, SIRConfig, SIRScenario};
 pub use pendulum::{PendulumConfig, PendulumScenario};
 pub use portfolio::{PortfolioConfig, PortfolioScenario, VaRResult};
 pub use pr_flow::{preset, run_pr_flow, run_reference, PrFlowConfig, PrFlowResult};
+pub use repo_flow::{apply_inputs, repo_cases, repo_preset, run_repo_reference, sim_block};
 pub use rocket::{RocketConfig, RocketScenario, StageSeparation};
 pub use satellite::{OrbitalElements, SatelliteScenario};
