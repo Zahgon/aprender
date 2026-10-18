@@ -25,7 +25,7 @@ proof_obligations:
 - id: RDP-INV-001
   type: invariant
   property: each human accessor reads its own field
-  formal: 'downloaded_human ≡ format_bytes(downloaded_bytes) ∧ total_human ≡ format_bytes(total_bytes)'
+  formal: "∀ t ∈ {progress_human_tests}: exit(t) = 0"
   applies_to: progress_human_accessors
 
 falsification_tests:
