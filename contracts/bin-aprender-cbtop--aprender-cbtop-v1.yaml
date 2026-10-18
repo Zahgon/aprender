@@ -112,3 +112,9 @@ falsification_tests:
     test: 'scripts/check_surface_audit_bins.sh (aprender#4476)'
     if_fails: 'a shipped command has no audited row (observed 2026-09-27: 4 of 4 leaves ledgered, plus the root row `aprender-cbtop (interactive TUI; --headless)` added 2026-09-27, GREEN)'
     mutation: 'delete every aprender-cbtop row; must turn RED naming aprender-cbtop'
+  - id: FALSIFY-BIN-APRENDER-CBTOP-006
+    rule: 'analyze_bottlenecks bands efficiency at 25/50/75% and flags CV > 15% (#5548)'
+    prediction: 'efficiency 0.24 is critical, 0.25 severe, 0.50 moderate, 0.75 clean; CV 15.1 is unstable and 15.0 is not'
+    test: 'cargo test -p aprender-cbtop --lib optimize::bottleneck'
+    if_fails: 'a bottleneck lands in the wrong severity band or an unstable run goes unreported'
+    mutation: 'change a threshold (< 0.50 to <= 0.50) or CV > 15.0 to >= 15.0; must turn RED'
