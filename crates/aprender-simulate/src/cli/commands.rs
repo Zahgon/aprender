@@ -703,11 +703,13 @@ fn pr_flow_sim_block(
         .sum::<f64>()
         / (n - 1.0);
     let ci95 = 1.96 * (var / n).sqrt();
-    let binding = if mean(|r| r.pr_util) >= mean(|r| r.mq_util) {
-        "pr_checks"
-    } else {
-        "merge_queue"
+    let avg = crate::scenarios::PrFlowResult {
+        w_mean_min: mean(|r| r.w_mean_min),
+        runs_per_pr: mean(|r| r.runs_per_pr),
+        prs_per_pass: mean(|r| r.prs_per_pass),
+        ..Default::default()
     };
+    let binding = crate::scenarios::binding_station(cfg, &avg);
     let base = crate::scenarios::preset(design)
         .map_or(0.0, |c| crate::scenarios::run_reference(&c).merged_per_h);
     let contract = crate::scenarios::reference_contract_ok();

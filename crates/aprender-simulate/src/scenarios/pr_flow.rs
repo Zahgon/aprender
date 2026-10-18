@@ -410,6 +410,32 @@ pub fn preset(name: &str) -> Option<PrFlowConfig> {
     })
 }
 
+/// Throughput bounds (merged/h) of the four stations; the binding station is the smallest.
+///
+/// `cap` is cap/W (eq 2), `supply` is N authors at one PR per think time, `pr_checks` and
+/// `merge_queue` are pool capacity over the runner-minutes one merged PR consumes (eq 3, 5, 6).
+#[must_use]
+pub fn bounds(c: &PrFlowConfig, r: &PrFlowResult) -> [(&'static str, f64); 4] {
+    let w_h = (r.w_mean_min / 60.0).max(f64::EPSILON);
+    let pr_per_merge = c.pr_runner_min * r.runs_per_pr.max(1.0);
+    let mq_per_merge = c.mq_runner_min / r.prs_per_pass.max(1.0);
+    [
+        ("cap", c.cap as f64 / w_h),
+        ("supply", c.n * 60.0 / c.t_author_min),
+        ("pr_checks", c.r_pr as f64 * 60.0 / pr_per_merge),
+        ("merge_queue", c.r_mq as f64 * 60.0 / mq_per_merge),
+    ]
+}
+
+/// The binding station: argmin of [`bounds`]. No utilisation thresholds.
+#[must_use]
+pub fn binding_station(c: &PrFlowConfig, r: &PrFlowResult) -> &'static str {
+    bounds(c, r)
+        .into_iter()
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map_or("none", |b| b.0)
+}
+
 /// The reference run: seeds 1..=5, 400 h, 20 h warm-up, averaged.
 #[must_use]
 pub fn run_reference(c: &PrFlowConfig) -> PrFlowResult {
@@ -446,6 +472,49 @@ mod tests {
 
     fn within(got: f64, want: f64, tol: f64) -> bool {
         (got - want).abs() <= want * tol
+    }
+
+    fn roomy() -> PrFlowConfig {
+        let mut c = preset("D").expect("preset");
+        c.cap = 1000;
+        c.n = 1000.0;
+        c.r_pr = 10_000;
+        c.r_mq = 10_000;
+        c.builds = 100;
+        c
+    }
+
+    #[test]
+    fn binding_is_cap_when_l_hits_cap() {
+        let mut c = roomy();
+        c.n = 60.0;
+        c.cap = 2;
+        let r = run_reference(&c);
+        assert!(r.l > 0.7 * c.cap as f64, "L {}", r.l);
+        assert_eq!(binding_station(&c, &r), "cap");
+    }
+
+    #[test]
+    fn binding_is_supply_when_authors_are_starved() {
+        let mut c = roomy();
+        c.n = 1.0;
+        let r = run_reference(&c);
+        assert_eq!(binding_station(&c, &r), "supply");
+    }
+
+    #[test]
+    fn binding_is_a_pool_when_the_pool_is_small() {
+        let mut c = roomy();
+        c.n = 60.0;
+        c.r_pr = 4;
+        let r = run_reference(&c);
+        assert_eq!(binding_station(&c, &r), "pr_checks");
+        let mut c = roomy();
+        c.n = 60.0;
+        c.r_mq = 1;
+        c.builds = 1;
+        let r = run_reference(&c);
+        assert_eq!(binding_station(&c, &r), "merge_queue");
     }
 
     #[test]
