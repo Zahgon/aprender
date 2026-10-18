@@ -19,6 +19,8 @@ const SUBCOMMANDS: &[&str] = &[
     "run",
     "render",
     "pr-flow",
+    "repo-flow",
+    "course-flow",
     "validate",
     "verify",
     "emc-check",

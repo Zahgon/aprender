@@ -49,6 +49,10 @@ pub struct PrFlowConfig {
     pub mq_batch: usize,
     pub mq_wait_min: f64,
     pub f: f64,
+    /// Chance an armed PR is found conflicting (main moved); 0 keeps the FLOW-005 designs.
+    pub p_dirty: f64,
+    /// Minutes until a conflicting PR is rebased and rerun (FLOW-006 keep-fresh rule).
+    pub t_rebase_min: f64,
 }
 
 impl PrFlowConfig {
@@ -98,6 +102,7 @@ enum Ev {
     Fixed(usize),
     Armed(usize),
     Reviewed(usize),
+    Rebased(usize),
     MqJob(usize),
     MqPass(usize),
     MqTimer,
@@ -112,6 +117,7 @@ impl Ev {
             Self::Fixed(i) => ("fixed", i),
             Self::Armed(i) => ("armed", i),
             Self::Reviewed(i) => ("reviewed", i),
+            Self::Rebased(i) => ("rebased", i),
             Self::MqJob(i) => ("mq_job", i),
             Self::MqPass(i) => ("mq_pass", i),
             Self::MqTimer => ("mq_timer", 0),
@@ -134,6 +140,7 @@ impl Ev {
             "fixed" => Self::Fixed(id),
             "armed" => Self::Armed(id),
             "reviewed" => Self::Reviewed(id),
+            "rebased" => Self::Rebased(id),
             "mq_job" => Self::MqJob(id),
             "mq_pass" => Self::MqPass(id),
             "mq_timer" => Self::MqTimer,
@@ -412,7 +419,11 @@ impl Sim {
             }
             Ev::PrRun(pr) => self.run_done(pr),
             Ev::Reviewed(pr) => self.reviewed(pr),
-            Ev::Fixed(pr) => self.start_run(pr),
+            Ev::Fixed(pr) | Ev::Rebased(pr) => self.start_run(pr),
+            Ev::Armed(pr) if self.c.p_dirty > 0.0 && self.rng.gen_f64() < self.c.p_dirty => {
+                self.at(self.c.t_rebase_min, Ev::Rebased(pr));
+            }
+            Ev::Armed(pr) if self.c.builds == 0 => self.merge(pr),
             Ev::Armed(pr) => {
                 self.enq_at[pr] = self.now;
                 self.queue.push_back(pr);
@@ -564,6 +575,8 @@ pub fn preset(name: &str) -> Option<PrFlowConfig> {
         mq_batch: 10,
         mq_wait_min: 5.0,
         f: 0.02,
+        p_dirty: 0.0,
+        t_rebase_min: 0.0,
     })
 }
 
