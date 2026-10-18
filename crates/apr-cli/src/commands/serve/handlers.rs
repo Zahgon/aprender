@@ -1514,9 +1514,11 @@ fn start_apr_server(model_path: &Path, config: &ServerConfig) -> Result<()> {
         .map_err(|e| CliError::InferenceFailed(format!("Failed to create runtime: {e}")))?;
 
     let bind_addr = config.bind_addr();
+    let gate = super::auth::AuthGate::try_from_env()
+        .map_err(|reason| CliError::InferenceFailed(format!("{reason}; refusing to start")))?;
 
     runtime.block_on(async move {
-        let app = build_apr_cpu_router(state, super::auth::AuthGate::from_env());
+        let app = build_apr_cpu_router(state, gate);
 
         let listener = tokio::net::TcpListener::bind(&bind_addr)
             .await
