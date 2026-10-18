@@ -290,6 +290,10 @@ pub enum ExtendedCommands {
         /// Skip Ollama parity comparison
         #[arg(long)]
         skip_ollama: bool,
+        /// Ollama parity runs ollama on THIS GGUF (imported for the run, then
+        /// removed) instead of the size-matched qwen2.5-coder tag (#5254)
+        #[arg(long)]
+        ollama_from_file: bool,
         /// Skip GPU vs CPU speedup test (F-PERF-042)
         #[arg(long)]
         skip_gpu_speedup: bool,
@@ -396,7 +400,8 @@ pub enum ExtendedCommands {
         not(feature = "trueno-explain"),
         command(
             name = "ptx",
-            about = "PTX analysis and bug detection [unavailable in this build: cargo install aprender --features ptx; `apr ptx-debug` is always built]"
+            about = "PTX analysis and bug detection [unavailable in this build: cargo install aprender --features ptx; `apr ptx-debug` is always built]",
+            long_about = "PTX analysis and bug detection [unavailable in this build: cargo install aprender --features ptx; `apr ptx-debug` is always built]"
         )
     )]
     Ptx {

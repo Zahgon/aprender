@@ -118,6 +118,13 @@ decide() {
     "K1-K5 hold; x86-main+determinism: $([ "$x" = 1 ] && echo reuse || echo "run ($why)"); mac-check: $([ "$mc" = 1 ] && echo reuse || echo "run ($(concl "$jobs" mac-check))")"
 }
 
+# The queue-entry override, FORCED: drop whatever decide said for these keys (or omitted) and write
+# the values explicitly, so a decide that leaves a key out cannot fail open (r6).
+force_no_reuse() {
+  { grep -v -E '^(x86|det|mac|cite|pr_head)=' || true; }
+  printf 'x86=0\ndet=0\nmac=0\ncite=\npr_head=\n'
+}
+
 resolve() {
   local ev="" ref="" m="" b="" repo="" root="."
   while [ $# -gt 0 ]; do
@@ -149,9 +156,15 @@ resolve() {
   if [ -z "$rid" ] || ! gh api "repos/$repo/actions/runs/$rid/jobs?filter=latest&per_page=100" > "$w/jobs.json" 2> /dev/null; then
     refuse "lookup failed: the jobs of run '${rid:-none}'"; rm -rf "${w:?}"; return 0
   fi
-  decide --event "$ev" --queue-head "$m" --base "$b" --pr-head "$h" \
-    --runs "$w/runs.json" --jobs "$w/jobs.json" --repo-root "$root"
+  # 20X sign-off r2: the PR head ran the QUICK pool, so a queue entry never skips x86-main or
+  # determinism on its green and cites nothing: x86=0 det=0 cite= pr_head= whatever decide said.
+  # mac-check is not reused either (mac=0): the queue entry runs it itself. This is the ONE place the override lives (this sed over decide, then pinned by the resolve rows in --self-test).
+  local rc=0 res
+  res=$(decide --event "$ev" --queue-head "$m" --base "$b" --pr-head "$h" \
+    --runs "$w/runs.json" --jobs "$w/jobs.json" --repo-root "$root") || rc=$?
   rm -rf "${w:?}"
+  [ "$rc" -eq 0 ] || return "$rc"
+  force_no_reuse <<< "$res"
 }
 
 # ---------------------------------------------------------------- the push arm
@@ -395,8 +408,38 @@ STUB
       fail=$((fail + 1)); echo "FAIL resolve-$n: want '$want' got '$got' -- $(kv reason "$out")"; fi
   }
   local QREF="refs/heads/gh-readonly-queue/main/pr-4655-${B}"
-  rrow positive          "1 1 1" ""        "$H" "$QREF"
-  rrow short-ref         "1 1 1" ""        "$H" "gh-readonly-queue/main/pr-4655-${B}"
+  rrow positive          "0 0 0" ""        "$H" "$QREF"
+  rrow short-ref         "0 0 0" ""        "$H" "gh-readonly-queue/main/pr-4655-${B}"
+  # r4: "0 0 0" is also what a refusal answers, so the positive rows must prove resolve REACHED decide:
+  # decide's own reason (K1-K5 hold ...) is present and no refusal text ("lookup failed", "refus") is.
+  for ref in "$QREF" "gh-readonly-queue/main/pr-4655-${B}"; do
+    out=$(PATH="$SB:$PATH" GH_STUB_DIR="$F" GH_STUB_FAIL="" GH_STUB_HEAD="$H" resolve --event merge_group --ref "$ref" --queue-head "$M" --base "$B" --repo o/r --repo-root "$R")
+    case "$(kv reason "$out")" in
+      "K1-K5 hold"*) pass=$((pass + 1)) ;;
+      *) fail=$((fail + 1)); echo "FAIL resolve-reached-decide: '$ref' answered 0 0 0 without decide's reason: $(kv reason "$out")" ;;
+    esac
+  done
+  # r7 (a): the override FORCES the five keys, so a decide that omits one cannot fail open.
+  local fo
+  fo=$(force_no_reuse <<< $'reason=kept\nx86=1\ndet=1')
+  if [ "$(kv x86 "$fo")$(kv det "$fo")$(kv mac "$fo")" = "000" ] && [ "$(kv reason "$fo")" = kept ] \
+    && [ "$(grep -c -E '^(x86|det|mac|cite|pr_head)=' <<< "$fo")" = 5 ]; then pass=$((pass + 1)); else
+    fail=$((fail + 1)); echo "FAIL force-no-reuse: omitted/over-asserted keys not forced: $fo"; fi
+  # r7 (b): the "K1-K5 hold" prefix the reached-decide rows key on is emitted by decide() itself.
+  local dbody
+  dbody=$(sed -n '/^decide() {/,/^}/p' "${BASH_SOURCE[0]}")
+  case "$dbody" in
+    *'"K1-K5 hold; '*) pass=$((pass + 1)) ;;
+    *) fail=$((fail + 1)); echo "FAIL decide-source: decide() no longer emits the K1-K5 hold prefix" ;;
+  esac
+  # r5: K1-K5 hold is emitted only by decide (above); a refused lookup must NOT carry it.
+  out=$(PATH="$SB:$PATH" GH_STUB_DIR="$F" GH_STUB_FAIL="pulls" GH_STUB_HEAD="$H" resolve --event merge_group --ref "$QREF" --queue-head "$M" --base "$B" --repo o/r --repo-root "$R")
+  case "$(kv reason "$out")" in
+    "K1-K5 hold"*) fail=$((fail + 1)); echo "FAIL refusal carries decide's K1-K5 reason: $(kv reason "$out")" ;;
+    *) pass=$((pass + 1)) ;;
+  esac
+  out=$(PATH="$SB:$PATH" GH_STUB_DIR="$F" GH_STUB_FAIL="" GH_STUB_HEAD="$H" resolve --event merge_group --ref "$QREF" --queue-head "$M" --base "$B" --repo o/r --repo-root "$R")
+  if [ -z "$(kv cite "$out")" ] && [ -z "$(kv pr_head "$out")" ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL resolve-no-cite: a queue entry cites no PR head (cite=$(kv cite "$out") pr_head=$(kv pr_head "$out"))"; fi
   rrow no-pr-number      "0 0 0" ""        "$H" "refs/heads/main"
   rrow gh-pulls-fails    "0 0 0" "pulls/"  "$H" "$QREF"
   rrow gh-runs-fails     "0 0 0" "head_sha=" "$H" "$QREF"
@@ -422,8 +465,9 @@ STUB
       red) [ "${got##*:}" != 0 ] ;;
     esac && pass=$((pass + 1)) || { fail=$((fail + 1)); echo "FAIL verdict-$n: want $want got '$got'"; }
   }
-  vrow reuse-ok             1   merge_group success 1 1 success
+  vrow red-mg-reuse-never   red merge_group success 1 1 success
   vrow live-pull_request    0   pull_request skipped "" "" skipped
+  vrow live-mg-skipped      0   merge_group skipped "" "" skipped
   vrow live-mg-said-run     0   merge_group success 0 0 skipped
   vrow live-mg-job-failed   0   merge_group failure "" "" skipped
   vrow red-advisories-fail  red merge_group success 1 1 failure
@@ -434,6 +478,8 @@ STUB
   vrow red-mg-failed-flag1  red merge_group failure 1 1 success
   vrow red-advisories-ran-live red merge_group success 0 0 success
   vrow reuse-push-ok        1   push success 1 1 success
+  vrow red-push-det-not-1   red push success 1 0 success
+  vrow red-push-x86-not-1   red push success 0 1 success
   vrow live-push-said-run   0   push success 0 0 skipped
   vrow live-push-mg-failed  0   push failure "" "" skipped
   vrow live-push-pre-t43    0   push skipped "" "" skipped
@@ -452,7 +498,7 @@ STUB
     if grep -qF -- "$2" <<<"$t"; then pass=$((pass + 1)); else
       fail=$((fail + 1)); echo "FAIL wiring: job '$1' lacks: $2"; fi
   }
-  wire mg-reuse "if: github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')"
+  wire mg-reuse "if: github.event_name == 'push' && github.ref == 'refs/heads/main'"
   wire mg-reuse 'bash scripts/ci_mg_reuse.sh --self-test'
   wire mg-reuse 'bash scripts/ci_mg_reuse.sh resolve --event "$EVT" --ref "$QREF"'
   wire mg-reuse 'bash scripts/ci_mg_reuse.sh resolve-push --event "$EVT" --ref "$GITHUB_REF" --sha "$GITHUB_SHA" --before "$PBEFORE"'
@@ -461,7 +507,7 @@ STUB
   wire x86-main 'needs: [mg-reuse]'
   wire x86-main "if: \${{ !cancelled() && needs.mg-reuse.outputs.x86 != '1' }}"
   wire determinism 'needs: [mg-reuse, x86-main]'  # T42: determinism also waits on x86-main
-  wire determinism "if: \${{ !cancelled() && needs.mg-reuse.outputs.det != '1' }}"
+  wire determinism "if: \${{ !cancelled() && needs.mg-reuse.outputs.det != '1' && github.event_name != 'pull_request' }}"
   # Q6 quorum, C324: mac-check is LAB and left ci.yml (nightly.yml now). The `mac` key is
   # still computed above; ci.yml must neither run the job nor export the key.
   if [ -z "$(job mac-check)" ]; then pass=$((pass + 1)); else
@@ -476,6 +522,81 @@ STUB
   wire gate 'MG-REUSE-VERDICT-BEGIN'
   wire gate 'mg-reuse, x86-main-advisories, mg-reuse-self-test]'
   wire gate '[ "$MST" = success ]'
+  # #5472 variant: the pr-only label is retired; pull_request and push take the one shared clean-room
+  # pool. The merge_group half (this row): x86-main and workspace-test-shard take the mq lane on a
+  # merge_group entry and clean-room on every other event, and nothing else is event-conditional.
+  # Each row is compared as the EXACT line (trailing comment stripped), so a third state cannot slip in.
+  poolrows() { # poolrows WF -> one line per violated pool row
+    local j l want
+    local plain="runs-on: [self-hosted, Linux, X64, clean-room]"
+    local lane="runs-on: \${{ github.event_name == 'merge_group' && fromJSON('[\"self-hosted\",\"Linux\",\"X64\",\"mq\"]') || fromJSON('[\"self-hosted\",\"Linux\",\"X64\",\"clean-room\"]') }}"
+    for j in x86-main x86-main-advisories workspace-test-shard; do
+      l=$(awk -v j="  $j:" '$0 == j {f = 1; next} f && /^  [A-Za-z0-9_-]+:$/ {exit} f' "$1" 2> /dev/null | grep -m1 '^    runs-on:' | sed -E 's/^ +//; s/ +#.*$//')
+      want=$plain; case $j in x86-main | workspace-test-shard) want=$lane ;; esac
+      if [ "$l" != "$want" ]; then
+        echo "$j does not land on the clean-room pool (mq on merge_group for x86-main/workspace-test-shard) (runs-on: $l)"; fi
+    done
+  }
+  pr=$(poolrows "$wf")
+  if [ -z "$pr" ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL wiring: $pr"; fi
+  poolmut() { # poolmut NAME EXPECTED_VIOLATION SED_EXPR: the mutant must change ci.yml and poolrows must name the violation
+    sed -E "$3" "$wf" > "$T/pool-mut.yml"
+    if [ ! -s "$T/pool-mut.yml" ] || cmp -s "$wf" "$T/pool-mut.yml"; then
+      fail=$((fail + 1)); echo "FAIL mutant $1: the sed did not change ci.yml (a mutant that cannot fail)"; return; fi
+    if grep -qF -- "$2" <<< "$(poolrows "$T/pool-mut.yml")"; then pass=$((pass + 1)); else
+      fail=$((fail + 1)); echo "FAIL mutant $1: poolrows did not report '$2'"; fi
+  }
+  poolmut pool-loses-clean-room "does not land on the clean-room pool" '/^  x86-main:$/,/^    steps:/{s/clean-room/build/}'
+  poolmut pool-back-on-pr-only "does not land on the clean-room pool" '/^  x86-main-advisories:$/,/^    steps:/{s/^(    runs-on: \[.*)\]/\1, pr-only]/}'
+  poolmut pool-advisories-takes-mq "does not land on the clean-room pool" '/^  x86-main-advisories:$/,/^    steps:/{s/^(    runs-on: \[.*)\]/\1, mq]/}'
+  poolmut pool-advisories-event-conditional "does not land on the clean-room pool" '/^  x86-main-advisories:$/,/^    steps:/{s/^    runs-on: .*/    runs-on: ${{ github.event_name == '"'"'merge_group'"'"' \&\& fromJSON('"'"'["clean-room"]'"'"') || fromJSON('"'"'["clean-room"]'"'"') }}/}'
+  poolmut mq-lane-lost-on-x86-main "does not land on the clean-room pool" '/^  x86-main:$/,/^    steps:/{s/"mq"/"clean-room"/}'
+  poolmut mq-lane-dropped-on-shard "does not land on the clean-room pool" '/^  workspace-test-shard:$/,/^    steps:/{s/^    runs-on: .*/    runs-on: [self-hosted, Linux, X64, clean-room]/}'
+  poolmut pr-path-takes-mq "does not land on the clean-room pool" '/^  workspace-test-shard:$/,/^    steps:/{s/\|\| fromJSON\(.\["self-hosted","Linux","X64","clean-room"\].\)/|| fromJSON('"'"'["self-hosted","Linux","X64","mq"]'"'"')/}'
+  poolmut mq-lane-third-label "does not land on the clean-room pool" '/^  x86-main:$/,/^    steps:/{s/"X64","mq"/"X64","mq","pr-only"/}'
+
+  # S1 (20X): mg-reuse runs on push only, so on merge_group it is SKIPPED and every dependent
+  # runs only because its own `if:` carries !cancelled()/always() (a skipped need otherwise skips
+  # the job). Scoped to the job: the `if:` is mg-reuse's own 4-space key, never a string found
+  # anywhere in the file; a merge_group in it would let a queue entry reuse. Each check has a
+  # mutant that must go RED (the same-string-in-another-job mutant is the unanchored-grep hole).
+  mgshape() { # mgshape FILE -> one line per violation
+    awk -v tok='(^|[^A-Za-z0-9_-])mg-reuse($|[^A-Za-z0-9_-])' -v want="if: github.event_name == 'push' && github.ref == 'refs/heads/main'" '
+      /^  [A-Za-z0-9_-]+:$/ { j = $1; sub(/:$/, "", j); seen[j] = 1; next }
+      /^    if:/    { jif[j] = $0; sub(/^    /, "", jif[j]) }
+      /^    needs:/ { inn = 1; if ($0 ~ tok) dep[j] = 1; next }
+      inn && /^      / { if ($0 ~ tok) dep[j] = 1; next }
+      /^    [A-Za-z]/ { inn = 0 }
+      END {
+        if (jif["mg-reuse"] != want) print "mg-reuse job-level if is not the push-only key: [" jif["mg-reuse"] "]"
+        if (jif["mg-reuse"] ~ /merge_group/) print "mg-reuse if names merge_group: a queue entry could reuse"
+        n = split("x86-main determinism x86-main-advisories ci-gate gate", must, " ")
+        for (i = 1; i <= n; i++) {
+          if (!(must[i] in seen)) print "job " must[i] " is missing from the workflow"
+          else if (!(must[i] in dep)) print "job " must[i] " no longer needs mg-reuse (its position in the chain is unproven)"
+        }
+        for (k in dep) if (jif[k] !~ /!cancelled\(\)|always\(\)/) print "job " k " needs mg-reuse but its if lacks !cancelled()/always(): skipped with it on merge_group"
+      }' "$1" || echo "mgshape: awk failed on $1 (fail closed)"
+  }
+  local ms; ms=$(mgshape "$wf"); [ -s "$wf" ] || ms="${ms:+$ms; }mgshape: $wf is missing or empty"
+  if [ -z "$ms" ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL wiring: $ms"; fi
+  mgmut() { # mgmut NAME EXPECTED_VIOLATION SED_EXPR: the mutant must differ from ci.yml and mgshape must name the violation
+    sed -E "$3" "$wf" > "$T/mut.yml"
+    if [ ! -s "$T/mut.yml" ] || cmp -s "$wf" "$T/mut.yml"; then
+      fail=$((fail + 1)); echo "FAIL mutant $1: the sed did not change ci.yml (a mutant that cannot fail)"; return
+    fi
+    if mgshape "$T/mut.yml" | grep -qF -- "$2"; then pass=$((pass + 1)); else
+      fail=$((fail + 1)); echo "FAIL mutant $1: mgshape did not report '$2'"; fi
+  }
+  if [ -n "$(mgshape /nonexistent/ci.yml 2>/dev/null)" ]; then pass=$((pass + 1)); else
+    fail=$((fail + 1)); echo "FAIL mutant mgshape-unreadable: an unreadable workflow passed green (fails open)"; fi
+  mgmut mg-if-old-merge_group "mg-reuse if names merge_group" "s/^    if: github.event_name == 'push' && github.ref == 'refs\/heads\/main'/    if: github.event_name == 'merge_group' || (github.event_name == 'push' \&\& github.ref == 'refs\/heads\/main')/"
+  mgmut mg-if-removed-string-elsewhere "is not the push-only key" "/^    if: github.event_name == 'push' && github.ref == 'refs\/heads\/main'/{s/.*/    # if: github.event_name == 'push' \&\& github.ref == 'refs\/heads\/main'/}"
+  mgmut x86-main-if-loses-cancelled "job x86-main needs mg-reuse but its if lacks" "s/^    if: \\$\{\{ !cancelled\(\) && needs.mg-reuse.outputs.x86 != '1' \}\}/    if: \${{ needs.mg-reuse.outputs.x86 != '1' }}/"
+  mgmut determinism-if-loses-cancelled "job determinism needs mg-reuse but its if lacks" '/^  determinism:$/,/^    runs-on:/{s/^    if: \$\{\{ !cancelled\(\) && /    if: ${{ /}'
+  mgmut x86-main-needs-lookalike "job x86-main no longer needs mg-reuse" '/^  x86-main:$/,/^    if:/{s/^    needs: \[mg-reuse\]$/    needs: [mg-reuse-self-test]/}'
+  mgmut x86-main-drops-needs "job x86-main no longer needs mg-reuse" '/^  x86-main:$/,/^    if:/{/^    needs: \[mg-reuse\]$/d}'
+  mgmut gate-if-loses-always "job gate needs mg-reuse but its if lacks" "/^  gate:\$/,/^    steps:/{s/^    if: always\(\)/    if: success()/}"
 
   # Positive control for wire itself: one job of more than 64 KiB (a pipe buffer) whose
   # wanted line comes first. A pipe from job into grep -q takes SIGPIPE on this every
