@@ -918,3 +918,90 @@ fn test_gh013_boolean_supported() {
     assert_eq!(flag_col.unique_count, 2);
     assert!(!flag_col.is_constant());
 }
+
+// ========== TextColumnStats::from_dataset tests (#5550) ==========
+
+fn text_stats_of(values: Vec<Option<&str>>, prefix: Option<&str>) -> TextColumnStats {
+    let ids = vec![Some(0); values.len()];
+    TextColumnStats::from_dataset(&make_dataset(values, ids), "name", prefix).expect("stats")
+}
+
+#[test]
+fn test_text_stats_lengths_percentiles_and_counts() {
+    // byte lengths: 1, 3, 0, 2, 6 -> sorted 0, 1, 2, 3, 6
+    let stats = text_stats_of(
+        vec![Some("a"), Some("bbb"), Some(""), Some("  "), Some("#!/bin")],
+        Some("#!/"),
+    );
+    assert_eq!(stats.total, 5);
+    assert_eq!(stats.min_len, 0);
+    assert_eq!(stats.max_len, 6);
+    assert!(
+        (stats.mean_len - 2.4).abs() < 1e-9,
+        "mean {}",
+        stats.mean_len
+    );
+    assert_eq!(stats.p50_len, 2);
+    assert_eq!(stats.p95_len, 6);
+    assert_eq!(stats.p99_len, 6);
+    // "" and "  " are empty after trim
+    assert_eq!(stats.empty_count, 2);
+    assert_eq!(stats.preamble_count, 1);
+}
+
+#[test]
+fn test_text_stats_without_prefix_counts_no_preamble() {
+    let stats = text_stats_of(vec![Some("#!/bin/sh"), Some("x")], None);
+    assert_eq!(stats.preamble_count, 0);
+    assert_eq!(stats.total, 2);
+}
+
+#[test]
+fn test_text_stats_skips_nulls() {
+    let stats = text_stats_of(vec![None, Some("ab"), None, Some("abcd")], None);
+    assert_eq!(stats.total, 2, "nulls are not valid strings");
+    assert_eq!(stats.min_len, 2);
+    assert_eq!(stats.max_len, 4);
+    assert!((stats.mean_len - 3.0).abs() < 1e-9);
+}
+
+#[test]
+fn test_text_stats_all_null_is_all_zero() {
+    let stats = text_stats_of(vec![None, None], Some("#"));
+    assert_eq!(stats.total, 0);
+    assert_eq!(stats.max_len, 0);
+    assert_eq!(stats.p99_len, 0);
+    assert_eq!(stats.empty_count, 0);
+    assert_eq!(stats.preamble_count, 0);
+    assert!(stats.mean_len.abs() < f64::EPSILON);
+}
+
+#[test]
+fn test_text_stats_p95_p99_pick_the_tail_of_a_long_column() {
+    // 100 strings of length 1..=100: p95 index 95 -> len 96, p99 index 99 -> len 100
+    let owned: Vec<String> = (1..=100).map(|n| "x".repeat(n)).collect();
+    let stats = text_stats_of(owned.iter().map(|s| Some(s.as_str())).collect(), None);
+    assert_eq!(stats.total, 100);
+    assert_eq!(stats.p50_len, 51);
+    assert_eq!(stats.p95_len, 96);
+    assert_eq!(stats.p99_len, 100);
+}
+
+#[test]
+fn test_text_stats_missing_column_is_an_error_naming_it() {
+    let ds = make_dataset(vec![Some("a")], vec![Some(1)]);
+    let err = TextColumnStats::from_dataset(&ds, "nope", None).expect_err("missing column");
+    let msg = err.to_string();
+    assert!(msg.contains("nope") && msg.contains("not found"), "{msg}");
+}
+
+#[test]
+fn test_text_stats_non_string_column_is_an_error() {
+    let ds = make_dataset(vec![Some("a")], vec![Some(1)]);
+    let err = TextColumnStats::from_dataset(&ds, "value", None).expect_err("int column");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("value") && msg.contains("not a string"),
+        "{msg}"
+    );
+}
