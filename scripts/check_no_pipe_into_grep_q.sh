@@ -159,6 +159,17 @@ self_test() {
     bad "M1  the mutant flagged $m of 3; the q requirement is not what makes H9/H10/H11 pass"
   fi
 
+  echo "=== the ratchet verdict: one site more AND one site fewer are both red ==="
+  local rc
+  verdict 40 40 >/dev/null; rc=$?
+  if [ "$rc" -eq 0 ]; then ok 'R1  measured == baseline passes'; else bad "R1  measured == baseline gave rc $rc"; fi
+  verdict 41 40 >/dev/null; rc=$?
+  if [ "$rc" -eq 1 ]; then ok 'R2  one NEW site over the baseline is red'; else bad "R2  +1 site gave rc $rc, wanted 1"; fi
+  verdict 40 42 >/dev/null; rc=$?
+  if [ "$rc" -eq 3 ]; then ok 'R3  a stale (too-high) baseline is red, not slack (#5488)'; else bad "R3  baseline 42 vs measured 40 gave rc $rc, wanted 3"; fi
+  verdict 39 40 >/dev/null; rc=$?
+  if [ "$rc" -ne 0 ]; then ok 'R4  one site FEWER than the baseline is red until restamped'; else bad 'R4  -1 site passed'; fi
+
   printf '\n%s checks, %s failed\n' "$CHECKS" "$FAILED"
   [ "$FAILED" -eq 0 ]
 }
@@ -187,21 +198,35 @@ main() {
 
   echo "=== pipe-into-grep-q sites under pipefail (measured, not remembered) ==="
   echo "  baseline $base   measured $count"
+  verdict "$count" "$base"; local rc=$?
+  [ "$rc" -eq 1 ] && cat "$findings"
+  rm -f "$findings"; return "$rc"
+}
+
+# The ratchet's decision, pure so the case table can put numbers to it.
+# measured > baseline: a new site. measured < baseline: slack, which would let
+# that many NEW sites in unseen (aprender#5488: baseline 42, measured 40, so a
+# reverted fix measured 41 and passed) -- so it is RED until the baseline is
+# lowered to the measured count. Only measured == baseline passes.
+verdict() {
+  local count=$1 base=$2
   if [ "$count" -gt "$base" ]; then
     echo
     echo "FAIL: $count sites, ceiling $base. A pipe into 'grep -q' under pipefail"
     echo "      reports the PRODUCER's SIGPIPE, not grep's verdict. Use a here-string"
     echo "      (grep -q P <<<\"\$var\"), a file, or a temp file. Do not raise the ceiling."
     echo
-    cat "$findings"; rm -f "$findings"; return 1
+    return 1
   fi
   if [ "$count" -lt "$base" ]; then
-    echo "  PASS -- and $((base - count)) fewer than the ceiling. Lower it:"
+    echo
+    echo "FAIL: stale baseline: $count sites measured, ceiling $base. The $((base - count))"
+    echo "      sites of slack would admit that many NEW pipes unseen. Ratchet down:"
     echo "          bash $SELF --update"
-  else
-    echo "  PASS -- at the ceiling, which is not over it."
+    return 3
   fi
-  rm -f "$findings"; return 0
+  echo "  PASS -- at the ceiling, which is not over it."
+  return 0
 }
 
 usage() {
