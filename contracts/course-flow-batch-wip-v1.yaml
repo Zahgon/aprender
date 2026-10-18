@@ -28,19 +28,19 @@ equations:
     formula: "0 < mean_batch_wait_h < 24"
 
 falsification_tests:
-  - id: FALSIFY-COURSE_FLOW_BATCH_WIP_V1_001
+  - id: FALSIFY-001
     description: "Little's law holds within 0.5% with the batch wait inside WIP"
     test: "cargo test -p aprender-simulate --lib littles_law_holds_with_batch_wait_inside_wip"
     prediction: "the test passes"
     if_fails: "the batch gate is not counted inside WIP as the contract states"
 
-  - id: FALSIFY-COURSE_FLOW_BATCH_WIP_V1_002
+  - id: FALSIFY-002
     description: "mean_batch_wait_h is reported and lies inside one day"
     test: "cargo test -p aprender-simulate --lib mean_batch_wait_is_reported_and_inside_a_day"
     prediction: "the test passes"
     if_fails: "the batch gate is not counted inside WIP as the contract states"
 
-  - id: FALSIFY-COURSE_FLOW_BATCH_WIP_V1_003
+  - id: FALSIFY-003
     description: "counting the batch inside WIP changes the result (not a no-op)"
     test: "cargo test -p aprender-simulate --lib batch_in_wip_is_not_a_no_op"
     prediction: "the test passes"
