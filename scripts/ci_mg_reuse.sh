@@ -529,10 +529,13 @@ STUB
   poolrows() { # poolrows WF -> one line per violated pool row
     local j l want
     local plain="runs-on: [self-hosted, Linux, X64, clean-room]"
-    local lane="runs-on: \${{ github.event_name == 'merge_group' && fromJSON('[\"self-hosted\",\"Linux\",\"X64\",\"mq\"]') || fromJSON('[\"self-hosted\",\"Linux\",\"X64\",\"clean-room\"]') }}"
+    local body="github.event_name == 'merge_group' && fromJSON('[\"self-hosted\",\"Linux\",\"X64\",\"mq\"]') || fromJSON('[\"self-hosted\",\"Linux\",\"X64\",\"clean-room\"]')"
+    local lane="runs-on: \${{ $body }}"
+    # #5437: shard 3 alone is pinned to the gx10 ARM64 clean-room pool by a leading matrix arm; shards 1 and 2 take the lane above
+    local shard="runs-on: \${{ matrix.shard == 3 && fromJSON('[\"self-hosted\",\"Linux\",\"ARM64\",\"gx10\",\"clean-room\"]') || ($body) }}"
     for j in x86-main x86-main-advisories workspace-test-shard; do
       l=$(awk -v j="  $j:" '$0 == j {f = 1; next} f && /^  [A-Za-z0-9_-]+:$/ {exit} f' "$1" 2> /dev/null | grep -m1 '^    runs-on:' | sed -E 's/^ +//; s/ +#.*$//')
-      want=$plain; case $j in x86-main | workspace-test-shard) want=$lane ;; esac
+      want=$plain; case $j in x86-main) want=$lane ;; workspace-test-shard) want=$shard ;; esac
       if [ "$l" != "$want" ]; then
         echo "$j does not land on the clean-room pool (mq on merge_group for x86-main/workspace-test-shard) (runs-on: $l)"; fi
     done
@@ -554,6 +557,8 @@ STUB
   poolmut mq-lane-dropped-on-shard "does not land on the clean-room pool" '/^  workspace-test-shard:$/,/^    steps:/{s/^    runs-on: .*/    runs-on: [self-hosted, Linux, X64, clean-room]/}'
   poolmut pr-path-takes-mq "does not land on the clean-room pool" '/^  workspace-test-shard:$/,/^    steps:/{s/\|\| fromJSON\(.\["self-hosted","Linux","X64","clean-room"\].\)/|| fromJSON('"'"'["self-hosted","Linux","X64","mq"]'"'"')/}'
   poolmut mq-lane-third-label "does not land on the clean-room pool" '/^  x86-main:$/,/^    steps:/{s/"X64","mq"/"X64","mq","pr-only"/}'
+  poolmut shard3-loses-arm-pin "does not land on the clean-room pool" '/^  workspace-test-shard:$/,/^    steps:/{s/"ARM64","gx10",//}'
+  poolmut shard3-pin-third-label "does not land on the clean-room pool" '/^  workspace-test-shard:$/,/^    steps:/{s/"ARM64","gx10"/"ARM64","gx10","pr-only"/}'
 
   # S1 (20X): mg-reuse runs on push only, so on merge_group it is SKIPPED and every dependent
   # runs only because its own `if:` carries !cancelled()/always() (a skipped need otherwise skips
