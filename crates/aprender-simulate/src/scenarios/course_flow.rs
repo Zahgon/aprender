@@ -38,6 +38,8 @@ pub struct CourseFlowConfig {
     pub shorts_per_day: f64,
     pub outline_min: f64,
     pub verify_min: f64,
+    /// Count a finished course as WIP until the daily batch releases it (flow model B6).
+    pub batch_in_wip: bool,
 }
 
 /// What one seeded run measured after the warm-up.
@@ -48,6 +50,8 @@ pub struct CourseFlowResult {
     pub lead_days: f64,
     pub l: f64,
     pub util: [f64; 6],
+    /// Mean hours a built course waits for the daily batch (courses that take the batch path).
+    pub mean_batch_wait_h: f64,
 }
 
 impl CourseFlowResult {
@@ -130,7 +134,9 @@ struct Sim {
     pending: usize,
     started_at: Vec<f64>,
     coursera: Vec<bool>,
-    batch_wait: Vec<usize>,
+    batch_wait: Vec<(usize, f64)>,
+    bw_sum: f64,
+    bw_n: u64,
     sojourn: Vec<f64>,
     shorts_done: u64,
     in_system: usize,
@@ -221,13 +227,29 @@ impl Sim {
             4 if self.coursera[j.id] => self.enqueue(CHROME, nj(5), c.stage_min),
             4 => self.at(15.0, &Ev::Delay(nj(6))),
             5 => {
-                self.leave_wip();
-                self.batch_wait.push(j.id);
+                if !self.c.batch_in_wip {
+                    self.leave_wip();
+                }
+                self.batch_wait.push((j.id, self.now));
             }
             _ => {
                 self.leave_wip();
                 self.launch(j.id);
             }
+        }
+    }
+
+    /// The 07:00 batch: release every waiting course, and when the wait counts as WIP, free its slot now.
+    fn release_batch(&mut self) {
+        for (id, since) in std::mem::take(&mut self.batch_wait) {
+            if self.now >= self.warm {
+                self.bw_sum += self.now - since;
+                self.bw_n += 1;
+            }
+            if self.c.batch_in_wip {
+                self.leave_wip();
+            }
+            self.launch(id);
         }
     }
 
@@ -279,9 +301,7 @@ impl Sim {
             Ev::Delay(j) if j.short => self.short_next(j),
             Ev::Delay(j) => self.course_next(j),
             Ev::Batch => {
-                for id in std::mem::take(&mut self.batch_wait) {
-                    self.launch(id);
-                }
+                self.release_batch();
                 self.at(DAY, &Ev::Batch);
             }
         }
@@ -318,6 +338,8 @@ pub fn run_course_flow(
         started_at: Vec::new(),
         coursera: Vec::new(),
         batch_wait: Vec::new(),
+        bw_sum: 0.0,
+        bw_n: 0,
         sojourn: Vec::new(),
         shorts_done: 0,
         in_system: 0,
@@ -355,6 +377,7 @@ pub fn run_course_flow(
         lead_days: s.sojourn.iter().sum::<f64>() / n.max(1.0) / DAY,
         l: s.l_area / span,
         util,
+        mean_batch_wait_h: s.bw_sum / (s.bw_n.max(1) as f64) / 60.0,
     }
 }
 
@@ -376,6 +399,7 @@ pub fn course_preset(name: &str) -> Option<CourseFlowConfig> {
         shorts_per_day: 5.0,
         outline_min: 90.0,
         verify_min: 15.0,
+        batch_in_wip: false,
     };
     match name {
         "cal-today" => {
@@ -414,6 +438,7 @@ pub fn run_course_reference(c: &CourseFlowConfig) -> CourseFlowResult {
         a.shorts_per_day += r.shorts_per_day / 5.0;
         a.lead_days += r.lead_days / 5.0;
         a.l += r.l / 5.0;
+        a.mean_batch_wait_h += r.mean_batch_wait_h / 5.0;
         for i in 0..6 {
             a.util[i] += r.util[i] / 5.0;
         }
@@ -442,6 +467,7 @@ pub fn apply_course_inputs(c: &mut CourseFlowConfig, v: &serde_json::Value) -> R
             "wip" => c.wip = f as usize,
             "starts_per_day" => c.starts_per_day = f,
             "shorts_per_day" => c.shorts_per_day = f,
+            "batch_in_wip" => c.batch_in_wip = f != 0.0,
             _ => return Err(format!("unknown input: {k}")),
         }
     }
@@ -464,11 +490,11 @@ pub fn course_sim_block(
             "design_min": c.design_min, "gpus": c.gpus, "render_min": c.render_min,
             "chrome_lanes": c.chrome_lanes, "stage_min": c.stage_min,
             "coursera_share": c.coursera_share, "wip": c.wip,
-            "starts_per_day": c.starts_per_day, "shorts_per_day": c.shorts_per_day,
+            "starts_per_day": c.starts_per_day, "shorts_per_day": c.shorts_per_day, "batch_in_wip": c.batch_in_wip,
         },
         "predicted": {
             "courses_day": r.courses_per_day, "shorts_day": r.shorts_per_day,
-            "lead_days": r.lead_days, "L": r.l, "busiest_util_pct": util * 100.0,
+            "lead_days": r.lead_days, "L": r.l, "mean_batch_wait_h": r.mean_batch_wait_h, "busiest_util_pct": util * 100.0,
         },
         "binding_station": station,
     })
