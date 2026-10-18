@@ -63,9 +63,8 @@ jobs:
   # explicit-command runner takes every 3rd fragment (`--shard N/3`). The once-only
   # steps are spread so the shards finish together (#5486): compute, the universe
   # listing and the over-the-cap check on shard 1; the GPU crates (with their own Σ
-  # check) and the two guards on shard 2; the examples build on shard 3. Where a
-  # once-only step goes is checked by scripts/check_shard_balance.sh against the
-  # measured costs in ci/shard-step-costs.tsv. Each shard
+  # check) and the two guards on shard 2; the examples build on shard 3. The placement
+  # follows the measured per-step costs in ci/shard-step-costs.tsv. Each shard
   # owns its cargo state (registry + target parent keyed by PR_OR_REF-sN, see the
   # env below): the test-binary compile is therefore repeated per shard, and it is
   # cheap because codegen comes from the shared sccache (measured ~1 min on a warm

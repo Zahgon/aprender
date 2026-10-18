@@ -1,6 +1,6 @@
 # Measured cost, in seconds, of the full-tier steps of ci/sections.yml `workspace-test-shard`
-# that do not cost the same on every shard (#5486). scripts/check_shard_balance.sh sums them
-# per shard and refuses a predicted spread over its budget.
+# that do not cost the same on every shard (#5486). Summed per shard, they give the predicted
+# spread the step placement in ci/sections.yml was chosen by (52 s at #5487).
 #
 # Columns (TAB): step name, exactly as in ci/sections.yml | seconds | source
 #   seconds: ONE number  = the step's cost on whichever shard runs it (a once-only step)
