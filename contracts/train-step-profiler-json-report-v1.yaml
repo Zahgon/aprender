@@ -21,12 +21,12 @@ proof_obligations:
   - id: TSP-INV-001
     type: invariant
     property: "Bottleneck thresholds are 30% transfer then 20% forward"
-    formal: "cargo test -p aprender-train --lib test_json_report_bottleneck_classification exits 0"
+    formal: "∀ t ∈ {test_json_report_bottleneck_classification}: exit(t) = 0"
     applies_to: json_report_classifies_and_omits_zero
   - id: TSP-INV-002
     type: invariant
     property: "gemm_pct counts forward and backward GEMM ops; zero ops are omitted"
-    formal: "cargo test -p aprender-train --lib test_json_report_gemm_pct_and_nonzero_ops_only exits 0"
+    formal: "∀ t ∈ {test_json_report_gemm_pct_and_nonzero_ops_only}: exit(t) = 0"
     applies_to: json_report_classifies_and_omits_zero
 
 falsification_tests:
