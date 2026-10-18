@@ -1,0 +1,36 @@
+metadata:
+  version: 1.0.0
+  created: '2026-10-18'
+  author: PAIML Engineering
+  description: "ENT-282 delta checkpoint resume in config::train::loader load_transformer_model — a checkpoint whose format is entrenar-delta-checkpoint is overlaid on the base model's weights, lora.* and __training__.* tensors are not overlaid, and any other format falls through to the full-checkpoint load without touching the base path."
+  kind: pattern
+  references:
+    - "crates/aprender-train/src/config/train/loader/data.rs — load_transformer_model, try_load_apr_delta"
+
+equations:
+  delta_resume_overlays_base:
+    formula: "format == entrenar-delta-checkpoint => weights = base with the checkpoint's non-lora, non-training tensors replacing same-named parameters, step = metadata checkpoint_step; any other format => full load of the checkpoint"
+    domain: "an output_dir holding model-step-N.apr and a base model_path"
+    codomain: "(Option<Transformer>, usize)"
+    invariants:
+      - "A non-delta checkpoint never reads model_path"
+      - "Overlaid parameters equal the delta's values"
+
+proof_obligations:
+  - id: TLD-INV-001
+    type: invariant
+    property: "Delta tensors are overlaid on the base model and the step is read"
+    formal: "cargo test -p aprender-train --lib test_load_transformer_model_overlays_delta_on_base exits 0"
+    applies_to: delta_resume_overlays_base
+  - id: TLD-INV-002
+    type: invariant
+    property: "A non-delta checkpoint falls through to the full load with no base model"
+    formal: "cargo test -p aprender-train --lib test_load_transformer_model_non_delta_checkpoint_falls_through_to_full_load exits 0"
+    applies_to: delta_resume_overlays_base
+
+falsification_tests:
+  - id: FALSIFY-TLD-001
+    rule: "delta format test inverted"
+    prediction: "flipping the format != check makes the overlay test RED"
+    test: "cargo test -p aprender-train --lib test_load_transformer_model_overlays_delta_on_base"
+    if_fails: "the delta/full dispatch is unguarded"

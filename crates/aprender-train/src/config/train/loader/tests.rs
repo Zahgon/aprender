@@ -2171,3 +2171,48 @@ fn test_try_load_apr_round_trips_weights_with_training_tensor_present() {
     let b = loaded.embed_tokens.weight.data();
     assert_eq!(a.as_slice(), b.as_slice(), "embedding weights round-trip");
 }
+
+// ── load_transformer_model: ENT-282 delta checkpoint resume ──────────────
+
+#[test]
+fn test_load_transformer_model_overlays_delta_on_base() {
+    use aprender::serialization::apr::AprWriter;
+    let cfg = TransformerConfig::tiny();
+    let base = Transformer::new(&cfg);
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let base_path = tmp.path().join("base.apr");
+    write_tiny_apr(&base_path, &base, &[]);
+
+    let out = tmp.path().join("out");
+    std::fs::create_dir(&out).expect("mkdir");
+    let n = base.embed_tokens.weight.data().len();
+    let mut w = AprWriter::new();
+    w.set_metadata("format".to_string(), serde_json::json!("entrenar-delta-checkpoint"));
+    w.set_metadata("checkpoint_step".to_string(), serde_json::json!("7"));
+    w.add_tensor_f32("model.embed_tokens.weight", vec![n], &vec![0.5f32; n]);
+    w.add_tensor_f32("lora.layer0.a", vec![2], &[1.0, 2.0]); // skipped: handled elsewhere
+    w.write(out.join("model-step-7.apr")).expect("write delta");
+
+    let (model, step) = load_transformer_model(&base_path, &cfg, &out).expect("loads");
+    assert_eq!(step, 7);
+    let model = model.expect("model");
+    let e = model.embed_tokens.weight.data();
+    assert!(e.iter().all(|&v| v == 0.5), "delta embedding overlaid on the base");
+    let orig = base.embed_tokens.weight.data();
+    assert!(orig.iter().any(|&v| v != 0.5), "base itself was not already 0.5");
+}
+
+#[test]
+fn test_load_transformer_model_non_delta_checkpoint_falls_through_to_full_load() {
+    let cfg = TransformerConfig::tiny();
+    let model = Transformer::new(&cfg);
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let out = tmp.path().join("out");
+    std::fs::create_dir(&out).expect("mkdir");
+    write_tiny_apr(&out.join("model-step-9.apr"), &model, &[("format", "full")]);
+    // base path does not exist: a delta load would fail, a full load must succeed
+    let (loaded, step) =
+        load_transformer_model(&tmp.path().join("absent.apr"), &cfg, &out).expect("loads");
+    assert_eq!(step, 9);
+    assert!(loaded.is_some());
+}
