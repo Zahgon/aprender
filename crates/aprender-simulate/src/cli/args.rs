@@ -109,6 +109,18 @@ pub enum Commands {
         /// Override the merge-queue runner pool (measured input).
         #[arg(long)]
         r_mq: Option<usize>,
+        /// Override the WIP cap (measured input).
+        #[arg(long)]
+        cap: Option<usize>,
+        /// Override concurrent merge-queue groups (measured input).
+        #[arg(long)]
+        builds: Option<usize>,
+        /// Override the merge-group flake rate (measured input).
+        #[arg(long)]
+        f: Option<f64>,
+        /// Override mean concurrent authors (may be fractional).
+        #[arg(long)]
+        n: Option<f64>,
         /// Commit the sim block is stamped with.
         #[arg(long, default_value = "unknown")]
         sha: String,

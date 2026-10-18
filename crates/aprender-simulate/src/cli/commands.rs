@@ -45,8 +45,24 @@ pub fn run_cli(cli: Cli) -> ExitCode {
             json,
             r_pr,
             r_mq,
+            cap,
+            builds,
+            f,
+            n,
             sha,
-        } => pr_flow(&design, json, r_pr, r_mq, &sha),
+        } => pr_flow(
+            &design,
+            json,
+            FlowOverrides {
+                r_pr,
+                r_mq,
+                cap,
+                builds,
+                f,
+                n,
+            },
+            &sha,
+        ),
         Commands::Validate { experiment_path } => validate_experiment(&experiment_path),
         Commands::Verify {
             experiment_path,
@@ -572,22 +588,49 @@ fn render_bouncing_balls(
     Ok(())
 }
 
-/// Print the reference run (5 seeds x 400 h, 20 h warm-up) of a named PR-flow design.
-fn pr_flow(
-    design: &str,
-    json: bool,
+/// Measured inputs that replace a design's defaults; each is labelled `measured` in the sim block.
+#[derive(Default, Clone, Copy)]
+struct FlowOverrides {
     r_pr: Option<usize>,
     r_mq: Option<usize>,
-    sha: &str,
-) -> ExitCode {
+    cap: Option<usize>,
+    builds: Option<usize>,
+    f: Option<f64>,
+    n: Option<f64>,
+}
+
+impl FlowOverrides {
+    fn apply(&self, c: &mut crate::scenarios::PrFlowConfig) {
+        c.r_pr = self.r_pr.unwrap_or(c.r_pr);
+        c.r_mq = self.r_mq.unwrap_or(c.r_mq);
+        c.cap = self.cap.unwrap_or(c.cap);
+        c.builds = self.builds.unwrap_or(c.builds);
+        c.f = self.f.unwrap_or(c.f);
+        c.n = self.n.unwrap_or(c.n);
+    }
+
+    fn cli_flags(&self) -> String {
+        let parts = [
+            self.r_pr.map(|v| format!(" --r-pr {v}")),
+            self.r_mq.map(|v| format!(" --r-mq {v}")),
+            self.cap.map(|v| format!(" --cap {v}")),
+            self.builds.map(|v| format!(" --builds {v}")),
+            self.f.map(|v| format!(" --f {v}")),
+            self.n.map(|v| format!(" --n {v}")),
+        ];
+        parts.into_iter().flatten().collect()
+    }
+}
+
+/// Print the reference run (5 seeds x 400 h, 20 h warm-up) of a named PR-flow design.
+fn pr_flow(design: &str, json: bool, ov: FlowOverrides, sha: &str) -> ExitCode {
     let Some(mut cfg) = crate::scenarios::preset(design) else {
         eprintln!("unknown design: {design}");
         return ExitCode::FAILURE;
     };
-    cfg.r_pr = r_pr.unwrap_or(cfg.r_pr);
-    cfg.r_mq = r_mq.unwrap_or(cfg.r_mq);
+    ov.apply(&mut cfg);
     if json {
-        println!("{}", pr_flow_sim_block(design, &cfg, r_pr, r_mq, sha));
+        println!("{}", pr_flow_sim_block(design, &cfg, &ov, sha));
         return ExitCode::SUCCESS;
     }
     let r = crate::scenarios::run_reference(&cfg);
@@ -606,12 +649,11 @@ fn pr_flow(
 }
 
 /// The cycle-record "sim" block: seeds 1..=5, 400 h, 20 h warm-up, one JSON line.
-/// `optimum` and `drift_pct_24h` are null: neither is computed here.
+/// `optimum` compares the design's own reference run with this run; `drift_pct_24h` is null (not computed here).
 fn pr_flow_sim_block(
     design: &str,
     cfg: &crate::scenarios::PrFlowConfig,
-    r_pr: Option<usize>,
-    r_mq: Option<usize>,
+    ov: &FlowOverrides,
     sha: &str,
 ) -> String {
     let runs: Vec<_> = (1..=5)
@@ -631,21 +673,14 @@ fn pr_flow_sim_block(
     } else {
         "merge_queue"
     };
+    let base = crate::scenarios::preset(design)
+        .map_or(0.0, |c| crate::scenarios::run_reference(&c).merged_per_h);
     let contract = crate::scenarios::reference_contract_ok();
-    let src = |o: Option<usize>| {
-        if o.is_some() {
-            "measured"
-        } else {
-            "design_default"
-        }
-    };
+    let src = |m: bool| if m { "measured" } else { "design_default" };
     serde_json::json!({
         "aprender_sha": sha,
         "scenario": "pr-flow",
-        "cli": format!(
-            "aprender-simulate pr-flow --design {design} --json --r-pr {} --r-mq {} --sha {sha}",
-            cfg.r_pr, cfg.r_mq
-        ),
+        "cli": format!("aprender-simulate pr-flow --design {design} --json{} --sha {sha}", ov.cli_flags()),
         "seeds": [1, 2, 3, 4, 5],
         "hours": 400,
         "inputs": {
@@ -654,16 +689,19 @@ fn pr_flow_sim_block(
             "pr_runner_min": cfg.pr_runner_min, "f": cfg.f
         },
         "inputs_source": {
-            "t_author_min": "design_default", "n": "design_default", "cap": "design_default",
-            "r_pr": src(r_pr), "r_mq": src(r_mq), "p_red": "design_default",
-            "pr_runner_min": "design_default", "f": "design_default", "builds": "design_default"
+            "t_author_min": "design_default", "n": src(ov.n.is_some()), "cap": src(ov.cap.is_some()),
+            "r_pr": src(ov.r_pr.is_some()), "r_mq": src(ov.r_mq.is_some()), "p_red": "design_default",
+            "pr_runner_min": "design_default", "f": src(ov.f.is_some()), "builds": src(ov.builds.is_some())
         },
         "predicted": {
             "merged_h": m, "ci95_h": ci95,
             "W_min_mean": mean(|r| r.w_mean_min), "L": mean(|r| r.l)
         },
         "binding_station": binding,
-        "optimum": null,
+        "optimum": {
+            "design": design, "design_merged_h": base, "this_run_merged_h": m,
+            "gap_h": base - m, "gap_pct": if base > 0.0 { (base - m) / base * 100.0 } else { 0.0 }
+        },
         "sim3_contract": if contract { "pass" } else { "fail" },
         "drift_pct_24h": null
     })

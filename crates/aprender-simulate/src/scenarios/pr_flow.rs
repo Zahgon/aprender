@@ -16,7 +16,8 @@ use crate::engine::SimTime;
 #[derive(Debug, Clone, PartialEq)]
 pub struct PrFlowConfig {
     pub cap: usize,
-    pub n: usize,
+    /// Mean concurrent authors; the fractional part is one author who thinks 1/frac times slower.
+    pub n: f64,
     pub t_author_min: f64,
     pub r_pr: usize,
     pub pr_runner_min: f64,
@@ -33,6 +34,18 @@ pub struct PrFlowConfig {
     pub mq_batch: usize,
     pub mq_wait_min: f64,
     pub f: f64,
+}
+
+impl PrFlowConfig {
+    /// Mean think time of author `a`: the last, fractional author is slowed by its fraction.
+    fn think_min(&self, a: usize) -> f64 {
+        let frac = self.n - self.n.floor();
+        if frac > 0.0 && a == self.n.floor() as usize {
+            self.t_author_min / frac
+        } else {
+            self.t_author_min
+        }
+    }
 }
 
 /// What one seeded run measured after the warm-up.
@@ -183,7 +196,7 @@ impl Sim {
         self.open += 1;
         self.prs_seen += 1;
         self.start_run(pr);
-        let t = self.exp(self.c.t_author_min);
+        let t = self.exp(self.c.think_min(author));
         self.at(t, Ev::Author(author));
     }
 
@@ -319,8 +332,8 @@ pub fn run_pr_flow(c: &PrFlowConfig, seed: u64, hours: f64, warmup_h: f64) -> Pr
         passes: 0,
     };
     s.timer_at = -1.0;
-    for a in 0..c.n {
-        let t = s.exp(c.t_author_min);
+    for a in 0..c.n.ceil() as usize {
+        let t = s.exp(c.think_min(a));
         s.at(t, Ev::Author(a));
     }
     let end = hours * 60.0;
@@ -377,7 +390,7 @@ pub fn preset(name: &str) -> Option<PrFlowConfig> {
     let setup = if fast { 9.0 } else { 7.7 };
     Some(PrFlowConfig {
         cap,
-        n: 11,
+        n: 11.0,
         t_author_min: 30.0,
         r_pr,
         pr_runner_min: rm,
@@ -433,6 +446,18 @@ mod tests {
 
     fn within(got: f64, want: f64, tol: f64) -> bool {
         (got - want).abs() <= want * tol
+    }
+
+    #[test]
+    fn fractional_n_sits_between_its_integer_neighbours() {
+        let at = |n: f64| {
+            let mut c = preset("D").expect("preset");
+            c.n = n;
+            c.cap = 100;
+            run_reference(&c).merged_per_h
+        };
+        let (lo, mid, hi) = (at(11.0), at(11.5), at(12.0));
+        assert!(lo < mid && mid < hi, "{lo} {mid} {hi}");
     }
 
     #[test]
