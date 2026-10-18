@@ -61,8 +61,8 @@ jobs:
     name: Chapter Examples Compile
     runs-on: [self-hosted, Linux, X64, clean-room]
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
       # NO rust-cache: cache-bin false was never the fix.
       #
       # It skips cleanBin and NOTHING else. rust-cache's save step also runs
@@ -105,8 +105,8 @@ jobs:
     runs-on: [self-hosted, Linux, X64, clean-room]
     needs: chapter-examples-compile
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
       # NO rust-cache: cache-bin false was never the fix.
       #
       # It skips cleanBin and NOTHING else. rust-cache's save step also runs
@@ -156,8 +156,8 @@ jobs:
     name: Book Integration Tests
     runs-on: [self-hosted, Linux, X64, clean-room]
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
       # NO rust-cache: cache-bin false was never the fix.
       #
       # It skips cleanBin and NOTHING else. rust-cache's save step also runs
@@ -188,7 +188,7 @@ jobs:
     name: Contract Enforcement
     runs-on: [self-hosted, Linux, X64, clean-room]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
       - name: Every chapter has a contract
         run: |
           FAIL=0
@@ -248,7 +248,7 @@ jobs:
     name: Namespace Discipline
     runs-on: [self-hosted, Linux, X64, clean-room]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
       - name: No legacy imports in chapter examples
         run: |
           FAIL=0
@@ -289,7 +289,7 @@ jobs:
     name: SUMMARY.md Integrity
     runs-on: [self-hosted, Linux, X64, clean-room]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
       - name: No dead links in SUMMARY.md
         run: |
           FAIL=0
