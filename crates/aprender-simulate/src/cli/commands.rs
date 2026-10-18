@@ -49,6 +49,10 @@ pub fn run_cli(cli: Cli) -> ExitCode {
             builds,
             f,
             n,
+            pr_min,
+            mq_min,
+            p_red,
+            pr_setup,
             sha,
         } => pr_flow(
             &design,
@@ -60,6 +64,10 @@ pub fn run_cli(cli: Cli) -> ExitCode {
                 builds,
                 f,
                 n,
+                pr_min,
+                mq_min,
+                p_red,
+                pr_setup,
             },
             &sha,
         ),
@@ -597,6 +605,10 @@ struct FlowOverrides {
     builds: Option<usize>,
     f: Option<f64>,
     n: Option<f64>,
+    pr_min: Option<f64>,
+    mq_min: Option<f64>,
+    p_red: Option<f64>,
+    pr_setup: Option<f64>,
 }
 
 impl FlowOverrides {
@@ -607,6 +619,10 @@ impl FlowOverrides {
         c.builds = self.builds.unwrap_or(c.builds);
         c.f = self.f.unwrap_or(c.f);
         c.n = self.n.unwrap_or(c.n);
+        c.pr_runner_min = self.pr_min.unwrap_or(c.pr_runner_min);
+        c.mq_runner_min = self.mq_min.unwrap_or(c.mq_runner_min);
+        c.p_red = self.p_red.unwrap_or(c.p_red);
+        c.pr_setup_min = self.pr_setup.unwrap_or(c.pr_setup_min);
     }
 
     fn cli_flags(&self) -> String {
@@ -617,6 +633,10 @@ impl FlowOverrides {
             self.builds.map(|v| format!(" --builds {v}")),
             self.f.map(|v| format!(" --f {v}")),
             self.n.map(|v| format!(" --n {v}")),
+            self.pr_min.map(|v| format!(" --pr-min {v}")),
+            self.mq_min.map(|v| format!(" --mq-min {v}")),
+            self.p_red.map(|v| format!(" --p-red {v}")),
+            self.pr_setup.map(|v| format!(" --pr-setup {v}")),
         ];
         parts.into_iter().flatten().collect()
     }

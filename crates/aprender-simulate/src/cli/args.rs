@@ -121,6 +121,18 @@ pub enum Commands {
         /// Override mean concurrent authors (may be fractional).
         #[arg(long)]
         n: Option<f64>,
+        /// Measured PR-check runner-minutes per run.
+        #[arg(long)]
+        pr_min: Option<f64>,
+        /// Measured merge-queue runner-minutes per run.
+        #[arg(long)]
+        mq_min: Option<f64>,
+        /// Measured share of PR runs that go red.
+        #[arg(long)]
+        p_red: Option<f64>,
+        /// Measured queue wait per PR run, minutes.
+        #[arg(long)]
+        pr_setup: Option<f64>,
         /// Commit the sim block is stamped with.
         #[arg(long, default_value = "unknown")]
         sha: String,
