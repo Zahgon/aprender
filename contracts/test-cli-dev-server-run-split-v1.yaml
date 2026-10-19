@@ -1,0 +1,47 @@
+metadata:
+  version: 1.0.0
+  created: '2026-10-19'
+  author: PAIML Engineering
+  description: "aprender-test-cli DevServer::run_split (#5637) — serves static files over HTTP on config.port and hot-reload WebSocket on config.ws_port as separate listeners; CORS headers follow config.cors; a taken port surfaces as io::ErrorKind::AddrInUse."
+  kind: pattern
+  references:
+    - "crates/aprender-test-cli/src/dev_server.rs — DevServer::run_split"
+    - "aprender#5637 — coverage ticket"
+
+equations:
+  split_ports:
+    formula: "HTTP(port) serves index.html at / and files by path (404 when absent); WS(ws_port) sends ServerReady first then every broadcast; HTTP never upgrades WS and WS never serves files"
+    domain: "DevServerConfig with distinct port and ws_port"
+    codomain: "two independent listeners; run_split returns Err(io::Error) when either bind fails"
+    invariants:
+      - "the Access-Control-Allow-Origin header is present iff config.cors"
+      - "bind failure on either port returns ErrorKind::AddrInUse, never hangs"
+
+proof_obligations:
+  - id: SPLIT-INV-001
+    type: invariant
+    property: "HTTP port serves index and static files, 404 otherwise"
+    formal: "cargo test -p aprender-test-cli --test dev_server_split split_serves_index_and_static_files_on_http_port exits 0"
+    applies_to: split_ports
+  - id: SPLIT-INV-002
+    type: invariant
+    property: "WS port sends ServerReady then forwards broadcasts"
+    formal: "cargo test -p aprender-test-cli --test dev_server_split split_websocket_port_sends_server_ready_and_forwards_broadcasts exits 0"
+    applies_to: split_ports
+  - id: SPLIT-INV-003
+    type: invariant
+    property: "A taken port is an AddrInUse error"
+    formal: "cargo test -p aprender-test-cli --test dev_server_split split_returns_addr_in_use exits 0"
+    applies_to: split_ports
+
+falsification_tests:
+  - id: FALSIFY-SPLIT-001
+    rule: "CORS layer applied unconditionally"
+    prediction: "removing the if self.config.cors guard turns split_cors_header_follows_config RED"
+    test: "cargo test -p aprender-test-cli --test dev_server_split split_cors_header_follows_config"
+    if_fails: "CORS gating is unguarded"
+  - id: FALSIFY-SPLIT-002
+    rule: "ws router swapped for http router"
+    prediction: "serving http_app on the ws listener turns split_http_port_does_not_speak_websocket_and_ws_port_does_not_serve_files RED"
+    test: "cargo test -p aprender-test-cli --test dev_server_split split_http_port_does_not_speak_websocket_and_ws_port_does_not_serve_files"
+    if_fails: "port separation is unguarded"
