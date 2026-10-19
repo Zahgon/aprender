@@ -457,3 +457,7 @@ fn render_warnings_panel(
 
     draw_box_bottom(canvas, x, y + f32::from(height - 1), width, border_color);
 }
+
+#[cfg(test)]
+#[path = "memory_panel_5605_tests.rs"]
+mod memory_panel_5605_tests;
