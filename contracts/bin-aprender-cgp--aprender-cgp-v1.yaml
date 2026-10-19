@@ -99,3 +99,9 @@ falsification_tests:
     test: 'cargo test -p aprender-cgp --test cli_surface_gate unusable_input_is_rejected'
     if_fails: 'MEASURED 2026-09-26 (aprender-01): with the explain fix reverted the gate is RED on this test (`explain no-such-target` got Some(0)); restored, GREEN'
     mutation: 'make a rejection path return Ok(()) or unwrap the read; must turn RED on that row'
+  - id: FALSIFY-BIN-APRENDER-CGP-007
+    rule: 'compete reports the fastest finite competitor and survives a missing one'
+    prediction: '`aprender-cgp compete W --ours A --theirs B` names the lowest wall time as Winner, applies --label, marks an unlaunchable command FAILED/-1/N/A without aborting, and --json emits one row per competitor with its exit code and no table'
+    test: 'cargo test -p aprender-cgp --test compete_5654'
+    if_fails: 'run_compete picks the wrong winner, drops a competitor, aborts on a launch failure, or mixes the table into json mode'
+    mutation: 'turn min_by into max_by in print_compete_winner; the winner test must turn RED'
