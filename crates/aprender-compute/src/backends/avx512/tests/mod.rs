@@ -2,6 +2,7 @@ use super::*;
 use crate::backends::scalar::ScalarBackend;
 
 mod binary_ops;
+mod exp_5635_tests;
 mod large_tests;
 mod reductions;
 mod unary_transforms;

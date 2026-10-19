@@ -1,0 +1,1 @@
+{"session":"aprender-w5404","ref":"#5635","note":"Avx512Backend::exp vector body has up to ~3.5% relative error (x=-1: 0.3549 vs 0.3679); existing tests tolerate 5%. Polynomial/range-reduction accuracy not contract-bound."}
