@@ -209,5 +209,5 @@ qa_gate:
   - softmax_sum_invariant
   - nan_inf_rejection
   - config_factory_contract_sync
-  pass_criteria: All 9 falsification tests pass
+  pass_criteria: All 10 falsification tests pass
   falsification: Bypass ValidatedClassLogits::new() with unsafe or wrong constructor
