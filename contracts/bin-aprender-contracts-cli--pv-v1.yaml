@@ -168,3 +168,9 @@ falsification_tests:
     test: 'scripts/check_surface_audit_bins.sh (aprender#4476)'
     if_fails: 'a pv command ships unaudited (RED 2026-09-26: 11 of 49 paths had no row; GREEN 2026-09-27: 49 of 49)'
     mutation: 'delete every pv row; must turn RED naming pv'
+  - id: FALSIFY-BIN-PV-006
+    rule: 'verify-structure finds nested contracts and reports PASS/PARTIAL (#5655)'
+    prediction: 'a contract nested two directories deep is found; 3/3 found prints PASS, otherwise PARTIAL n/3 with the missing count; a bad config fails the command'
+    test: 'cargo test -p aprender-contracts-cli --test verify_structure_5655'
+    if_fails: 'find_contract stops recursing, or the verdict miscounts found/missing'
+    mutation: 'recurse into find_contract with a different stem; nested_contract_is_found_and_counted_as_one_of_three must turn RED (MEASURED 2026-10-19)'
