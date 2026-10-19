@@ -1,0 +1,46 @@
+metadata:
+  id: C-TRAIN-CLASSIFY-COORDINATOR
+  version: 1.0.0
+  created: '2026-10-19'
+  author: PAIML Engineering
+  kind: pattern
+  status: ACTIVE_ALGORITHM_LEVEL
+  description: |
+    Pins ClassifyTrainer::train_as_coordinator (#5683): a bind failure or a
+    failed worker join returns an empty, stopped-early result with an infinite
+    best loss, and a successful run with one worker finishes its epoch.
+  references:
+    - 'crates/aprender-train/src/finetune/classify_trainer.rs (train_as_coordinator)'
+
+equations:
+  coordinator_failure_result:
+    formula: |
+      bind fails or wait_for_workers fails -> TrainResult{epoch_metrics: [], best_epoch: 0, best_val_loss: +inf, stopped_early: true}
+    domain: DistributedConfig coordinator runs
+    invariants:
+    - 'a completed run with every worker answering has stopped_early false'
+
+proof_obligations:
+- id: TCC-INV-001
+  type: invariant
+  property: coordinator setup failure yields an empty stopped result
+  formal: 'bind fails ∨ join fails ⇒ stopped_early'
+  applies_to: coordinator_failure_result
+
+falsification_tests:
+- id: FALSIFY-TRAIN-CLASSIFY-COORDINATOR-001
+  rule: coordinator failure paths return an empty stopped-early result; the happy path completes
+  prediction: 'a held port gives stopped_early true with no epochs; a peer that hangs up gives the same; one synthetic worker gives one finite epoch with stopped_early false'
+  test: cargo test -p aprender-train --lib coordinator_
+  if_fails: a failed distributed start is reported as a finished run, or a healthy one aborts
+  ship_blocking: false
+  mutation: 'set stopped_early to false in the bind-failure TrainResult; must turn RED'
+
+qa_gate:
+  id: QA-TRAIN-CLASSIFY-COORDINATOR-001
+  name: Classify coordinator result gate
+  description: train_as_coordinator failure and success results hold
+  checks:
+  - coordinator_failure_result
+  pass_criteria: FALSIFY-TRAIN-CLASSIFY-COORDINATOR-001 passes
+  falsification: Any failure fails the gate

@@ -5099,3 +5099,83 @@ fn test_coverage_card_confusion_raw_formatting() {
     assert!(out.contains("```"));
     assert!(out.contains("Predicted"));
 }
+
+// =========================================================================
+// train_as_coordinator (#5683)
+// =========================================================================
+
+fn free_loopback_addr() -> std::net::SocketAddr {
+    let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind probe");
+    probe.local_addr().expect("probe addr")
+}
+
+fn coordinator_trainer(addr: std::net::SocketAddr, workers: usize, tag: &str) -> ClassifyTrainer {
+    let dist = DistributedConfig::coordinator(addr, workers);
+    let config = TrainingConfig {
+        epochs: 1,
+        distributed: Some(dist),
+        checkpoint_dir: std::env::temp_dir().join(format!("aprender_5683_{tag}")),
+        ..TrainingConfig::default()
+    };
+    ClassifyTrainer::new(tiny_pipeline(2), make_corpus(20, 2), config).expect("valid")
+}
+
+#[test]
+fn coordinator_bind_failure_returns_empty_stopped_result() {
+    let held = std::net::TcpListener::bind("127.0.0.1:0").expect("hold port");
+    let addr = held.local_addr().expect("held addr");
+    let result = coordinator_trainer(addr, 1, "bind").train();
+    assert!(result.stopped_early);
+    assert!(result.epoch_metrics.is_empty());
+    assert_eq!(result.best_epoch, 0);
+    assert!(result.best_val_loss.is_infinite());
+}
+
+#[test]
+fn coordinator_worker_join_failure_returns_empty_stopped_result() {
+    let addr = free_loopback_addr();
+    // A peer that connects and hangs up before sending JoinRequest.
+    let peer = std::thread::spawn(move || {
+        for _ in 0..200 {
+            if std::net::TcpStream::connect(addr).is_ok() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+    });
+    let result = coordinator_trainer(addr, 1, "join").train();
+    peer.join().expect("peer thread");
+    assert!(result.stopped_early);
+    assert!(result.epoch_metrics.is_empty());
+    assert!(result.best_val_loss.is_infinite());
+}
+
+#[test]
+fn coordinator_completes_epoch_with_one_synthetic_worker() {
+    use crate::finetune::worker_client::WorkerClient;
+    let addr = free_loopback_addr();
+    let num_params = tiny_pipeline(2).num_trainable_parameters();
+    let worker = std::thread::spawn(move || {
+        let client = loop {
+            match WorkerClient::connect(DistributedConfig::worker(addr), 1, "cpu") {
+                Ok(c) => break c,
+                Err(_) => std::thread::sleep(std::time::Duration::from_millis(25)),
+            }
+        };
+        let mut steps = 0u64;
+        while let Ok(Some(shard)) = client.receive_shard() {
+            let grads = vec![0.01f32; num_params];
+            client.send_gradients(shard.step, grads, 0.5, 1, 2).expect("send");
+            client.receive_averaged().expect("averaged");
+            steps += 1;
+        }
+        steps
+    });
+    let result = coordinator_trainer(addr, 1, "ok").train();
+    let steps = worker.join().expect("worker thread");
+    assert!(!result.stopped_early);
+    assert_eq!(result.epoch_metrics.len(), 1);
+    assert!(steps >= 1);
+    assert!(result.epoch_metrics[0].train_loss.is_finite());
+    assert!(result.best_val_loss.is_finite());
+}
