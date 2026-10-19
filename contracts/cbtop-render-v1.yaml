@@ -22,12 +22,12 @@ proof_obligations:
   - id: CBTOP-RENDER-INV-001
     type: invariant
     property: "Buffer follows the requested size"
-    formal: "cargo test -p aprender-cbtop --lib test_render_frame_resizes_buffer exits 0"
+    formal: "∀ run: cargo test -p aprender-cbtop --lib test_render_frame_resizes_buffer exits 0"
     applies_to: render_frame_draws_state
   - id: CBTOP-RENDER-INV-002
     type: invariant
     property: "Run state is shown in the status bar"
-    formal: "cargo test -p aprender-cbtop --lib test_render_frame_reflects_run_state exits 0"
+    formal: "∀ run: cargo test -p aprender-cbtop --lib test_render_frame_reflects_run_state exits 0"
     applies_to: render_frame_draws_state
 
 falsification_tests:
