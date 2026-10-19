@@ -99,3 +99,9 @@ falsification_tests:
     test: 'cargo test -p aprender-cgp --test cli_surface_gate unusable_input_is_rejected'
     if_fails: 'MEASURED 2026-09-26 (aprender-01): with the explain fix reverted the gate is RED on this test (`explain no-such-target` got Some(0)); restored, GREEN'
     mutation: 'make a rejection path return Ok(()) or unwrap the read; must turn RED on that row'
+  - id: FALSIFY-BIN-APRENDER-CGP-008
+    rule: 'quant sweep summarises exactly the measured layers'
+    prediction: '`profile quant --all` with a fake benchmark_matrix_suite reporting two layers (100 us, 300 us) prints "Summary (2/7 layers measured)", Avg 200.0 us, Total 400.0 us, composite 26.0 tok/s; no binary or a failing one prints "No benchmark data available."'
+    test: 'cargo test -p aprender-cgp --test quant_sweep_5608'
+    if_fails: 'profile_quant_all mis-averages, mis-parses a bench line, or reports data when none exists'
+    mutation: 'divide total_time_us by (measured_count + 1); must turn RED (MEASURED 2026-10-19, 2 tests RED)'
