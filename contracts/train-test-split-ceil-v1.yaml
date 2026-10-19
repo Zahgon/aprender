@@ -150,3 +150,9 @@ falsification_tests:
     test: "cargo test -p aprender-core --lib test_train_test_split_ceil_preserves_exact_cases"
     prediction: "x_test rows == 2 for n=10,test_size=0.2 and == 50 for n=100,test_size=0.5"
     if_fails: "f32->f64 widening error makes ceil overshoot an exact product by one sample"
+  - id: FALSIFY-TRAIN_TEST_SPLIT_CEIL-003
+    description: "C-RANDOMIZED-SEARCH (#5641): model_selection::randomized_search picks the best-scoring sampled candidate, evaluates each grid point once, is seed-deterministic, and errors on an empty grid or failing fit"
+    test: "cargo test -p aprender-core --test randomized_search_5641"
+    prediction: "5 tests pass; best candidate has the highest mean CV score among the sampled subset"
+    if_fails: "randomized_search selection comparison, sampling or error mapping regressed"
+    mutation: "flip `mean < best_score` in randomized_search (model_selection/mod.rs); 2 tests must turn RED (MEASURED 2026-10-19)"
