@@ -21,12 +21,12 @@ proof_obligations:
   - id: MODELCARD-PAINT-INV-001
     type: invariant
     property: "Metrics are capped at 4 and gated by show_metrics_chart"
-    formal: "cargo test -p aprender-present-widgets --lib test_paint_metrics_cap_at_four_and_toggle exits 0"
+    formal: "∀ run: cargo test -p aprender-present-widgets --lib test_paint_metrics_cap_at_four_and_toggle exits 0"
     applies_to: paint_draw_list
   - id: MODELCARD-PAINT-INV-002
     type: invariant
     property: "Tags are capped at 5 and sized from their length"
-    formal: "cargo test -p aprender-present-widgets --lib test_paint_tags_cap_at_five_with_width_from_len exits 0"
+    formal: "∀ run: cargo test -p aprender-present-widgets --lib test_paint_tags_cap_at_five_with_width_from_len exits 0"
     applies_to: paint_draw_list
 
 falsification_tests:
