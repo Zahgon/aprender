@@ -285,6 +285,11 @@ falsification_tests:
   prediction: resume_from_apr_checkpoint returns the saved epoch and the saved classifier weights, and a checkpoint from a different corpus is rejected with F-CKPT-006 before any weight is touched
   test: finetune::classify_trainer::tests::test_resume_rejects_data_hash_mismatch
   if_fails: A resume silently continues from weights trained on different data, or loses the epoch
+- id: FALSIFY-OPS-017
+  rule: batch inference never aborts on a failing prompt
+  prediction: run_batch_loop emits one JSONL error row and counts one failure per bad-JSON, encode-failed or model-less prompt, skips blank lines, and returns an IoError when the sink is unwritable
+  test: infer::tests_batch_loop_5691::bad_json_encode_failure_and_missing_model_each_emit_one_error_row_5691
+  if_fails: a bad prompt aborts or silently vanishes from a batch run
 kani_harnesses:
 - id: KANI-OPS-001
   obligation: ReadOnly commands have no side effects
