@@ -135,3 +135,9 @@ falsification_tests:
     test: 'cargo test -p aprender-qa-cli --test cli_surface_gate unusable_input_is_rejected'
     if_fails: 'MEASURED 2026-09-26 (aprender-01): GREEN on an unmutated tree; no source mutation was run for this binary'
     mutation: 'make a rejection path return Ok(()) or unwrap the read; must turn RED on that row'
+  - id: FALSIFY-BIN-APR-QA-008
+    rule: '`run` stops before executing when the playbook, failure policy or integrity lock is wrong'
+    prediction: '`run` on a missing playbook, an unknown --failure-policy, or a playbook edited after lock-playbooks exits 1 naming the cause ("Error loading playbook", "Unknown failure policy", "[INTEGRITY]"); --no-integrity-check skips only the lock'
+    test: 'cargo test -p aprender-qa-cli --test run_playbook_guards_5714'
+    if_fails: 'a tampered or mistyped playbook proceeds to execution, or the run fails without saying why'
+    mutation: 'drop the process::exit(1) in verify_playbook_lock_or_exit; edited_playbook_fails_the_integrity_lock must turn RED'
