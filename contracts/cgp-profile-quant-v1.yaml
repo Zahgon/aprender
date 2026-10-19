@@ -1,0 +1,49 @@
+metadata:
+  id: C-CGP-PROFILE-QUANT
+  version: 1.0.0
+  created: '2026-10-19'
+  author: PAIML Engineering
+  kind: pattern
+  status: ACTIVE_ALGORITHM_LEVEL
+  description: |
+    Pins `aprender-cgp profile quant` (profile_quant, #5596): unknown kernels
+    and malformed MxNxK sizes are refused, static super-block metrics are
+    exact, and a benchmark_matrix_suite line for the same dimensions adds the
+    roofline verdict (COMPUTE-BOUND when the bandwidth share exceeds the
+    compute share, else MEMORY-BOUND) and a 192-GEMV token estimate.
+  references:
+    - 'crates/aprender-cgp/src/profilers/quant.rs (profile_quant)'
+
+equations:
+  profile_quant_report:
+    formula: |
+      compressed = (M*K / superblock_elements) * superblock_bytes
+      verdict = COMPUTE-BOUND if bw% > compute% else MEMORY-BOUND
+    domain: profile quant runs against a scratch cwd with an optional fake benchmark binary
+    invariants:
+    - 'without a matching benchmark line the report ends in the no-timing hint'
+
+proof_obligations:
+- id: CPQ-INV-001
+  type: invariant
+  property: the quant report prints exact static metrics and the roofline verdict that follows the measured shares
+  formal: 'verdict ≡ shares'
+  applies_to: profile_quant_report
+
+falsification_tests:
+- id: FALSIFY-CGP-PROFILE-QUANT-001
+  rule: profile_quant output is exact per branch
+  prediction: 'bad kernel and bad size fail; q4k 4096x1x4096 reports 65536 super-blocks, 9.44 MB, 7.1x; 25% bw vs 33% compute is MEMORY-BOUND, 50% vs 10% is COMPUTE-BOUND; 52.1 tok/s at 100 us'
+  test: cargo test -p aprender-cgp --test profile_quant_5596
+  if_fails: cgp quant profiling misreports compression or the bottleneck
+  ship_blocking: false
+  mutation: 'flip the bw_pct > compute_pct comparison, change the 192 GEMV constant, the nf4 super-block size, or invert the compression ratio; each must turn RED'
+
+qa_gate:
+  id: QA-CGP-PROFILE-QUANT-001
+  name: cgp quant profile gate
+  description: profile_quant report is exact
+  checks:
+  - profile_quant_report
+  pass_criteria: FALSIFY-CGP-PROFILE-QUANT-001 passes
+  falsification: Any failure fails the gate
