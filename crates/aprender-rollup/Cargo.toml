@@ -10,5 +10,8 @@ authors = ["PAIML Engineering"]
 # Build tooling, never installed or published.
 publish = false
 
+[dependencies]
+serde_json = { workspace = true }
+
 [lints]
 workspace = true

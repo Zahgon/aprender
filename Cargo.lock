@@ -1391,6 +1391,9 @@ dependencies = [
 [[package]]
 name = "aprender-rollup"
 version = "0.71.3"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "aprender-serve"
