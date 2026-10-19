@@ -7,6 +7,7 @@
 pub mod build;
 pub mod close;
 pub mod gh_json;
+pub mod mg;
 pub mod report;
 
 /// Largest PR (additions + deletions, from `gh`) that may join a rollup.
