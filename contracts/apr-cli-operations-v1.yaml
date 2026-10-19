@@ -295,6 +295,11 @@ falsification_tests:
   prediction: generate_code_example returns Some for every known component with a distinct non-empty body, honours a recommended aprender path, and returns None for an unknown component
   test: oracle::recommender::tests::code_example_exists_for_every_stack_component_and_is_distinct
   if_fails: the oracle shows the wrong or no example for a recommended component
+- id: FALSIFY-OPS-020
+  rule: extract-frames fails loudly and dry-runs without side effects
+  prediction: run_extract_frames rejects a missing path and a video-less or fully excluded directory with distinct errors, rejects a malformed exclude glob, lists videos on dry-run without creating frame dirs, and leaves a populated frames dir untouched under skip-existing
+  test: extract::tests::skip_existing_treats_a_populated_frames_dir_as_done_but_an_empty_one_as_pending
+  if_fails: extract-frames re-extracts finished videos or hides why nothing was processed
 kani_harnesses:
 - id: KANI-OPS-001
   obligation: ReadOnly commands have no side effects
