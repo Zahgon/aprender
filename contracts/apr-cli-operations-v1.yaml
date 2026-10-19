@@ -265,6 +265,11 @@ falsification_tests:
   prediction: The timestamp in a cbtop report matches the UTC date at the moment it was generated, on both headless paths
   test: commands::cbtop::tests::test_chrono_timestamp_is_current_utc_date
   if_fails: Persisted CI provenance is stamped with a stale hardcoded date
+- id: FALSIFY-OPS-025
+  rule: Classifier fine-tuning from an .apr never proceeds without its sibling BPE tokenizer
+  prediction: ClassifyPipeline::from_apr loads <stem>.tokenizer.json when present, and returns a ConfigError naming the expected file when it is absent or unparseable
+  test: finetune::classify_pipeline::from_apr_5719::from_apr_5719_missing_sibling_tokenizer_is_config_error
+  if_fails: Training silently falls back to byte-level tokenization and produces a model whose token ids do not match its vocabulary
 kani_harnesses:
 - id: KANI-OPS-001
   obligation: ReadOnly commands have no side effects

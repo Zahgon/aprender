@@ -2250,3 +2250,5 @@ fn test_cov4_zero_grads_then_check() {
     let norm = p.compute_grad_norm();
     assert!(norm.abs() < 1e-6, "After zero_all_gradients, norm should be ~0, got {norm}");
 }
+
+mod from_apr_5719;
