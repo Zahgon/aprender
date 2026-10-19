@@ -1,0 +1,42 @@
+metadata:
+  version: 1.0.0
+  created: '2026-10-19'
+  author: PAIML Engineering
+  description: "aprender-serve LlgEnv::compile (#5647) — a grammar or schema the engine cannot compile is refused as ConstraintError::SchemaUnsupported carrying the engine's own message verbatim and a label naming the input kind (JSON schema or Lark grammar); a grammar that compiles yields a fresh constraint at position 0."
+  kind: pattern
+  references:
+    - "crates/aprender-serve/src/constrain/llg.rs — LlgEnv::compile"
+    - "aprender#5647 — coverage ticket"
+
+equations:
+  compile_refusal:
+    formula: "compile(g, what) = Err(SchemaUnsupported('the {what} does not compile for constrained decoding: {engine message}')) when the parser factory rejects g; else Ok(constraint) with position 0"
+    domain: "TopLevelGrammar plus a label"
+    codomain: "Result<LlgConstraint, ConstraintError>"
+    invariants:
+      - "the label names the input kind: 'JSON schema' for json_schema, 'Lark grammar' for lark"
+      - "a refusal never poisons the env: later compiles on the same env still succeed"
+
+proof_obligations:
+  - id: LLG-COMPILE-INV-001
+    type: invariant
+    property: "Lark compile failures are SchemaUnsupported with the engine message"
+    formal: "cargo test -p aprender-serve --features structured-output --test llg_compile_refusals lark exits 0"
+    applies_to: compile_refusal
+  - id: LLG-COMPILE-INV-002
+    type: invariant
+    property: "JSON schema compile failures carry the JSON schema label"
+    formal: "cargo test -p aprender-serve --features structured-output --test llg_compile_refusals json_schema_compile_failures_say_json_schema_not_lark exits 0"
+    applies_to: compile_refusal
+
+falsification_tests:
+  - id: FALSIFY-LLG-COMPILE-001
+    rule: "compile error mapped to SchemaInvalid"
+    prediction: "changing the create_parser map_err variant turns lark_unknown_rule_is_refused_with_engine_message_and_label RED"
+    test: "cargo test -p aprender-serve --features structured-output --test llg_compile_refusals lark_unknown_rule_is_refused_with_engine_message_and_label"
+    if_fails: "the refusal variant is unguarded"
+  - id: FALSIFY-LLG-COMPILE-002
+    rule: "label hard-coded"
+    prediction: "replacing {what} with a fixed word turns json_schema_compile_failures_say_json_schema_not_lark RED"
+    test: "cargo test -p aprender-serve --features structured-output --test llg_compile_refusals json_schema_compile_failures_say_json_schema_not_lark"
+    if_fails: "the input-kind label is unguarded"
