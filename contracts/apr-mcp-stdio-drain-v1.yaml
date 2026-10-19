@@ -134,6 +134,13 @@ falsification_tests:
   prediction: an untouched AprMcpServer's worker_dispatch answers apr.version with the real inventory-backed payload (server == "aprender-mcp")
   test: cargo test -p aprender-mcp --lib default_worker_dispatch_is_the_real_tool_dispatcher
   if_fails: the default dispatch is not the shipped one, so DRAIN-005 would be proving the wiring of something the server never runs
+- id: FALSIFY-MCP-DRAIN-5668
+  obligation: answered-exactly-once — every request with an id gets one response, notifications none
+  rule: handle_request_with_sink answers a bad jsonrpc version with -32600 (even for notification methods), returns None for notifications/*, and delegates other methods
+  prediction: version 1.0 gives -32600 for initialize, notifications/initialized and tools/call; notifications/* give None and call the sink zero times; initialize, ping and unknown methods match handle_request
+  test: cargo test -p aprender-mcp --test sink_dispatch_5668
+  if_fails: a notification gets a response (breaking JSON-RPC 2.0) or a bad version slips past the sink path
+  mutation: change the `notifications/` prefix to `notificationz/` at server.rs:270; notifications_get_no_response must turn RED (MEASURED 2026-10-19)
 
 kani_harnesses:
 - id: KANI-MCP-DRAIN-001
