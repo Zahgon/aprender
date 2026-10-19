@@ -158,7 +158,7 @@ jobs:
     if: ${{ !cancelled() && needs.mg-reuse.outputs.x86 != '1' }}
     # pull_request/push stay on the shared clean-room pool; a merge_group entry takes the mq lane (custom label exactly mq)
     runs-on: ${{ github.event_name == 'merge_group' && fromJSON('["self-hosted","Linux","X64","mq"]') || fromJSON('["self-hosted","Linux","X64","clean-room"]') }}
-    timeout-minutes: 240
+    timeout-minutes: ${{ github.event_name == 'merge_group' && 75 || 240 }}
     # The sections carry their own permissions blocks (the sov provenance section
     # needs id-token + attestations); one job token must cover all of them.
     permissions: write-all
@@ -450,7 +450,7 @@ jobs:
   workspace-test-shard:
     # same lanes as x86-main: clean-room for pull_request/push, mq for a merge_group entry
     runs-on: ${{ github.event_name == 'merge_group' && fromJSON('["self-hosted","Linux","X64","mq"]') || fromJSON('["self-hosted","Linux","X64","clean-room"]') }}
-    timeout-minutes: 180
+    timeout-minutes: ${{ github.event_name == 'merge_group' && 75 || 180 }}
     permissions:
       contents: read
       actions: write   # the fail-fast step cancels this run
