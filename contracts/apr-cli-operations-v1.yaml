@@ -265,6 +265,11 @@ falsification_tests:
   prediction: The timestamp in a cbtop report matches the UTC date at the moment it was generated, on both headless paths
   test: commands::cbtop::tests::test_chrono_timestamp_is_current_utc_date
   if_fails: Persisted CI provenance is stamped with a stale hardcoded date
+- id: FALSIFY-OPS-024
+  rule: The MoE FFN layer refuses malformed router input and routes k=1 to exactly one expert
+  prediction: moe_ffn_forward_layer rejects a wrong hidden length, a quantized router and a short router byte_size, and with top-k 1 returns the favoured expert's SwiGLU output unchanged
+  test: gguf::qwen3_moe_load::moe_ffn_layer_5699_tests::moe_ffn_layer_5699_k1_output_is_the_routed_experts_swiglu
+  if_fails: A mis-sized router or hidden vector reads past its tensor, or routing mixes experts that top-k 1 should exclude
 kani_harnesses:
 - id: KANI-OPS-001
   obligation: ReadOnly commands have no side effects
