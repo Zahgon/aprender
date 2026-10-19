@@ -1930,21 +1930,24 @@ jobs:
         run: |
           set -euo pipefail
           root=$(git rev-parse --show-toplevel)
-          tc=$(dirname "$(dirname "$(rustup which rustc --toolchain 1.93.0)")")
+          ru=${RUSTUP_HOME:-$HOME/.rustup}; ca=$HOME/.cargo; tc=$(dirname "$(dirname "$(rustup which rustc --toolchain 1.93.0)")")
           ch=${CARGO_HOME:-$HOME/.cargo}
           sc=${SCCACHE_HOST_DIR:-/home/noah/data/sccache}
+          # pinned by digest, never :stable (pace condition 7); bump with the image
+          img=localhost:5000/sovereign-ci@sha256:70f2cdc9e537fe4447306d33c317fea33017f78f1ffa3b7af99095391419ef36
+          printf "host build env: RUSTFLAGS=[%s] CARGO_INCREMENTAL=[%s] CARGO_PROFILE=[%s]\n" "${RUSTFLAGS:-}" "${CARGO_INCREMENTAL:-}" "$(env | grep -c ^CARGO_PROFILE_ || true)"
           mkdir -p "$ch" "$sc"
           snap=$(mktemp)
           cp "$root/Cargo.lock" "$snap"
           printf 'host rustc: %s\n' "$("$tc/bin/rustc" -vV | sed -n 1p)"
           docker run --rm --user "$(id -u):$(id -g)" \
-            -v "$root:$root" -w "$root" -v "$tc:$tc:ro" -v "$ch:$ch" -v "$sc:/sccache" \
-            -e HOME=/tmp -e CARGO_HOME="$ch" \
-            -e PATH="$tc/bin:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+            -v "$root:$root" -w "$root" -v "$ru:$ru:ro" -v "$ca:$ca:ro" -v "$ch:$ch" -v "$sc:/sccache" \
+            -e HOME="$HOME" -e CARGO_HOME="$ch" -e RUSTUP_HOME="$ru" -e RUSTUP_TOOLCHAIN=1.93.0 -e RUSTFLAGS= -e CARGO_INCREMENTAL= \
+            -e PATH="$ca/bin:/usr/local/cargo/bin:/usr/bin:/bin" \
             -e RUSTC_WRAPPER=/usr/local/cargo/bin/sccache -e SCCACHE_DIR=/sccache \
-            -e SCCACHE_CACHE_SIZE=50G -e CARGO_INCREMENTAL=0 \
+            -e SCCACHE_CACHE_SIZE=50G \
             -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0="$root" \
-            "$IMAGE" bash -c 'printf "container rustc: %s\n" "$(rustc -vV | sed -n 1p)"; t0=$(date +%s); cargo build -q -p aprender-contracts-cli --bin pv --bin pv-sat --features update-check,build-sha; printf "container pv build: %s s\n" "$(( $(date +%s) - t0 ))"; sccache --show-stats'
+            "$img" bash -c 'set -e; printf "container build env: RUSTFLAGS=[%s] CARGO_INCREMENTAL=[%s]\n" "${RUSTFLAGS:-}" "${CARGO_INCREMENTAL:-}"; printf "container rustc: %s\n" "$(rustc -vV | sed -n 1p)"; t0=$(date +%s); cargo build -q -p aprender-contracts-cli --bin pv --bin pv-sat --features update-check,build-sha; printf "container pv build: %s s\n" "$(( $(date +%s) - t0 ))"; sccache --show-stats'
           if ! cmp -s "$snap" "$root/Cargo.lock"; then
             cp "$snap" "$root/Cargo.lock"
             echo "FAIL  the container build moved Cargo.lock (restored); run scripts/check_lockfile_current.sh"
