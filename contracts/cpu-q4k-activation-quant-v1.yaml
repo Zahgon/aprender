@@ -87,6 +87,11 @@ falsification_tests:
   prediction: argmax(logits_q8k) == argmax(logits_f32) for greedy decoding
   test: Compare 20-token greedy generation between paths
   if_fails: Quantization error flips argmax — increase Q8K precision
+- id: FALSIFY-AQ-005
+  rule: Batched multirow matmul equals the per-row matvec
+  prediction: fused_q4k_multirow_matmul_f32_into matches fused_q4k_parallel_matvec_into row for row (m=1 bit-identical), and mis-sized input or output is InvalidShape with the output untouched
+  test: cargo test -p aprender-serve --test q4k_multirow_f32_5646
+  if_fails: batched rows diverge from the single-row path, or a short buffer is written
 kani_harnesses:
 - id: KANI-AQ-001
   obligation: AQ-EQV-001
