@@ -167,8 +167,28 @@ fn typed(nt: &str, class: &str) -> std::collections::BTreeSet<String> {
 }
 
 #[test]
-fn the_tracked_contracts_nt_carries_the_type_closure() {
-    let nt = std::fs::read_to_string(repo("contracts/contracts.nt")).expect("contracts.nt");
+fn the_extracted_contracts_nt_carries_the_type_closure() {
+    // #5729: contracts.nt is derived and untracked, so extract the corpus here instead of reading a committed copy.
+    // Entity refs resolve repo-relative, so the scratch root symlinks every top-level entry but contracts/.
+    let d = tempfile::tempdir().expect("tempdir");
+    for e in std::fs::read_dir(repo("")).expect("repo root") {
+        let p = e.expect("entry").path();
+        let name = p.file_name().expect("name").to_owned();
+        if name != "contracts" && name != ".git" {
+            std::os::unix::fs::symlink(&p, d.path().join(name)).expect("symlink");
+        }
+    }
+    let cdir = d.path().join("contracts");
+    std::fs::create_dir(&cdir).expect("contracts dir");
+    for e in std::fs::read_dir(repo("contracts")).expect("contracts dir") {
+        let p = e.expect("entry").path();
+        if p.is_file() {
+            std::fs::copy(&p, cdir.join(p.file_name().expect("name"))).expect("copy");
+        }
+    }
+    let r = pv(&["extract", &s(&cdir)]);
+    assert_eq!(r.code, 0, "{}", show(&r));
+    let nt = std::fs::read_to_string(cdir.join("contracts.nt")).expect("contracts.nt");
     let kernels = typed(&nt, "Kernel");
     let symbols = typed(&nt, "Symbol");
     assert!(

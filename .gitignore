@@ -140,3 +140,9 @@ docs/audits/quorum-*.json.lanes/
 # PVL-001 EV-8a (#4202): `pv discharge run`'s full log. The tracked summary is its sibling
 # crates/aprender-contracts-staging/discharge-summary.json, outside the tree it hashes.
 crates/aprender-contracts-staging/lean/discharge.json
+
+# #5729: derived, content-named or single-writer files are generated inside the contracts gate, never committed.
+# A tracked copy dirties every concurrent PR that changes the relation set (rename/rename, #5730) or the corpus.
+/contracts/contracts.nt
+/contracts/witness/*.json
+/contracts/witness/liskov/*.json

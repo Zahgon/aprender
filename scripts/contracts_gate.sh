@@ -35,7 +35,7 @@ set -u
 STEPS=(lint shapes consistency census regen readme provenance diff)
 # contracts/census.json is NOT here: it is a release-train snapshot with one writer (`make census`) and is
 # expected to lag; a PR may not edit it (scripts/check_census_derived.sh). The census step checks a FRESH one.
-GENERATED=(contracts/contracts.nt contracts/shapes.ttl)
+GENERATED=(contracts/shapes.ttl)
 
 step_lint() {
     local log rc
@@ -87,22 +87,29 @@ step_shapes() {
 }
 
 # ONT-001 ONT-5 (R-1): pv-sat writes the witness and pv lint re-checks it; refines is Liskov (ONT-4e, R-20);
-# bindings resolve (ONT-3a). A witness pv-sat rewrites that the tree does not carry is RED: commit it.
+# bindings resolve (ONT-3a). The witness is derived (#5729): pv-sat writes it here, nothing commits it, and
+# pv lint re-checks it by recompute (witness::check) -- exactly one must exist, or pv-sat pruned wrongly.
 step_consistency() {
     [ -x "$PV_SAT" ] || { echo "FAIL: no pv-sat at $PV_SAT -- a PV_BIN override must ship its pv-sat too"; return 1; }
     "$PV_SAT" contracts || { echo "FAIL: pv-sat contracts exited non-zero"; return 1; }
-    local g
+    local g n
     for g in ont-consistency refines bindings; do
         "$PV" lint contracts/ --gate "$g" >/dev/null || { echo "FAIL: pv lint --gate $g"; return 1; }
     done
-    test -z "$(git status --porcelain -- contracts/witness)" \
-        || { git status --short -- contracts/witness; echo "FAIL: contracts/witness/ differs from what pv-sat writes -- commit it"; return 1; }
+    n=$(find contracts/witness -maxdepth 1 -name "*.json" | wc -l)
+    [ "$n" -eq 1 ] || { echo "FAIL: $n witness files in contracts/witness, want exactly 1"; return 1; }
 }
 
 # Regenerate every generated file from committed sources; `diff` then asks GIT whether they moved. Asking git,
 # not pv's own --check, is the point: the comparand is the committed tree, not the tool's opinion of itself.
 step_regen() {
     "$PV" extract contracts >/dev/null || { echo "FAIL: pv extract contracts exited non-zero"; return 1; }
+    # #5729: contracts.nt is derived and untracked, so the diff no longer pins it; pin its determinism here.
+    local a
+    a=$(sha256sum contracts/contracts.nt | cut -d" " -f1)
+    "$PV" extract contracts >/dev/null || { echo "FAIL: second pv extract exited non-zero"; return 1; }
+    [ "$a" = "$(sha256sum contracts/contracts.nt | cut -d" " -f1)" ] \
+        || { echo "FAIL: contracts.nt differs between two extracts of one tree"; return 1; }
 }
 
 # A FRESH census, into a temp file: its identities hold (check_census_derived.sh --census) and the README's count
@@ -164,7 +171,7 @@ key=$1; [ "${3:-}" = --gate ] && key=shapes
 [ "${STUB_FAIL:-}" = "$key" ] && { echo "stub: $1 fails"; exit 1; }
 case "$1" in
   census)  echo "{\"n_files\": $n}" ;;
-  extract) echo "nt $n" >contracts/contracts.nt; echo "ttl $n" >contracts/shapes.ttl ;;
+  extract) echo "nt $n ${STUB_NONDET:+$RANDOM$RANDOM}" >contracts/contracts.nt; echo "ttl $n" >contracts/shapes.ttl ;;
   lint)
     [ "${3:-}" = --gate ] || exit 0
     ok='"verdict":"Pass","extra":{"shapes_n":21,"focus_nodes_n":9,"pc_shape":"fired","pc_extract":{"gguf":"fired","kernel":"fired"}}'
@@ -185,8 +192,8 @@ esac
 exit 0
 STUB
     chmod +x "$stub"
-    # The stub pv-sat: writes nothing, so the witness never moves. STUB_FAIL=sat makes it fail.
-    printf '#!/usr/bin/env bash\n[ "${STUB_FAIL:-}" = sat ] && { echo "stub: pv-sat fails"; exit 1; }\nexit 0\n' >"$d/pv-sat"
+    # The stub pv-sat: writes one fixed witness (the gate wants exactly one). STUB_FAIL=sat makes it fail.
+    printf '#!/usr/bin/env bash\n[ "${STUB_FAIL:-}" = sat ] && { echo "stub: pv-sat fails"; exit 1; }\nmkdir -p contracts/witness; echo {} >contracts/witness/0000000000000000000000000000000000000000000000000000000000000001.json; [ "${STUB_TWOWIT:-}" = 1 ] && echo {} >contracts/witness/0000000000000000000000000000000000000000000000000000000000000002.json\nexit 0\n' >"$d/pv-sat"
     chmod +x "$d/pv-sat"
     (
         cd "$d" && git init -q . && mkdir -p contracts scripts \
@@ -205,7 +212,7 @@ STUB
     run() {
         local script=$1 sf=$2 ss=$3
         shift 3
-        (cd "$d" && git checkout -q -- . && CONTRACTS_GATE_PV="$stub" STUB_FAIL="$sf" STUB_SHAPES="$ss" STUB_CD="${STUB_CD:-}" bash "$script" "$@" 2>&1)
+        (cd "$d" && git checkout -q -- . && CONTRACTS_GATE_PV="$stub" STUB_NONDET="${STUB_NONDET:-}" STUB_TWOWIT="${STUB_TWOWIT:-}" STUB_FAIL="$sf" STUB_SHAPES="$ss" STUB_CD="${STUB_CD:-}" bash "$script" "$@" 2>&1)
     }
 
     out=$(run "$SELF" "" pass); rc=$?
@@ -232,8 +239,8 @@ STUB
         && git -c core.hooksPath=/dev/null -c user.email=t@t -c user.name=t commit -qm 'add a contract, do not regenerate')
     out=$(run "$SELF" "" pass); rc=$?
     [ "$rc" != 0 ] && grep -q 'FAILED: diff' <<<"$out" && ! grep -q 'census.json' <<<"$out" \
-        && grep -q 'contracts.nt' <<<"$out" && grep -q 'shapes.ttl' <<<"$out"
-    row "a contract added WITHOUT regenerating is RED on diff, naming contracts.nt and shapes.ttl, NOT census.json (rc=$rc)" $?
+        && grep -q 'shapes.ttl' <<<"$out"
+    row "a contract added WITHOUT regenerating is RED on diff, naming shapes.ttl, NOT census.json (rc=$rc)" $?
     (cd "$d" && git checkout -q -- . && CONTRACTS_GATE_PV="$stub" bash "$SELF" >/dev/null 2>&1; git diff --quiet HEAD -- contracts/census.json)
     row "a full run never rewrites the tracked contracts/census.json (the train snapshot has one writer, #3569)" $?
     (cd "$d" && git checkout -q -- . && CONTRACTS_GATE_PV="$stub" bash "$SELF" regen >/dev/null 2>&1 && git add -A \
@@ -241,6 +248,13 @@ STUB
     out=$(run "$SELF" "" pass); rc=$?
     [ "$rc" = 0 ]
     row "the same tree after \`contracts_gate.sh regen\` + commit is green again (rc=$rc)" $?
+
+    out=$(STUB_NONDET=1 run "$SELF" "" pass); rc=$?
+    [ "$rc" != 0 ] && grep -q "FAILED: regen" <<<"$out" && grep -q "differs between two extracts" <<<"$out"
+    row "a non-deterministic pv extract (two runs, two contracts.nt) is RED on regen (rc=$rc)" $?
+    out=$(STUB_TWOWIT=1 run "$SELF" "" pass); rc=$?
+    [ "$rc" != 0 ] && grep -q "FAILED: consistency" <<<"$out" && grep -q "want exactly 1" <<<"$out"
+    row "two witness files (a stale one left beside the fresh one) is RED on consistency (rc=$rc)" $?
 
     local c want
     for c in fail:1:FAIL noshapes:2:'DECLINE.*NoShapes' nofocus:2:'DECLINE.*NoFocus' zero:1:'shapes_n=0' \
