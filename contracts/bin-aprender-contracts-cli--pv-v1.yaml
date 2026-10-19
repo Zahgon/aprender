@@ -168,3 +168,9 @@ falsification_tests:
     test: 'scripts/check_surface_audit_bins.sh (aprender#4476)'
     if_fails: 'a pv command ships unaudited (RED 2026-09-26: 11 of 49 paths had no row; GREEN 2026-09-27: 49 of 49)'
     mutation: 'delete every pv row; must turn RED naming pv'
+  - id: FALSIFY-BIN-PV-006
+    rule: 'dispatch routes each Commands arm to its command and surfaces that command verdict'
+    prediction: 'dispatch(validate|status|equations) is Ok on contracts/multinomial-head-v1.yaml; file commands are Err on a missing path; graph/equations are Err on an unknown --format'
+    test: 'crates/aprender-contracts-cli/tests/dispatch_edges_5675.rs (4 tests, in-process)'
+    if_fails: 'a dispatch arm swallows its command error and pv exits 0 on a bad input (#5675)'
+    mutation: 'make the Graph arm discard the format parse error (Ok(())); unknown_output_format_is_rejected_by_graph_and_equations must turn RED'
