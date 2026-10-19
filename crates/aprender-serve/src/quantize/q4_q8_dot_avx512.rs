@@ -153,4 +153,103 @@ mod tests {
         let has = crate::isa::cpu_feature!("avx512f") && crate::isa::cpu_feature!("avx512bw");
         eprintln!("AVX-512 F+BW: {has}");
     }
+
+    #[cfg(target_arch = "x86_64")]
+    fn has_avx512() -> bool {
+        crate::isa::cpu_feature!("avx512f") && crate::isa::cpu_feature!("avx512bw")
+    }
+
+    /// Scalar reference: chunk c (32 bytes) lo nibbles -> block 2c, hi -> block 2c+1.
+    #[cfg(target_arch = "x86_64")]
+    fn scalar_dots(qs: &[u8; 128], q8: &[i8; 256]) -> [i32; 8] {
+        let mut dots = [0i32; 8];
+        for c in 0..4 {
+            for i in 0..32 {
+                let b = qs[c * 32 + i];
+                dots[2 * c] += i32::from(b & 0x0F) * i32::from(q8[(2 * c) * 32 + i]);
+                dots[2 * c + 1] += i32::from(b >> 4) * i32::from(q8[(2 * c + 1) * 32 + i]);
+            }
+        }
+        dots
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn pattern() -> ([u8; 128], [i8; 256]) {
+        let mut qs = [0u8; 128];
+        let mut q8 = [0i8; 256];
+        for (i, b) in qs.iter_mut().enumerate() {
+            *b = ((i * 37 + 11) % 256) as u8;
+        }
+        for (i, v) in q8.iter_mut().enumerate() {
+            *v = ((i as i32 * 53 + 7) % 255 - 127) as i8;
+        }
+        (qs, q8)
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn test_dots_8blocks_matches_scalar_reference() {
+        if !has_avx512() {
+            return;
+        }
+        let (qs, q8) = pattern();
+        // SAFETY: AVX-512 F+BW checked above; buffers are 128 / 256 bytes as required.
+        let got = unsafe { super::compute_q4_q8_dots_8blocks_avx512(qs.as_ptr(), q8.as_ptr()) };
+        assert_eq!(got, scalar_dots(&qs, &q8));
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn test_dots_8blocks_each_block_isolated() {
+        if !has_avx512() {
+            return;
+        }
+        // Only Q8 block `b` is non-zero (all 1s) and every Q4 nibble is 15:
+        // exactly dots[b] must equal 32 * 15 and every other lane must be 0.
+        // Catches swapped lane/block routing (e.g. dots[1] <-> dots[2]).
+        let qs = [0xFFu8; 128];
+        for b in 0..8 {
+            let mut q8 = [0i8; 256];
+            q8[b * 32..(b + 1) * 32].fill(1);
+            // SAFETY: AVX-512 F+BW checked above; buffers sized as required.
+            let got =
+                unsafe { super::compute_q4_q8_dots_8blocks_avx512(qs.as_ptr(), q8.as_ptr()) };
+            let mut want = [0i32; 8];
+            want[b] = 32 * 15;
+            assert_eq!(got, want, "block {b}");
+        }
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn test_dots_8blocks_negative_q8_is_signed() {
+        if !has_avx512() {
+            return;
+        }
+        let qs = [0x11u8; 128]; // every nibble is 1
+        let q8 = [-3i8; 256];
+        // SAFETY: AVX-512 F+BW checked above; buffers sized as required.
+        let got = unsafe { super::compute_q4_q8_dots_8blocks_avx512(qs.as_ptr(), q8.as_ptr()) };
+        assert_eq!(got, [-96; 8]);
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn test_q8_sums_matches_scalar_and_is_signed() {
+        if !has_avx512() {
+            return;
+        }
+        let (_, q8) = pattern();
+        // SAFETY: AVX-512 F+BW checked above; q8 holds 256 bytes.
+        let got = unsafe { super::compute_q8_sums_avx512(q8.as_ptr()) };
+        let mut want = [0i32; 8];
+        for (b, w) in want.iter_mut().enumerate() {
+            *w = q8[b * 32..(b + 1) * 32].iter().map(|&v| i32::from(v)).sum();
+        }
+        assert_eq!(got, want);
+        let neg = [-5i8; 256];
+        // SAFETY: as above.
+        let got = unsafe { super::compute_q8_sums_avx512(neg.as_ptr()) };
+        assert_eq!(got, [-160; 8]);
+    }
 }
