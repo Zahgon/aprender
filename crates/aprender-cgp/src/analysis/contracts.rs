@@ -791,3 +791,7 @@ falsification:
         assert!(!result.skipped.is_empty());
     }
 }
+
+#[cfg(test)]
+#[path = "run_generate_5604_tests.rs"]
+mod run_generate_5604_tests;
