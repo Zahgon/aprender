@@ -180,5 +180,5 @@ qa_gate:
   - non_linear_separation
   - prediction_deterministic
   - label_subset
-  pass_criteria: All 7 falsification tests pass + sklearn grid parity >= 90%
+  pass_criteria: All 8 falsification tests pass + sklearn grid parity >= 90%
   falsification: Use a linear kernel (a.b) instead of exp(-gamma||a-b||^2) — collapses XOR parity
