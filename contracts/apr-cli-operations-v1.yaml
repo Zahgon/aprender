@@ -265,6 +265,11 @@ falsification_tests:
   prediction: The timestamp in a cbtop report matches the UTC date at the moment it was generated, on both headless paths
   test: commands::cbtop::tests::test_chrono_timestamp_is_current_utc_date
   if_fails: Persisted CI provenance is stamped with a stale hardcoded date
+- id: FALSIFY-OPS-018
+  rule: rag-cli dispatch routes every subcommand to its runner
+  prediction: dispatch sends Index to the full or incremental runner by flag, runs Demo and Transcribe dry-run to Ok, and surfaces extract-frames on a video-less directory as an Err
+  test: tests::dispatch_routes_index_to_full_and_incremental_runners
+  if_fails: a subcommand is wired to the wrong runner or swallows its error
 kani_harnesses:
 - id: KANI-OPS-001
   obligation: ReadOnly commands have no side effects

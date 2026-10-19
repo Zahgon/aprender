@@ -1703,4 +1703,98 @@ mod tests {
     fn dispatch_info_succeeds() {
         assert!(dispatch(Commands::Info).is_ok());
     }
+
+    fn index_cmd(path: &str, output: &str, incremental: bool) -> Commands {
+        Commands::Index {
+            path: path.to_string(),
+            output: output.to_string(),
+            chunk_size: 200,
+            chunk_overlap: 20,
+            dimension: 64,
+            embedder: EmbedderType::Tfidf,
+            model: SemanticModel::default(),
+            recursive: false,
+            chunk_strategy: ChunkStrategy::Recursive,
+            jobs: 1,
+            manifest: false,
+            exclude: vec![],
+            dedup: false,
+            sqlite: incremental,
+            incremental,
+        }
+    }
+
+    #[test]
+    fn dispatch_routes_index_to_full_and_incremental_runners() {
+        let missing = std::env::temp_dir().join(format!("rag-dispatch-idx-{}", std::process::id()));
+        let missing = missing.to_string_lossy().into_owned();
+        let out = std::env::temp_dir().join(format!("rag-dispatch-out-{}", std::process::id()));
+        let out = out.to_string_lossy().into_owned();
+        let full = dispatch(index_cmd(&missing, &out, false))
+            .expect_err("full runner rejects a missing path");
+        assert!(full.to_string().contains("Path not found"), "{full}");
+        // the incremental flag selects the other runner; it must also fail, not silently run the full one
+        assert!(dispatch(index_cmd(&missing, &out, true)).is_err());
+    }
+
+    #[test]
+    fn dispatch_indexes_a_real_directory_and_creates_the_index() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let docs = dir.path().join("docs");
+        fs::create_dir(&docs).expect("mkdir");
+        fs::write(
+            docs.join("a.txt"),
+            "Rust ownership and borrowing keep memory safe.",
+        )
+        .expect("write");
+        let idx = dir.path().join("idx");
+        dispatch(index_cmd(
+            &docs.to_string_lossy(),
+            &idx.to_string_lossy(),
+            false,
+        ))
+        .expect("index");
+        assert!(idx.exists(), "index output was not created");
+    }
+
+    #[test]
+    fn dispatch_demo_transcribe_dry_run_and_extract_empty_dir() {
+        dispatch(Commands::Demo {
+            query: "rust".to_string(),
+            top_k: 1,
+        })
+        .expect("demo");
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = dir.path().to_string_lossy().into_owned();
+        dispatch(Commands::Transcribe {
+            path: p.clone(),
+            recursive: false,
+            skip_existing: false,
+            jobs: 1,
+            model: None,
+            backend: BackendType::Cpu,
+            dry_run: true,
+            prompt: None,
+            hotwords: None,
+            exclude: vec![],
+        })
+        .expect("transcribe dry-run");
+        let err = dispatch(Commands::ExtractFrames {
+            path: p,
+            recursive: false,
+            threshold: 0.3,
+            min_interval: 1.0,
+            jobs: 1,
+            skip_existing: false,
+            dry_run: true,
+            exclude: vec![],
+        })
+        .expect_err("an empty directory has no videos to extract");
+        assert!(err.to_string().contains("No video files"), "{err}");
+        assert_eq!(
+            fs::read_dir(dir.path()).expect("ls").count(),
+            0,
+            "dry run wrote files"
+        );
+    }
 }
