@@ -1899,3 +1899,94 @@ mod tests {
         }
     }
 }
+
+/// #5568: `TraceResult::to_otlp_span` emitted no span in any test; these assert the
+/// name, the ids derived from the pid, and every attribute's key and value.
+#[cfg(test)]
+mod otlp_span_tests {
+    use super::*;
+
+    fn attr<'a>(span: &'a OtlpSpan, key: &str) -> &'a OtlpValue {
+        &span
+            .attributes
+            .iter()
+            .find(|a| a.key == key)
+            .unwrap_or_else(|| panic!("no attribute {key}"))
+            .value
+    }
+
+    fn int(span: &OtlpSpan, key: &str) -> i64 {
+        match attr(span, key) {
+            OtlpValue::Int(v) => *v,
+            other => panic!("{key} is not an Int: {other:?}"),
+        }
+    }
+
+    fn sample(pid: u32) -> TraceResult {
+        let events = vec![
+            SyscallEvent::new("mmap".to_string(), 9, Duration::from_micros(40), 0),
+            SyscallEvent::new("read".to_string(), 0, Duration::from_micros(10), 8),
+        ];
+        let mut result = TraceResult::new(pid, Duration::from_millis(1), events);
+        result.breakdown.mmap_us = 11;
+        result.breakdown.futex_us = 22;
+        result.breakdown.ioctl_us = 33;
+        result.breakdown.read_us = 44;
+        result.breakdown.write_us = 55;
+        result.breakdown.compute_us = 66;
+        result.max_zscore = 4.5;
+        result.anomalies.push(SyscallAnomaly {
+            syscall: "mmap".to_string(),
+            duration_us: 40,
+            zscore: 4.5,
+            expected_us: 5.0,
+            category: "memory".to_string(),
+        });
+        result
+    }
+
+    #[test]
+    fn span_name_and_ids_carry_the_pid() {
+        let span = sample(0x0102_0304).to_otlp_span();
+        assert_eq!(span.name, "process.trace.16909060");
+        // trace id bytes 8..12 and span id bytes 0..4 are the pid, big-endian
+        assert_eq!(&span.trace_id[8..12], &[1, 2, 3, 4]);
+        assert_eq!(&span.span_id[0..4], &[1, 2, 3, 4]);
+        // the trailing trace-id bytes stay zero
+        assert_eq!(&span.trace_id[12..16], &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn span_carries_exactly_the_ten_documented_attributes_with_values() {
+        let span = sample(7).to_otlp_span();
+        assert_eq!(span.attributes.len(), 10);
+        assert_eq!(int(&span, "process.pid"), 7);
+        assert_eq!(int(&span, "syscall.count"), 2);
+        assert_eq!(int(&span, "syscall.mmap_us"), 11);
+        assert_eq!(int(&span, "syscall.futex_us"), 22);
+        assert_eq!(int(&span, "syscall.ioctl_us"), 33);
+        assert_eq!(int(&span, "syscall.read_us"), 44);
+        assert_eq!(int(&span, "syscall.write_us"), 55);
+        assert_eq!(int(&span, "syscall.compute_us"), 66);
+        assert_eq!(int(&span, "anomaly.count"), 1);
+        match attr(&span, "anomaly.max_zscore") {
+            OtlpValue::Float(z) => assert!((z - 4.5).abs() < 1e-9, "zscore {z}"),
+            other => panic!("max_zscore is not a Float: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_result_reports_zero_counts() {
+        let span = TraceResult::new(1, Duration::from_millis(1), Vec::new()).to_otlp_span();
+        assert_eq!(int(&span, "syscall.count"), 0);
+        assert_eq!(int(&span, "anomaly.count"), 0);
+    }
+
+    #[test]
+    fn different_pids_give_different_span_ids() {
+        let a = sample(1).to_otlp_span();
+        let b = sample(2).to_otlp_span();
+        assert_ne!(a.span_id[0..4], b.span_id[0..4]);
+        assert_ne!(a.name, b.name);
+    }
+}
