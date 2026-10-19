@@ -21,12 +21,12 @@ proof_obligations:
   - id: LOADTEST-MAX-INV-001
     type: invariant
     property: "Records carry the server's token counts and finish reason"
-    formal: "cargo test -p aprender-test-lib --features llm --lib test_run_phase_max_records_server_token_counts exits 0"
+    formal: "∀ run: cargo test -p aprender-test-lib --features llm --lib test_run_phase_max_records_server_token_counts exits 0"
     applies_to: closed_loop_phase
   - id: LOADTEST-MAX-INV-002
     type: invariant
     property: "Zero-length phase sends nothing"
-    formal: "cargo test -p aprender-test-lib --features llm --lib test_run_phase_max_zero_duration_sends_nothing exits 0"
+    formal: "∀ run: cargo test -p aprender-test-lib --features llm --lib test_run_phase_max_zero_duration_sends_nothing exits 0"
     applies_to: closed_loop_phase
 
 falsification_tests:
