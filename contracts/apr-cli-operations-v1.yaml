@@ -265,6 +265,11 @@ falsification_tests:
   prediction: The timestamp in a cbtop report matches the UTC date at the moment it was generated, on both headless paths
   test: commands::cbtop::tests::test_chrono_timestamp_is_current_utc_date
   if_fails: Persisted CI provenance is stamped with a stale hardcoded date
+- id: FALSIFY-OPS-027
+  rule: A published adapter checkpoint carries LoRA and classifier weights but no optimizer state
+  prediction: save_adapter_apr writes model.adapter.apr with model_type adapter, the epoch and validation metrics, classifier and lora_a/lora_b tensors, and no __training__.* tensor
+  test: finetune::classify_trainer::tests::test_save_adapter_apr_writes_metadata_and_tensors_without_training_state
+  if_fails: Published adapters leak optimizer state (F-CKPT-003) or lose the metadata inference deployment reads
 kani_harnesses:
 - id: KANI-OPS-001
   obligation: ReadOnly commands have no side effects

@@ -5099,3 +5099,77 @@ fn test_coverage_card_confusion_raw_formatting() {
     assert!(out.contains("```"));
     assert!(out.contains("Predicted"));
 }
+
+// =========================================================================
+// save_adapter_apr (#5593)
+// =========================================================================
+
+fn adapter_trainer() -> ClassifyTrainer {
+    let cfg = TrainingConfig { epochs: 1, val_split: 0.2, ..TrainingConfig::default() };
+    ClassifyTrainer::new(tiny_pipeline(3), make_corpus(20, 3), cfg).expect("trainer builds")
+}
+
+fn adapter_metrics() -> EpochMetrics {
+    EpochMetrics {
+        epoch: 4,
+        train_loss: 0.5,
+        train_accuracy: 0.5,
+        val_loss: 0.75,
+        val_accuracy: 0.625,
+        learning_rate: 1e-2,
+        epoch_time_ms: 1,
+        samples_per_sec: 1.0,
+    }
+}
+
+#[test]
+fn test_save_adapter_apr_writes_metadata_and_tensors_without_training_state() {
+    use aprender::serialization::apr::AprReader;
+    let t = adapter_trainer();
+    let dir = tempfile::tempdir().unwrap();
+    t.save_adapter_apr(dir.path(), 4, &adapter_metrics()).unwrap();
+
+    let reader = AprReader::open(&dir.path().join("model.adapter.apr")).unwrap();
+    let meta = |k: &str| reader.get_metadata(k).unwrap_or_else(|| panic!("missing {k}")).clone();
+    assert_eq!(meta("model_type"), serde_json::json!("adapter"));
+    assert_eq!(meta("epoch"), serde_json::json!(4));
+    assert_eq!(meta("val_loss"), serde_json::json!(0.75));
+    assert_eq!(meta("val_accuracy"), serde_json::json!(0.625));
+    assert_eq!(meta("num_classes"), serde_json::json!(3));
+    assert_eq!(meta("data_hash"), serde_json::json!(t.data_hash));
+
+    let names: Vec<&str> = reader.tensors.iter().map(|d| d.name.as_str()).collect();
+    assert!(names.contains(&"classifier.weight") && names.contains(&"classifier.bias"));
+    assert!(
+        names.iter().all(|n| !n.starts_with("__training__.")),
+        "F-CKPT-003: adapter must carry no optimizer state, got {names:?}"
+    );
+    let lora = names.iter().filter(|n| n.starts_with("lora.")).count();
+    assert_eq!(lora, 2 * t.pipeline.lora_layers.len(), "lora_a + lora_b per layer");
+}
+
+#[test]
+fn test_save_adapter_apr_roundtrips_classifier_weights() {
+    use aprender::serialization::apr::AprReader;
+    let mut t = adapter_trainer();
+    t.pipeline.classifier.weight.data_mut().as_slice_mut().unwrap().fill(0.125);
+    let dir = tempfile::tempdir().unwrap();
+    t.save_adapter_apr(dir.path(), 1, &adapter_metrics()).unwrap();
+
+    let reader = AprReader::open(&dir.path().join("model.adapter.apr")).unwrap();
+    let w = reader.read_tensor_f32("classifier.weight").unwrap();
+    assert_eq!(w.len(), t.pipeline.classifier.weight.len());
+    assert!(w.iter().all(|&v| v == 0.125));
+}
+
+#[test]
+fn test_save_adapter_apr_unwritable_dir_is_serialization_error() {
+    let t = adapter_trainer();
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("no").join("such").join("dir");
+    let err = t.save_adapter_apr(&missing, 1, &adapter_metrics()).unwrap_err();
+    assert!(
+        matches!(&err, crate::Error::Serialization(m) if m.contains("APR adapter serialization failed")),
+        "unexpected error: {err:?}"
+    );
+}
