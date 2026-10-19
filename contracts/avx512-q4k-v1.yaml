@@ -67,3 +67,9 @@ falsification_tests:
     test: "cargo test -p aprender-compute --lib falsify_avx512_q4k_003_non_aligned_in_dim_no_oob"
     prediction: "|simd - scalar| < 1e-2 for in_dim in {32,48,96,160,224,256}"
     if_fails: "the AVX-512 kernel over-reads past in_dim (sentinel leaks in) or drops the high-nibble tail"
+  - id: FALSIFY-AVX512-Q4K-006
+    description: "C-AVX512-Q4K-001: the serial AVX-512 GEMV (out_dim*in_dim < 8M) matches the scalar reference per row, strides rows by the full row width, and masks the ragged tail to zero"
+    test: "cargo test -p aprender-compute --test q4k_serial_avx512_5634"
+    prediction: "|dispatch - scalar| <= 1e-3*max(|w|,1) for 1x256, 64x1024 and 3906x2048; in_dim=300 equals the scalar run on the zero-padded input"
+    if_fails: "matmul_q4k_f32_avx512 mis-strides rows, drops a super-block, or lets masked tail lanes contribute"
+    mutation: "row_start = out_idx * SUPER_BLOCK_BYTES instead of out_idx * row_bytes; must turn RED (MEASURED 2026-10-19, 3 tests RED)"
