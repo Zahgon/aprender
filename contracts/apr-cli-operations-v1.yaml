@@ -265,6 +265,11 @@ falsification_tests:
   prediction: The timestamp in a cbtop report matches the UTC date at the moment it was generated, on both headless paths
   test: commands::cbtop::tests::test_chrono_timestamp_is_current_utc_date
   if_fails: Persisted CI provenance is stamped with a stale hardcoded date
+- id: FALSIFY-OPS-021
+  rule: Resuming a classifier checkpoint restores what was saved and refuses a foreign dataset
+  prediction: resume_from_apr_checkpoint returns the saved epoch and the saved classifier weights, and a checkpoint from a different corpus is rejected with F-CKPT-006 before any weight is touched
+  test: finetune::classify_trainer::tests::test_resume_rejects_data_hash_mismatch
+  if_fails: A resume silently continues from weights trained on different data, or loses the epoch
 kani_harnesses:
 - id: KANI-OPS-001
   obligation: ReadOnly commands have no side effects

@@ -5099,3 +5099,91 @@ fn test_coverage_card_confusion_raw_formatting() {
     assert!(out.contains("```"));
     assert!(out.contains("Predicted"));
 }
+
+// =========================================================================
+// resume_from_apr_checkpoint (#5696)
+// =========================================================================
+
+fn resume_trainer(num_classes: usize, corpus_len: usize) -> ClassifyTrainer {
+    let cfg = TrainingConfig { epochs: 1, val_split: 0.2, ..TrainingConfig::default() };
+    ClassifyTrainer::new(tiny_pipeline(num_classes), make_corpus(corpus_len, num_classes), cfg)
+        .expect("trainer builds")
+}
+
+fn resume_metrics(epoch: usize) -> EpochMetrics {
+    EpochMetrics {
+        epoch,
+        train_loss: 0.5,
+        train_accuracy: 0.5,
+        val_loss: 0.5,
+        val_accuracy: 0.5,
+        learning_rate: 1e-2,
+        epoch_time_ms: 1,
+        samples_per_sec: 1.0,
+    }
+}
+
+fn classifier_weight(t: &ClassifyTrainer) -> Vec<f32> {
+    t.pipeline.classifier.weight.data().as_slice().unwrap().to_vec()
+}
+
+#[test]
+fn test_resume_missing_file_is_serialization_error() {
+    let mut t = resume_trainer(2, 20);
+    let dir = tempfile::tempdir().unwrap();
+    let err = t.resume_from_apr_checkpoint(&dir.path().join("absent.apr")).unwrap_err();
+    assert!(
+        matches!(&err, crate::Error::Serialization(m) if m.contains("Failed to open APR checkpoint")),
+        "unexpected error: {err:?}"
+    );
+}
+
+#[test]
+fn test_resume_restores_classifier_and_epoch() {
+    let mut saver = resume_trainer(2, 20);
+    saver.pipeline.classifier.weight.data_mut().as_slice_mut().unwrap().fill(0.25);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().to_path_buf();
+    saver.save_apr_checkpoint(&path, 3, &resume_metrics(3)).unwrap();
+
+    let mut resumer = resume_trainer(2, 20);
+    assert_ne!(classifier_weight(&resumer), classifier_weight(&saver));
+    let epoch = resumer.resume_from_apr_checkpoint(&path.join("model.apr")).unwrap();
+    assert_eq!(epoch, 3, "resume returns the saved epoch");
+    assert_eq!(classifier_weight(&resumer), classifier_weight(&saver));
+    assert!(classifier_weight(&resumer).iter().all(|&w| w == 0.25));
+}
+
+#[test]
+fn test_resume_rejects_data_hash_mismatch() {
+    let saver = resume_trainer(2, 20);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().to_path_buf();
+    saver.save_apr_checkpoint(&path, 1, &resume_metrics(1)).unwrap();
+
+    let mut other = resume_trainer(2, 30);
+    let before = classifier_weight(&other);
+    let err = other.resume_from_apr_checkpoint(&path.join("model.apr")).unwrap_err();
+    assert!(
+        matches!(&err, crate::Error::ConfigError(m) if m.contains("F-CKPT-006")),
+        "unexpected error: {err:?}"
+    );
+    assert_eq!(classifier_weight(&other), before, "a rejected resume must not touch weights");
+}
+
+#[test]
+fn test_resume_rejects_classifier_shape_mismatch() {
+    let saver = resume_trainer(2, 20);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().to_path_buf();
+    saver.save_apr_checkpoint(&path, 1, &resume_metrics(1)).unwrap();
+
+    // Same corpus length but a different class count: the data hash differs
+    // too, so assert on whichever F-CKPT guard fires first, never success.
+    let mut other = resume_trainer(3, 20);
+    let err = other.resume_from_apr_checkpoint(&path.join("model.apr")).unwrap_err();
+    assert!(
+        matches!(err, crate::Error::ConfigError(_) | crate::Error::Serialization(_)),
+        "unexpected error: {err:?}"
+    );
+}
