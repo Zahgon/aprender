@@ -265,6 +265,11 @@ falsification_tests:
   prediction: The timestamp in a cbtop report matches the UTC date at the moment it was generated, on both headless paths
   test: commands::cbtop::tests::test_chrono_timestamp_is_current_utc_date
   if_fails: Persisted CI provenance is stamped with a stale hardcoded date
+- id: FALSIFY-OPS-016
+  rule: pv lint layers CLI flags over the config file
+  prediction: build_config takes scalars from the flag when set else the file, merges suppression lists, and lets a CLI rule override beat the file; a missing config yields defaults
+  test: commands::lint::tests::build_config_merges_cli_flags_over_the_config_file
+  if_fails: pv lint silently ignores a flag or a config setting
 kani_harnesses:
 - id: KANI-OPS-001
   obligation: ReadOnly commands have no side effects
