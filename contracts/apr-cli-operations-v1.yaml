@@ -275,6 +275,11 @@ falsification_tests:
   prediction: build_config takes scalars from the flag when set else the file, merges suppression lists, and lets a CLI rule override beat the file; a missing config yields defaults
   test: commands::lint::tests::build_config_merges_cli_flags_over_the_config_file
   if_fails: pv lint silently ignores a flag or a config setting
+- id: FALSIFY-OPS-021
+  rule: Mock page coverage cannot be read before it is started, and stopping ends collection
+  prediction: take_coverage before start_coverage is an InvalidState error; after start it returns the page url and added functions; stop_coverage returns the final report and later takes fail
+  test: mock_page_take_coverage_5695::stop_coverage_returns_final_report_then_disables
+  if_fails: Coverage reads succeed on a page that never enabled collection, or keep succeeding after stop
 kani_harnesses:
 - id: KANI-OPS-001
   obligation: ReadOnly commands have no side effects
