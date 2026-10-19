@@ -1848,22 +1848,6 @@ jobs:
           heal_path /mnt/nvme-raid0/cargo-ci/home "$GUARD_CARGO_HOME/registry"
           printf 'target dir: %s\n' "$GUARD_TARGET_DIR"
           printf 'cargo home: %s (registry/ .package-cache .package-cache-mutate travel together)\n' "$GUARD_CARGO_HOME"
-          # A2 (pace quorum 2026-10-19 23:30Z): the guard steps run on the HOST, so their cargo
-          # builds (m5 builds pv: 1267-1517 s on x86-main, #5544/#5449 killed at 3563-3567 s)
-          # never saw the sccache the workspace-test containers share. Take the binary out of the
-          # CI image and wrap rustc with it. The cargo build itself stays: no prebuilt pv, no
-          # PV_BIN, so Row 5 still builds what it judges. No shared cache dir on this host, or
-          # no sccache in the image: carry on uncached, exactly as before.
-          if [ -d /home/noah/data/sccache ] \
-            && docker run --rm --user "$(id -u):$(id -g)" -v "$RUNNER_TEMP:/out" "$IMAGE" cp /usr/local/cargo/bin/sccache /out/sccache-host; then
-            echo "RUSTC_WRAPPER=$RUNNER_TEMP/sccache-host" >> "$GITHUB_ENV"
-            echo "SCCACHE_DIR=/home/noah/data/sccache" >> "$GITHUB_ENV"
-            echo "SCCACHE_CACHE_SIZE=50G" >> "$GITHUB_ENV"
-            echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
-            printf 'sccache: wrapping rustc with %s/sccache-host\n' "$RUNNER_TEMP"
-          else
-            printf 'sccache: unavailable here, guard-cargo builds uncached\n'
-          fi
       # #4415 (operator A4, 2026-09-25): ONE step runs every guard step of guard-cargo-steps
       # below, keeps going past a red one, and reports every failure. GitHub would
       # stop this job at its first red step, and the others would never be seen.
@@ -1931,12 +1915,46 @@ jobs:
       # pv/pmat/apr AND exercises both pins against a poisoned PATH -- presence
       # of `PMAT_BIN` proves nothing about which binary the gate ends up running.
       # It found `pmat analyze reachability` bare in BOTH copies on its first run.
+      # A2 (pace quorums 2026-10-19 23:51Z and 00:10Z, option c, the split): m5 is 1267-1517 s on
+      # x86-main (#5544, #5449 killed at 3563-3567 s) because its pv cargo build ran on the HOST,
+      # outside the sccache the workspace-test containers share. The build moves into the CI image
+      # here; the guard itself (its python3 rows need an interpreter the image lacks) stays on the
+      # host and its own `cargo build -q` becomes a fingerprint no-op. Same-path mounts: the
+      # workspace and CARGO_HOME are mounted at their HOST paths, so cargo's fingerprints and the
+      # `src_path` that pv.d checks (#2745) are identical inside and outside. rustc stays 1.93.0
+      # (rust-toolchain.toml): the host toolchain is mounted read-only ahead of the image's 1.95.
+      # Cargo.lock is snapshotted BEFORE the container build, so Row 5 cannot pass vacuously, and
+      # a build that moves it fails here. No --locked, no PV_BIN, no prebuilt pv, verifier_pin.sh
+      # untouched. sccache is never installed on the host (it hangs there).
       - name: The release runner must not resolve a verifier through PATH
         run: |
-          rc=0
-          setsid --wait bash scripts/check_verifier_pinning.sh || rc=$?
-          if [ -n "${RUSTC_WRAPPER:-}" ]; then "$RUSTC_WRAPPER" --show-stats || true; fi
-          exit "$rc"
+          set -euo pipefail
+          root=$(git rev-parse --show-toplevel)
+          tc=$(dirname "$(dirname "$(rustup which rustc --toolchain 1.93.0)")")
+          ch=${CARGO_HOME:-$HOME/.cargo}
+          sc=${SCCACHE_HOST_DIR:-/home/noah/data/sccache}
+          mkdir -p "$ch" "$sc"
+          snap=$(mktemp)
+          cp "$root/Cargo.lock" "$snap"
+          printf 'host rustc: %s\n' "$("$tc/bin/rustc" -vV | sed -n 1p)"
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "$root:$root" -w "$root" -v "$tc:$tc:ro" -v "$ch:$ch" -v "$sc:/sccache" \
+            -e HOME=/tmp -e CARGO_HOME="$ch" \
+            -e PATH="$tc/bin:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+            -e RUSTC_WRAPPER=/usr/local/cargo/bin/sccache -e SCCACHE_DIR=/sccache \
+            -e SCCACHE_CACHE_SIZE=50G -e CARGO_INCREMENTAL=0 \
+            -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0="$root" \
+            "$IMAGE" bash -c 'printf "container rustc: %s\n" "$(rustc -vV | sed -n 1p)"; t0=$(date +%s); cargo build -q -p aprender-contracts-cli --bin pv --bin pv-sat --features update-check,build-sha; printf "container pv build: %s s\n" "$(( $(date +%s) - t0 ))"; sccache --show-stats'
+          if ! cmp -s "$snap" "$root/Cargo.lock"; then
+            cp "$snap" "$root/Cargo.lock"
+            echo "FAIL  the container build moved Cargo.lock (restored); run scripts/check_lockfile_current.sh"
+            exit 1
+          fi
+          # the proof that the split is a no-op for the guard: the host build must compile nothing
+          t0=$(date +%s)
+          n=$(cargo build -v -p aprender-contracts-cli --bin pv --bin pv-sat --features update-check,build-sha 2>&1 | grep -c ' Running `' || true)
+          printf 'host cargo build after the container build: %s compile commands, %s s\n' "$n" "$(( $(date +%s) - t0 ))"
+          setsid --wait bash scripts/check_verifier_pinning.sh
       # One runner, one prose, and the user-scope copy stays a <=70-line shim
       # that fails CLOSED. The cap lives here, in the repo on protected main;
       # the file it caps lives at user scope, where it could otherwise raise its
