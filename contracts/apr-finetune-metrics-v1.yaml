@@ -110,6 +110,13 @@ falsification_tests:
       jq '.tokens_per_sec > 0'
   if_fails: "tokens_per_sec is zero or negative"
 
+- id: FALSIFY-FINETUNE-DEVICE-5659
+  rule: DeviceInfo::cuda_info parses nvidia-smi
+  prediction: "name, MiB->GB memory and driver come from the 3-field row; a failing tool, a short row or a missing binary gives None; --id=N is passed through"
+  test: "cargo test -p aprender-train --test cuda_info_5659"
+  if_fails: "cuda_info mis-parses nvidia-smi output or reports a device that is not there"
+  mutation: "relax `parts.len() >= 3` to `>= 2` in finetune/device.rs; the test must turn RED (MEASURED 2026-10-19)"
+
 proof_obligations:
 - id: AFM-INV-001
   type: invariant
