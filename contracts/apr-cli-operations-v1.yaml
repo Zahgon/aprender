@@ -265,6 +265,11 @@ falsification_tests:
   prediction: The timestamp in a cbtop report matches the UTC date at the moment it was generated, on both headless paths
   test: commands::cbtop::tests::test_chrono_timestamp_is_current_utc_date
   if_fails: Persisted CI provenance is stamped with a stale hardcoded date
+- id: FALSIFY-OPS-026
+  rule: Generated JavaScript renders every statement kind byte-for-byte deterministically
+  prediction: codegen::generate emits the exact text for each Stmt variant, including four-space nesting for if/else, loops, try/catch and blocks
+  test: write_stmt_5720_tests::write_stmt_5720_try_catch_and_block_nest_one_level_deeper
+  if_fails: Immutability hashes of generated worker JS change, or nested bodies lose their indentation
 kani_harnesses:
 - id: KANI-OPS-001
   obligation: ReadOnly commands have no side effects

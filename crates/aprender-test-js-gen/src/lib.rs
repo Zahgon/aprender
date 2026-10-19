@@ -336,3 +336,6 @@ mod integration_tests {
         assert!(Identifier::new("name123").is_ok());
     }
 }
+
+#[cfg(test)]
+mod write_stmt_5720_tests;
