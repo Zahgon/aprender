@@ -17,6 +17,8 @@ mod coverage;
 mod depyler_patterns;
 mod python_enum;
 mod ruchy_enum;
+#[cfg(test)]
+mod ruchy_enum_to_code_tests;
 mod strategy;
 mod swarm;
 

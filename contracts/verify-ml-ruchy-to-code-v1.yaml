@@ -1,0 +1,47 @@
+metadata:
+  id: C-VERIFY-ML-RUCHY-TO-CODE
+  version: 1.0.0
+  created: '2026-10-19'
+  author: PAIML Engineering
+  kind: pattern
+  status: ACTIVE_ALGORITHM_LEVEL
+  description: |
+    Pins RuchyNode::to_code in aprender-verify-ml (#5682): every AST variant
+    renders its exact Ruchy surface syntax, including the optional-chain,
+    pipeline-free forms, if/else split, match arms and indentation.
+  references:
+    - 'crates/aprender-verify-ml/src/generator/ruchy_enum.rs (RuchyNode::to_code)'
+
+equations:
+  ruchy_to_code_surface:
+    formula: |
+      to_code(OptionalChain(r, f)) = to_code(r) + "?." + f
+      to_code(If without else) has no "else" token; with else it has exactly one
+    domain: RuchyNode values
+    invariants:
+    - 'a Block or fn body is indented one level deeper than its header'
+
+proof_obligations:
+- id: VRT-INV-001
+  type: invariant
+  property: to_code emits the variant's surface syntax
+  formal: 'to_code(OptionalChain(r, f)) ≡ r?.f'
+  applies_to: ruchy_to_code_surface
+
+falsification_tests:
+- id: FALSIFY-VERIFY-ML-RUCHY-TO-CODE-001
+  rule: to_code renders each RuchyNode variant exactly
+  prediction: '10 branch tests pin module, fn, assign, operators, literals, if/else, match, loops, calls, struct, array, closure, block, spawn and send output'
+  test: cargo test -p aprender-verify-ml --lib ruchy_enum_to_code
+  if_fails: generated Ruchy test programs are malformed and the verifier compares garbage
+  ship_blocking: false
+  mutation: 'drop the "?" from the OptionalChain format string; must turn RED'
+
+qa_gate:
+  id: QA-VERIFY-ML-RUCHY-TO-CODE-001
+  name: Ruchy to_code surface gate
+  description: RuchyNode::to_code surface syntax holds
+  checks:
+  - ruchy_to_code_surface
+  pass_criteria: FALSIFY-VERIFY-ML-RUCHY-TO-CODE-001 passes
+  falsification: Any failure fails the gate
