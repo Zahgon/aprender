@@ -61,6 +61,11 @@ falsification:
     test: "falsify_avx512_q4k_003_non_aligned_in_dim_no_oob — activation buffer carries a non-zero sentinel tail past in_dim inside the allocation; pre-fix over-read injects the sentinel (RED, e.g. in_dim=32 → SIMD 7.4e9 vs scalar 532), masked-load fix matches scalar (GREEN). Covers in_dim ∈ {32,48,96,160,224} (mod-256 mid-chunk cases) + 256 control."
     evidence: "cargo test -p aprender-compute --lib falsify_avx512_q4k_003"
 
+  - id: FALSIFY-AVX512-Q4K-007
+    description: "AVX-512 vector add at or above the 8192-element non-temporal threshold equals a[i]+b[i] for the 64-wide body, 16-wide loop and scalar tail (#5645)"
+    test: "avx512_add_nt_5645 (cargo test -p aprender-compute --test avx512_add_nt_5645)"
+    evidence: "mutation: swap _mm512_add_ps for _mm512_sub_ps in the 16-wide cleanup loop of add_nt; 2 tests go RED (MEASURED 2026-10-19)"
+
 falsification_tests:
   - id: FALSIFY-AVX512_Q4K-001
     description: "C-AVX512-Q4K-003 (and -001 parity): for non-256-aligned in_dim with a non-zero sentinel past in_dim, the dispatched Q4K matmul equals the scalar reference"
