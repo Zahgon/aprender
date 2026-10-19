@@ -349,3 +349,7 @@ mod tests {
         let _ = elapsed;
     }
 }
+
+#[cfg(test)]
+#[path = "diff_profiles_5616_tests.rs"]
+mod diff_profiles_5616_tests;

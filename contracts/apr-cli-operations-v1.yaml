@@ -265,6 +265,11 @@ falsification_tests:
   prediction: The timestamp in a cbtop report matches the UTC date at the moment it was generated, on both headless paths
   test: commands::cbtop::tests::test_chrono_timestamp_is_current_utc_date
   if_fails: Persisted CI provenance is stamped with a stale hardcoded date
+- id: FALSIFY-OPS-029
+  rule: A profile diff judges each metric by its direction and never invents a GPU comparison
+  prediction: diff_profiles compares GPU compute/memory metrics only when both profiles carry them, scores a 2% move as a change and a falling higher-is-better metric as REGRESSED
+  test: analysis::diff::diff_profiles_5616_tests::gpu_compute_and_memory_metrics_are_compared_with_higher_is_better
+  if_fails: cgp diff reports a regression as an improvement or diffs a GPU section that one side never measured
 kani_harnesses:
 - id: KANI-OPS-001
   obligation: ReadOnly commands have no side effects
