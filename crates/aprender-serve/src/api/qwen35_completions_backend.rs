@@ -393,3 +393,26 @@ pub(crate) fn try_qwen35_completions_stream(
     };
     Ok(Some(Sse::new(events).into_response()))
 }
+
+/// A state that serves no Qwen3.5 hybrid is not this arm's: the streaming entry
+/// declines with `Ok(None)`, so the buffered chain answers exactly as before (#5702).
+#[cfg(test)]
+mod qwen35_completions_stream_decline_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_state_without_a_hybrid_declines_the_completions_stream() {
+        let state = AppState::demo().expect("demo state");
+        assert!(
+            state.qwen35_session().is_none(),
+            "the fixture must hold no hybrid"
+        );
+        let request: CompletionRequest = serde_json::from_value(
+            serde_json::json!({"model": "m", "prompt": "hi", "max_tokens": 4, "stream": true}),
+        )
+        .expect("request");
+        let cancel = CancelToken::new();
+        let got = try_qwen35_completions_stream(&state, &request, &cancel);
+        assert!(matches!(got, Ok(None)), "must decline, not answer or fail");
+    }
+}
