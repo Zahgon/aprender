@@ -1,0 +1,42 @@
+metadata:
+  version: 1.0.0
+  created: '2026-10-19'
+  author: PAIML Engineering
+  description: "aprender-compute ModelConfig::from_gguf (#5600) — the four required keys (embedding_length, head_count, block_count, feed_forward_length, under the general.architecture prefix, default llama) are refused by name when missing; every optional key falls back to its documented default; vocab_size falls back to the tokenizer token-array length before 32000."
+  kind: pattern
+  references:
+    - "crates/aprender-compute/src/inference/model.rs — ModelConfig::from_gguf"
+    - "aprender#5600 — coverage ticket"
+
+equations:
+  config_extraction:
+    formula: "from_gguf(g) = Err(InvalidInput('Missing K in GGUF')) if a required key K is absent; else Config with kv_heads=head_count, vocab=vocab_size|len(tokens)|32000, eps=1e-5, rope=10000, ctx=2048 for absent optionals, head_dim=hidden/heads"
+    domain: "GgufFile metadata"
+    codomain: "Result<ModelConfig, TruenoError>"
+    invariants:
+      - "keys are looked up under the general.architecture prefix, never llama.* for another arch"
+      - "an explicit vocab_size wins over the token-array length"
+
+proof_obligations:
+  - id: MODEL-CFG-INV-001
+    type: invariant
+    property: "absent optional keys yield the documented defaults"
+    formal: "cargo test -p aprender-compute --test model_config_from_gguf required_keys_only_yield_documented_defaults exits 0"
+    applies_to: config_extraction
+  - id: MODEL-CFG-INV-002
+    type: invariant
+    property: "each missing required key is refused naming itself"
+    formal: "cargo test -p aprender-compute --test model_config_from_gguf each_missing_required_key_names_itself exits 0"
+    applies_to: config_extraction
+
+falsification_tests:
+  - id: FALSIFY-MODEL-CFG-001
+    rule: "default rope base changed"
+    prediction: "changing the 10000.0 rope default turns required_keys_only_yield_documented_defaults RED"
+    test: "cargo test -p aprender-compute --test model_config_from_gguf required_keys_only_yield_documented_defaults"
+    if_fails: "the optional defaults are unguarded"
+  - id: FALSIFY-MODEL-CFG-002
+    rule: "kv-head default dropped"
+    prediction: "defaulting num_kv_heads to 1 instead of head_count turns required_keys_only_yield_documented_defaults RED"
+    test: "cargo test -p aprender-compute --test model_config_from_gguf required_keys_only_yield_documented_defaults"
+    if_fails: "the GQA default is unguarded"
