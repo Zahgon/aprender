@@ -1,0 +1,47 @@
+metadata:
+  id: C-SERVE-QWEN35-BACKEND-DECLINE
+  version: 1.0.0
+  created: '2026-10-19'
+  author: PAIML Engineering
+  kind: pattern
+  status: ACTIVE_ALGORITHM_LEVEL
+  description: |
+    Pins try_qwen35_backend (#5685): a state with no resident Qwen3.5 session
+    declines the request (None) so the chat dispatcher falls through to the next
+    backend. The session branches need a real Qwen3.5 GGUF and stay with the
+    host-local tests in qwen35_chat_backend_tests.rs.
+  references:
+    - 'crates/aprender-serve/src/api/qwen35_chat_backend.rs (try_qwen35_backend)'
+
+equations:
+  qwen35_backend_decline:
+    formula: |
+      qwen35_session(state) = None -> try_qwen35_backend(state, request) = None
+    domain: AppState without a Qwen3.5 session
+    invariants:
+    - 'declining never builds a response and never records a failure'
+
+proof_obligations:
+- id: QBD-INV-001
+  type: invariant
+  property: no session means the backend declines
+  formal: 'session ≡ none ⇒ answer ≡ none'
+  applies_to: qwen35_backend_decline
+
+falsification_tests:
+- id: FALSIFY-SERVE-QWEN35-BACKEND-DECLINE-001
+  rule: try_qwen35_backend declines when the state has no Qwen3.5 session
+  prediction: 'the demo state gives None for plain, streamed and traced requests'
+  test: cargo test -p aprender-serve --lib try_qwen35_backend
+  if_fails: a non-Qwen3.5 server answers 500 from the Qwen3.5 backend instead of using its own
+  ship_blocking: false
+  mutation: 'return a 500 response when the session is absent; must turn RED'
+
+qa_gate:
+  id: QA-SERVE-QWEN35-BACKEND-DECLINE-001
+  name: Qwen3.5 backend decline gate
+  description: try_qwen35_backend declines without a session
+  checks:
+  - qwen35_backend_decline
+  pass_criteria: FALSIFY-SERVE-QWEN35-BACKEND-DECLINE-001 passes
+  falsification: Any failure fails the gate

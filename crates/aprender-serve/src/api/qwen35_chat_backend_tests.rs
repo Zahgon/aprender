@@ -1208,3 +1208,22 @@ async fn gpu_logprobs_4971_the_gpu_session_serves_them_and_changes_no_token() {
     }
     assert_logprobs_served_and_no_token_changed_4971(false).await;
 }
+
+/// #5685: with no resident Qwen3.5 session `try_qwen35_backend` declines (returns
+/// `None`) so the caller falls through to the next backend, and it counts no failure.
+#[tokio::test]
+async fn try_qwen35_backend_declines_without_a_session_5685() {
+    let state = AppState::demo().expect("demo state");
+    assert!(state.qwen35_session().is_none(), "demo serves no Qwen3.5 session");
+    let request: ChatCompletionRequest =
+        serde_json::from_value(chat_body(false, 8)).expect("chat request");
+    let cancel = CancelToken::new();
+    let answer = try_qwen35_backend(&state, &request, "req-5685", None, Instant::now(), &cancel).await;
+    assert!(answer.is_none(), "no session must decline, not answer");
+    // A streaming request declines the same way: the decision precedes `stream`.
+    let streamed: ChatCompletionRequest =
+        serde_json::from_value(chat_body(true, 8)).expect("streamed chat request");
+    let answer =
+        try_qwen35_backend(&state, &streamed, "req-5685", Some("layer"), Instant::now(), &cancel).await;
+    assert!(answer.is_none(), "a trace header must not make a session appear");
+}
