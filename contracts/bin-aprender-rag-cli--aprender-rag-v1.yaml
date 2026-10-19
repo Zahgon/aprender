@@ -131,3 +131,9 @@ falsification_tests:
     test: 'pv lint contracts/ --gate shapes on the snapshot (ONT-4g extract:binary)'
     if_fails: 'LIVE RED 2026-09-27 on a default-feature snapshot: 7 `eval *` rows are bin:ledgerOrphan. They are NOT a ledger defect: all 7 are enumerated in scripts/dogfood_reconcile.py FEATURE_GATED (proven by rebuilding with --features eval), so the RED clears when extract:binary reads that enumerated set as an allowance (same fix clears the S9 apr and S10 alimentar feature-gated rows) — never by a count tolerance, and never by deleting the rows'
     mutation: 'delete `query` from the snapshot; must turn RED on bin:command (5) and bin:ledgerOrphan naming `aprender-rag query`'
+  - id: FALSIFY-BIN-TRUENO-RAG-007
+    rule: 'parallel document loading counts every failure and keeps every success'
+    prediction: '`aprender-rag index --jobs 4` over 3 readable and 2 invalid-UTF-8 files prints "Loaded 3 documents (2 failed)" and writes index.json; over only unreadable files it exits non-zero with "All files failed to load (3 errors)" and writes nothing'
+    test: 'cargo test -p aprender-rag-cli --test parallel_load_5633'
+    if_fails: 'load_documents_parallel drops a document, miscounts load_errors, or swallows the all-failed error'
+    mutation: 'load_errors += 2 in the Err arm of load_documents_parallel; must turn RED (MEASURED 2026-10-19, 3 tests RED)'
