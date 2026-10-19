@@ -101,6 +101,12 @@ falsification_tests:
   prediction: SIMD roofline matches scalar
   test: proptest
   if_fails: ' compare scalar vs SIMD roofline calc:SIMD roofline bounds differ'
+- id: FALSIFY-RM-5716
+  rule: run_roofline rejects unknown targets and --json never also exports
+  prediction: target "tpu" errors naming the supported set; json mode writes no export file; export round-trips the selected model
+  test: cargo test -p aprender-cgp --test roofline_run_5716
+  if_fails: cgp roofline accepts a bogus target, or --json silently writes an export file
+  mutation: drop the early return after the json println in run_roofline; json_mode_returns_before_export_so_no_file_is_written must turn RED (MEASURED 2026-10-19)
 kani_harnesses:
 - id: KANI-RM-001
   obligation: RM-BND-001
