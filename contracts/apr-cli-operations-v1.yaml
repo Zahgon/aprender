@@ -290,6 +290,11 @@ falsification_tests:
   prediction: run_batch_loop emits one JSONL error row and counts one failure per bad-JSON, encode-failed or model-less prompt, skips blank lines, and returns an IoError when the sink is unwritable
   test: infer::tests_batch_loop_5691::bad_json_encode_failure_and_missing_model_each_emit_one_error_row_5691
   if_fails: a bad prompt aborts or silently vanishes from a batch run
+- id: FALSIFY-OPS-019
+  rule: oracle recommender emits a distinct code example per stack component
+  prediction: generate_code_example returns Some for every known component with a distinct non-empty body, honours a recommended aprender path, and returns None for an unknown component
+  test: oracle::recommender::tests::code_example_exists_for_every_stack_component_and_is_distinct
+  if_fails: the oracle shows the wrong or no example for a recommended component
 kani_harnesses:
 - id: KANI-OPS-001
   obligation: ReadOnly commands have no side effects
