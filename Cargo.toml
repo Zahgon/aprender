@@ -33,6 +33,7 @@ members = [
     "crates/aprender-compute-xtask",
     # --- PY-PORT (C301): CI helpers ported from scripts/**/*.py, publish = false ---
     "crates/aprender-ci-tools",
+    "crates/aprender-rollup",
     # --- APR-MONO Phase 2b: was provable-contracts ---
     "crates/aprender-contracts",
     "crates/aprender-contracts-macros",

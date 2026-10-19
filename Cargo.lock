@@ -1389,6 +1389,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "aprender-rollup"
+version = "0.71.3"
+
+[[package]]
 name = "aprender-serve"
 version = "0.71.3"
 dependencies = [
