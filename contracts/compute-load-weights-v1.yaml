@@ -1,0 +1,50 @@
+metadata:
+  id: C-COMPUTE-LOAD-WEIGHTS
+  version: 1.0.0
+  created: '2026-10-19'
+  author: PAIML Engineering
+  kind: pattern
+  status: ACTIVE_ALGORITHM_LEVEL
+  description: |
+    Pins `load_weights` (#5597), reached through `LlamaModel::from_gguf`:
+    embeddings, output norm and every layer tensor load with exact values and
+    row counts; a missing output.weight ties the head to the embeddings;
+    attention biases are Some only when present; F16 and Q8_0 tensors are
+    dequantized to F32; any absent required tensor errors with its own name.
+  references:
+    - 'crates/aprender-compute/src/inference/model.rs (load_weights)'
+
+equations:
+  load_weights_result:
+    formula: |
+      output_weight = output.weight if present else token_embd with vocab rows
+      bias = Some(values) iff blk.N.attn_{q,k,v}.bias is in the file
+      absent required tensor T => Err("Missing tensor: T")
+    domain: in-memory GGUF built from llama.* metadata and named tensors
+    invariants:
+    - 'layers.len() equals llama.block_count'
+
+proof_obligations:
+- id: CLW-INV-001
+  type: invariant
+  property: a missing output.weight ties the head to the embeddings and a missing required tensor is named in the error
+  formal: 'tied ≡ absent'
+  applies_to: load_weights_result
+
+falsification_tests:
+- id: FALSIFY-COMPUTE-LOAD-WEIGHTS-001
+  rule: load_weights output is exact per branch
+  prediction: 'output.weight present loads 9.0 rows=3, absent copies token_embd; biases 1.5/2.5/3.5 or None; F16 1.0 and Q8_0 0..32 dequantize exactly; each of 11 absent tensors errors with Missing tensor: <name>'
+  test: cargo test -p aprender-compute --test load_weights_5597
+  if_fails: GGUF weight loading silently mis-wires the head, biases or layer tensors
+  ship_blocking: false
+  mutation: 'invert the output.weight is_some check or load attn_v in place of attn_k; each must turn RED'
+
+qa_gate:
+  id: QA-COMPUTE-LOAD-WEIGHTS-001
+  name: compute load_weights gate
+  description: load_weights result is exact
+  checks:
+  - load_weights_result
+  pass_criteria: FALSIFY-COMPUTE-LOAD-WEIGHTS-001 passes
+  falsification: Any failure fails the gate
