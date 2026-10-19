@@ -5,6 +5,7 @@
 //! rollup commit is on main, with the SHA posted; never on red (see [`Outcome`]).
 
 pub mod gh_json;
+pub mod report;
 
 /// Largest PR (additions + deletions, from `gh`) that may join a rollup.
 pub const MAX_LINES: u32 = 200;
