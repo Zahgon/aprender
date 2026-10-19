@@ -1,0 +1,42 @@
+metadata:
+  version: 1.0.0
+  created: '2026-10-19'
+  author: PAIML Engineering
+  description: "aprender-present-yaml ExpressionExecutor::apply_pivot (#5631) — groups array rows by row_field, spreads col_field values into columns, sums value_field on duplicate cells; a missing value counts as 0, non-object items are skipped, missing keys become the empty string, a non-array input is ExpectedArray."
+  kind: pattern
+  references:
+    - "crates/aprender-present-yaml/src/executor.rs — apply_pivot"
+    - "aprender#5631 — coverage ticket"
+
+equations:
+  pivot_table:
+    formula: "pivot(rows)[r][c] = sum of value_field over rows with row_field=r and col_field=c; absent value_field contributes 0; one output object per distinct r"
+    domain: "Value::Array of objects"
+    codomain: "Value::Array of objects keyed by row_field plus one key per column value"
+    invariants:
+      - "duplicate (r,c) cells are summed, never overwritten"
+      - "non-array input fails with ExpectedArray"
+
+proof_obligations:
+  - id: EXEC-PIVOT-INV-001
+    type: invariant
+    property: "Duplicate cells are summed and columns spread"
+    formal: "cargo test -p aprender-present-yaml --test pivot_transform pivot_sums_duplicates_and_spreads_columns exits 0"
+    applies_to: pivot_table
+  - id: EXEC-PIVOT-INV-002
+    type: invariant
+    property: "Non-array input is rejected"
+    formal: "cargo test -p aprender-present-yaml --test pivot_transform pivot_requires_array exits 0"
+    applies_to: pivot_table
+
+falsification_tests:
+  - id: FALSIFY-EXEC-PIVOT-001
+    rule: "sum replaced by overwrite"
+    prediction: "dropping and_modify(|v| *v += val) turns pivot_sums_duplicates_and_spreads_columns RED"
+    test: "cargo test -p aprender-present-yaml --test pivot_transform pivot_sums_duplicates_and_spreads_columns"
+    if_fails: "cell accumulation is unguarded"
+  - id: FALSIFY-EXEC-PIVOT-002
+    rule: "missing value default changed"
+    prediction: "unwrap_or(0.0) -> unwrap_or(1.0) turns pivot_missing_value_counts_as_zero RED"
+    test: "cargo test -p aprender-present-yaml --test pivot_transform pivot_missing_value_counts_as_zero"
+    if_fails: "missing-value default is unguarded"
