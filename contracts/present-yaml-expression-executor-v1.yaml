@@ -181,3 +181,8 @@ falsification_tests:
     test: "cargo test -p aprender-present-yaml --lib a_transform_that_needs_an_array_refuses_anything_else"
     prediction: "require_array is Err for Null, Number, String and Object, and Ok for an empty Array"
     if_fails: "transforms coerce non-array input"
+  - id: FALSIFY-PRESENT_YAML_EXPRESSION_EXECUTOR-011
+    description: "moving_avg appends a trailing-window mean as <field>_ma<window>"
+    test: "cargo test -p aprender-present-yaml --test moving_avg_5643"
+    prediction: "window 2 over 1,2,3,4 gives 1,1.5,2.5,3.5; a window larger than the data is a running mean; originals are kept; empty input stays empty; non-array input is Err"
+    if_fails: "the window slides wrongly or the average column is misnamed"
