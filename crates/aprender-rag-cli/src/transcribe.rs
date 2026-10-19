@@ -179,3 +179,74 @@ pub(crate) fn run_transcribe(
     );
     Ok(())
 }
+
+#[cfg(test)]
+mod filter_tests {
+    use super::*;
+
+    /// Three media files in a tempdir: `a` has an .srt sidecar, `b` has a .vtt
+    /// sidecar, `c` has none.
+    fn fixture() -> (tempfile::TempDir, Vec<PathBuf>) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let media: Vec<PathBuf> = ["a.mp4", "b.mp4", "c.mp4"]
+            .iter()
+            .map(|n| dir.path().join(n))
+            .collect();
+        fs::write(dir.path().join("a.srt"), "x").expect("srt");
+        fs::write(dir.path().join("b.vtt"), "x").expect("vtt");
+        (dir, media)
+    }
+
+    fn mark_completed(root: &Path, done: &[&PathBuf]) {
+        let m = TranscribeManifest {
+            completed: done
+                .iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect(),
+            failed: vec![],
+        };
+        m.save(root).expect("save manifest");
+    }
+
+    #[test]
+    fn skip_existing_keeps_only_files_without_sidecar() {
+        let (dir, media) = fixture();
+        let got = filter_files_for_transcription(&media, dir.path(), true);
+        assert_eq!(got, vec![media[2].clone()]);
+    }
+
+    #[test]
+    fn not_skipping_existing_keeps_every_file() {
+        let (dir, media) = fixture();
+        let got = filter_files_for_transcription(&media, dir.path(), false);
+        assert_eq!(got, media);
+    }
+
+    #[test]
+    fn manifest_completed_files_are_dropped_in_both_modes() {
+        let (dir, media) = fixture();
+        mark_completed(dir.path(), &[&media[2], &media[0]]);
+        let skip = filter_files_for_transcription(&media, dir.path(), true);
+        assert!(
+            skip.is_empty(),
+            "c is completed, a/b have sidecars: {skip:?}"
+        );
+        let all = filter_files_for_transcription(&media, dir.path(), false);
+        assert_eq!(all, vec![media[1].clone()]);
+    }
+
+    #[test]
+    fn corrupt_manifest_is_treated_as_empty() {
+        let (dir, media) = fixture();
+        fs::write(dir.path().join(".transcribe-manifest.json"), "{not json").expect("write");
+        let got = filter_files_for_transcription(&media, dir.path(), false);
+        assert_eq!(got, media);
+    }
+
+    #[test]
+    fn empty_input_yields_empty_output() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(filter_files_for_transcription(&[], dir.path(), true).is_empty());
+        assert!(filter_files_for_transcription(&[], dir.path(), false).is_empty());
+    }
+}
