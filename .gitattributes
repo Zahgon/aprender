@@ -36,3 +36,13 @@ docs/audits/review-corpus/*.jsonl audit-golden
 # PRM-S1 v2 (#4447): the frozen set and each build's replay rows are written whole
 # by `replay build` / `replay run`, so they are single-writer goldens, not ledgers.
 docs/audits/prm-001/s1-v2/**/*.jsonl audit-golden
+# #5725: scripts/tree_reader_tests.txt is a SET of rows. Its checker
+# (scripts/check_tree_reader_tests.sh registry_body) strips comments and blanks and
+# compares `LC_ALL=C sort -u`, so row order and duplicate rows never matter. Two PRs
+# that each add a row make the file DIRTY the moment either merges; the union is the
+# correct resolution every time. Proved in a throwaway repo: two adjacent one-line
+# additions, 1 conflict without this line, 0 with it. NOT covered, on purpose:
+# contracts/witness/<sha256>.json is named by its own content, so a second PR that
+# changes the relation set renames it -- no line-level driver can resolve a rename;
+# that needs regeneration in the merge group, which changes a gate and needs a quorum.
+scripts/tree_reader_tests.txt merge=union
