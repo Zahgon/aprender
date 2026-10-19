@@ -265,6 +265,11 @@ falsification_tests:
   prediction: The timestamp in a cbtop report matches the UTC date at the moment it was generated, on both headless paths
   test: commands::cbtop::tests::test_chrono_timestamp_is_current_utc_date
   if_fails: Persisted CI provenance is stamped with a stale hardcoded date
+- id: FALSIFY-OPS-020
+  rule: extract-frames fails loudly and dry-runs without side effects
+  prediction: run_extract_frames rejects a missing path and a video-less or fully excluded directory with distinct errors, rejects a malformed exclude glob, lists videos on dry-run without creating frame dirs, and leaves a populated frames dir untouched under skip-existing
+  test: extract::tests::skip_existing_treats_a_populated_frames_dir_as_done_but_an_empty_one_as_pending
+  if_fails: extract-frames re-extracts finished videos or hides why nothing was processed
 kani_harnesses:
 - id: KANI-OPS-001
   obligation: ReadOnly commands have no side effects
