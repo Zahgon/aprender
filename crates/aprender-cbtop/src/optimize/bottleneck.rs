@@ -303,3 +303,105 @@ impl BottleneckAnalysis {
         report
     }
 }
+
+#[cfg(test)]
+mod format_report_tests {
+    use super::*;
+
+    fn entry(workload: &str, size: usize, eff: f64, sev: BottleneckSeverity) -> BottleneckEntry {
+        BottleneckEntry {
+            workload: workload.to_string(),
+            size,
+            efficiency: eff,
+            gflops: 12.34,
+            recommendation: format!("fix {workload}"),
+            severity: sev,
+        }
+    }
+
+    fn summary() -> AnalysisSummary {
+        AnalysisSummary {
+            total_configs: 7,
+            avg_efficiency: 0.5,
+            min_efficiency: 0.125,
+            max_efficiency: 0.9,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn empty_analysis_reports_header_summary_and_all_clear() {
+        let r = BottleneckAnalysis {
+            summary: summary(),
+            ..Default::default()
+        }
+        .format_report();
+        assert!(r.starts_with("# Bottleneck Analysis Report\n\n"));
+        assert!(r.contains("**Configurations Analyzed**: 7\n"));
+        assert!(r.contains("**Average Efficiency**: 50.0%\n"));
+        assert!(r.contains("**Efficiency Range**: 12.5% - 90.0%\n"));
+        assert!(r.contains("performing at >= 75% efficiency"));
+        assert!(!r.contains("## "), "no section without entries: {r}");
+    }
+
+    #[test]
+    fn each_severity_gets_its_own_section_and_suppresses_all_clear() {
+        let a = BottleneckAnalysis {
+            critical: vec![entry("gemm", 1024, 0.1, BottleneckSeverity::Critical)],
+            severe: vec![entry("dot", 64, 0.4, BottleneckSeverity::Severe)],
+            moderate: vec![entry("axpy", 8, 0.6, BottleneckSeverity::Moderate)],
+            unstable: vec![entry("sum", 2, 0.9, BottleneckSeverity::Unstable)],
+            summary: summary(),
+        };
+        let r = a.format_report();
+        let pos = |s: &str| r.find(s).unwrap_or_else(|| panic!("missing {s:?} in {r}"));
+        assert!(
+            pos("## Critical Bottlenecks (< 25% efficiency)")
+                < pos("## Severe Bottlenecks (< 50% efficiency)")
+        );
+        assert!(
+            pos("## Severe Bottlenecks (< 50% efficiency)")
+                < pos("## Moderate Bottlenecks (< 75% efficiency)")
+        );
+        assert!(
+            pos("## Moderate Bottlenecks (< 75% efficiency)")
+                < pos("## Unstable Operations (CV > 15%)")
+        );
+        assert!(r.contains(
+            "- **gemm** @ 1024 elements: 10.0% efficiency (12.3 GFLOP/s)\n  - fix gemm\n\n"
+        ));
+        assert!(
+            r.contains("- **dot** @ 64 elements: 40.0% efficiency (12.3 GFLOP/s)\n  - fix dot\n\n")
+        );
+        assert!(r.contains(
+            "- **axpy** @ 8 elements: 60.0% efficiency (12.3 GFLOP/s)\n  - fix axpy\n\n"
+        ));
+        // unstable rows show the recommendation only, no efficiency figure
+        assert!(r.contains("- **sum** @ 2 elements: fix sum\n\n"));
+        assert!(!r.contains("performing at >= 75%"), "{r}");
+    }
+
+    #[test]
+    fn a_single_nonempty_bucket_is_enough_to_suppress_all_clear() {
+        for a in [
+            BottleneckAnalysis {
+                critical: vec![entry("a", 1, 0.1, BottleneckSeverity::Critical)],
+                ..Default::default()
+            },
+            BottleneckAnalysis {
+                severe: vec![entry("a", 1, 0.3, BottleneckSeverity::Severe)],
+                ..Default::default()
+            },
+            BottleneckAnalysis {
+                moderate: vec![entry("a", 1, 0.6, BottleneckSeverity::Moderate)],
+                ..Default::default()
+            },
+            BottleneckAnalysis {
+                unstable: vec![entry("a", 1, 0.9, BottleneckSeverity::Unstable)],
+                ..Default::default()
+            },
+        ] {
+            assert!(!a.format_report().contains("performing at >= 75%"));
+        }
+    }
+}
