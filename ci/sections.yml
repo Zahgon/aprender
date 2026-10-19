@@ -1948,10 +1948,11 @@ jobs:
           snap=$(mktemp)
           cp "$root/Cargo.lock" "$snap"
           printf 'host rustc: %s\n' "$("$tc/bin/rustc" -vV | sed -n 1p)"
+          # toolchain bin first in PATH: the rustup proxy writes settings.toml, and RUSTUP_HOME is mounted read-only
           docker run --rm --user "$(id -u):$(id -g)" \
             -v "$root:$root" -w "$root" -v "$ru:$ru:ro" "${mounts[@]}" -v "$sc:/sccache" \
             -e HOME="$HOME" -e CARGO_HOME="$ch" -e RUSTUP_HOME="$ru" -e RUSTUP_TOOLCHAIN=1.93.0 -e RUSTFLAGS= -e CARGO_INCREMENTAL= \
-            -e PATH="$ca/bin:/usr/local/cargo/bin:/usr/bin:/bin" \
+            -e PATH="$tc/bin:$ca/bin:/usr/local/cargo/bin:/usr/bin:/bin" \
             -e RUSTC_WRAPPER=/usr/local/cargo/bin/sccache -e SCCACHE_DIR=/sccache \
             -e SCCACHE_CACHE_SIZE=50G \
             -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0="$root" \
