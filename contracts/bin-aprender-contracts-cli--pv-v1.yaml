@@ -168,3 +168,9 @@ falsification_tests:
     test: 'scripts/check_surface_audit_bins.sh (aprender#4476)'
     if_fails: 'a pv command ships unaudited (RED 2026-09-26: 11 of 49 paths had no row; GREEN 2026-09-27: 49 of 49)'
     mutation: 'delete every pv row; must turn RED naming pv'
+  - id: FALSIFY-BIN-PV-008
+    rule: '`audit --binding` fails on equations that have no binding entry'
+    prediction: 'audit::run with a binding that omits equations returns Err "N error(s)"; a fully bound, implemented binding passes; no binding path skips the binding audit; an unreadable binding file is an error'
+    test: 'cargo test -p aprender-contracts-cli --test audit_binding_5628'
+    if_fails: 'an unbound equation passes the audit, so a contract can ship with no implementation behind it'
+    mutation: 'return Ok(0) at the end of run_binding_audit instead of count_errors; unbound_equations_are_counted_as_errors must turn RED'
