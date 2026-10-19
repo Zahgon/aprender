@@ -1,0 +1,47 @@
+metadata:
+  id: C-SERVE-EXTRACT-LAYER-GENERIC
+  version: 1.0.0
+  created: '2026-10-19'
+  author: PAIML Engineering
+  kind: pattern
+  status: ACTIVE_ALGORITHM_LEVEL
+  description: |
+    Pins SafetensorsToAprConverter::extract_layer_generic (#5684): HuggingFace
+    and GGUF tensor names yield the same layer, qkv_weight is [Q; K; V] in that
+    order, the qkv bias exists only when all three biases do, QK norms are
+    optional, and a missing mandatory tensor is an error.
+  references:
+    - 'crates/aprender-serve/src/safetensors_infer_convert.rs (extract_layer_generic)'
+
+equations:
+  extract_layer_naming_and_qkv:
+    formula: |
+      layer(hf names) = layer(gguf names); qkv = Q ++ K ++ V; qkv_bias = Some iff q, k and v bias all present
+    domain: a TensorSource holding one transformer layer
+    invariants:
+    - 'a missing mandatory tensor returns Err, never a partial layer'
+
+proof_obligations:
+- id: SEL-INV-001
+  type: invariant
+  property: qkv is Q then K then V, and naming convention does not change the layer
+  formal: 'hf ≡ gguf ∧ qkv ≡ Q ∧ K ∧ V'
+  applies_to: extract_layer_naming_and_qkv
+
+falsification_tests:
+- id: FALSIFY-SERVE-EXTRACT-LAYER-GENERIC-001
+  rule: extract_layer_generic concatenates qkv in order and accepts both naming conventions
+  prediction: 'HF and GGUF fakes give equal layers; qkv equals Q, K, V in order; two of three biases give None; a missing down_proj errors'
+  test: cargo test -p aprender-serve --lib extract_layer_generic
+  if_fails: a converted model loads with scrambled attention weights or silently drops a layer tensor
+  ship_blocking: false
+  mutation: 'swap q and k in concat_qkv_transposed; must turn RED'
+
+qa_gate:
+  id: QA-SERVE-EXTRACT-LAYER-GENERIC-001
+  name: Safetensors layer extraction gate
+  description: extract_layer_generic naming, qkv order, bias and norm handling hold
+  checks:
+  - extract_layer_naming_and_qkv
+  pass_criteria: FALSIFY-SERVE-EXTRACT-LAYER-GENERIC-001 passes
+  falsification: Any failure fails the gate
