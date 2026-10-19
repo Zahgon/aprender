@@ -180,3 +180,21 @@ falsification_tests:
     test: 'cargo test -p aprender-contracts-cli --test equations_asm_5663'
     if_fails: 'detect_simd_isa mis-tiers a kernel or render_body_comments picks the wrong source'
     mutation: 'AVX-512 reg_count 32 -> 16; avx512_key_selects_zmm_with_32_registers must turn RED (MEASURED 2026-10-19)'
+  - id: FALSIFY-BIN-PV-009
+    rule: '`lint --watch` re-lints on a timer and prints a report plus the Watching banner per tick (#5602)'
+    prediction: 'two ticks give two reports and two banners; the process never exits on its own'
+    test: 'cargo test -p aprender-contracts-cli --test lint_watch_loop'
+    if_fails: 'the watch loop is unguarded'
+    mutation: 'drop the banner print after the report; the banner assertions must turn RED'
+  - id: FALSIFY-BIN-PV-010
+    rule: '`graph --format json` and `coverage` render nodes, from/to edges, topo order, cycles and totals (#5615, #5621)'
+    prediction: 'the edge direction is dependent->dependency, a cycle exits non-zero with an empty topo_order, and binding totals print only with --binding'
+    test: 'cargo test -p aprender-contracts-cli --test graph_coverage_render'
+    if_fails: 'a report renderer drifts without a test noticing'
+    mutation: 'swap from/to in render_json and print binding_partial as Binding implemented; graph_json_lists_nodes_edge_and_topological_order and coverage_with_binding_adds_binding_totals must turn RED (MEASURED 2026-10-19)'
+  - id: FALSIFY-BIN-PV-011
+    rule: 'apply_measured_ratchet turns F-34 violations into PV-ONT-014 errors and a Fail verdict (#5612)'
+    prediction: 'already guarded end to end by ont4c_doc_contracts (fragment 530)'
+    test: 'cargo test -p aprender-contracts-cli --test ont4c_doc_contracts'
+    if_fails: 'a withdrawn verified claim passes the ratchet'
+    mutation: 'invert `if answer.violations.is_empty()`; 6 of 16 tests turn RED (MEASURED 2026-10-19)'
