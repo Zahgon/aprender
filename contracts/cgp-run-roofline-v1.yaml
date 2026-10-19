@@ -1,0 +1,42 @@
+metadata:
+  version: 1.0.0
+  created: '2026-10-19'
+  author: PAIML Engineering
+  description: "aprender-cgp run_roofline (#5716) — an unknown target is an error naming the supported set; each target exports its own RooflineModel as JSON; --json (and --empirical --json on CPU) return before the export branch; an unwritable export path is an error."
+  kind: pattern
+  references:
+    - "crates/aprender-cgp/src/analysis/roofline.rs — run_roofline"
+    - "aprender#5716 — coverage ticket"
+
+equations:
+  run_roofline_dispatch_and_export:
+    formula: "target not in {cuda,avx2,avx512,neon,wgpu} => Err; json => Ok without writing export; else export file == serde_json(model(target))"
+    domain: "target string, export path option, empirical and json flags"
+    codomain: "Result<()> plus an optional JSON file"
+    invariants:
+      - "cuda and wgpu share the RTX 4090 model"
+      - "empirical measurement runs only for non-GPU targets"
+
+proof_obligations:
+  - id: CGP-RUN-INV-001
+    type: invariant
+    property: "Unknown target errors and names the supported set"
+    formal: "cargo test -p aprender-cgp --lib test_run_roofline_unknown_target_errors exits 0"
+    applies_to: run_roofline_dispatch_and_export
+  - id: CGP-RUN-INV-002
+    type: invariant
+    property: "json mode returns before export"
+    formal: "cargo test -p aprender-cgp --lib test_run_roofline_json_returns_before_export exits 0"
+    applies_to: run_roofline_dispatch_and_export
+
+falsification_tests:
+  - id: FALSIFY-CGP-RUN-001
+    rule: "json early-return removed"
+    prediction: "deleting the `return Ok(())` after the json print turns test_run_roofline_json_returns_before_export RED"
+    test: "cargo test -p aprender-cgp --lib test_run_roofline_json_returns_before_export"
+    if_fails: "json mode silently exports"
+  - id: FALSIFY-CGP-RUN-002
+    rule: "target arm swapped"
+    prediction: "mapping cuda to cpu_avx2 turns test_run_roofline_export_writes_target_model RED"
+    test: "cargo test -p aprender-cgp --lib test_run_roofline_export_writes_target_model"
+    if_fails: "target dispatch is unguarded"

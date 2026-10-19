@@ -752,4 +752,73 @@ mod tests {
         let bw = measure_bandwidth_triad();
         assert!(bw > 0.0, "Triad bandwidth must be positive, got {bw}");
     }
+
+    /// FALSIFY-CGP-RUN-001: an unknown target is an error naming the target.
+    #[test]
+    fn test_run_roofline_unknown_target_errors() {
+        let err = run_roofline("tpu", None, None, false, false).expect_err("unknown target");
+        let msg = err.to_string();
+        assert!(msg.contains("Unknown roofline target: tpu"), "{msg}");
+        assert!(msg.contains("cuda, avx2, avx512, neon, wgpu"), "{msg}");
+    }
+
+    /// FALSIFY-CGP-RUN-002: `--export` writes the selected target's model as JSON.
+    #[test]
+    fn test_run_roofline_export_writes_target_model() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for target in ["cuda", "wgpu"] {
+            let path = dir.path().join(format!("{target}.json"));
+            run_roofline(target, None, path.to_str(), false, false).expect("run");
+            let model: RooflineModel =
+                serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
+            assert!(model.target.contains("4090"), "{target}: {}", model.target);
+            assert_eq!(model.peak_compute[&Precision::Fp16], 330.0e12);
+        }
+    }
+
+    /// FALSIFY-CGP-RUN-003: every CPU target exports a model with positive peaks.
+    #[test]
+    fn test_run_roofline_cpu_targets_export_positive_peaks() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for target in ["avx2", "avx512", "neon"] {
+            let path = dir.path().join(format!("{target}.json"));
+            run_roofline(target, None, path.to_str(), false, false).expect("run");
+            let model: RooflineModel =
+                serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
+            assert!(model.peak_compute.values().all(|&v| v > 0.0), "{target}");
+            assert!(model.peak_bandwidth.values().all(|&v| v > 0.0), "{target}");
+        }
+    }
+
+    /// FALSIFY-CGP-RUN-004: `--json` returns before the export branch runs,
+    /// so no file is written.
+    #[test]
+    fn test_run_roofline_json_returns_before_export() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("never.json");
+        run_roofline("cuda", None, path.to_str(), false, true).expect("run");
+        assert!(!path.exists(), "json mode must not export");
+    }
+
+    /// FALSIFY-CGP-RUN-005: empirical on a GPU target takes the note branch
+    /// (no measurement) and still exports; empirical+json on a CPU target
+    /// returns before export.
+    #[test]
+    fn test_run_roofline_empirical_branches() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let gpu = dir.path().join("gpu.json");
+        run_roofline("wgpu", None, gpu.to_str(), true, false).expect("gpu empirical");
+        assert!(gpu.exists());
+        let cpu = dir.path().join("cpu.json");
+        run_roofline("avx2", None, cpu.to_str(), true, true).expect("cpu empirical json");
+        assert!(!cpu.exists(), "empirical json must not export");
+    }
+
+    /// FALSIFY-CGP-RUN-006: an unwritable export path surfaces the io error.
+    #[test]
+    fn test_run_roofline_export_to_missing_dir_errors() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("no/such/dir/out.json");
+        assert!(run_roofline("cuda", None, path.to_str(), false, false).is_err());
+    }
 }
