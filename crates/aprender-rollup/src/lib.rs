@@ -5,6 +5,7 @@
 //! rollup commit is on main, with the SHA posted; never on red (see [`Outcome`]).
 
 pub mod build;
+pub mod close;
 pub mod gh_json;
 pub mod report;
 
