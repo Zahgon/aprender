@@ -265,6 +265,11 @@ falsification_tests:
   prediction: The timestamp in a cbtop report matches the UTC date at the moment it was generated, on both headless paths
   test: commands::cbtop::tests::test_chrono_timestamp_is_current_utc_date
   if_fails: Persisted CI provenance is stamped with a stale hardcoded date
+- id: FALSIFY-OPS-021
+  rule: Mock page coverage cannot be read before it is started, and stopping ends collection
+  prediction: take_coverage before start_coverage is an InvalidState error; after start it returns the page url and added functions; stop_coverage returns the final report and later takes fail
+  test: mock_page_take_coverage_5695::stop_coverage_returns_final_report_then_disables
+  if_fails: Coverage reads succeed on a page that never enabled collection, or keep succeeding after stop
 kani_harnesses:
 - id: KANI-OPS-001
   obligation: ReadOnly commands have no side effects
