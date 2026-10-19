@@ -280,6 +280,11 @@ falsification_tests:
   prediction: take_coverage before start_coverage is an InvalidState error; after start it returns the page url and added functions; stop_coverage returns the final report and later takes fail
   test: mock_page_take_coverage_5695::stop_coverage_returns_final_report_then_disables
   if_fails: Coverage reads succeed on a page that never enabled collection, or keep succeeding after stop
+- id: FALSIFY-OPS-022
+  rule: Resuming a classifier checkpoint restores what was saved and refuses a foreign dataset
+  prediction: resume_from_apr_checkpoint returns the saved epoch and the saved classifier weights, and a checkpoint from a different corpus is rejected with F-CKPT-006 before any weight is touched
+  test: finetune::classify_trainer::tests::test_resume_rejects_data_hash_mismatch
+  if_fails: A resume silently continues from weights trained on different data, or loses the epoch
 kani_harnesses:
 - id: KANI-OPS-001
   obligation: ReadOnly commands have no side effects
