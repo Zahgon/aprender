@@ -135,3 +135,9 @@ falsification_tests:
     test: 'cargo test -p aprender-qa-cli --test cli_surface_gate unusable_input_is_rejected'
     if_fails: 'MEASURED 2026-09-26 (aprender-01): GREEN on an unmutated tree; no source mutation was run for this binary'
     mutation: 'make a rejection path return Ok(()) or unwrap the read; must turn RED on that row'
+  - id: FALSIFY-BIN-APR-QA-007
+    rule: 'tools writes one faithful record per tool to <output>/tool_tests.json'
+    prediction: '`apr-qa tools <model> --output <dir>` against a silent fake `apr` creates <dir> and tool_tests.json with tool/passed/exit_code/duration_ms/gate_id/stderr per tool; apr exit 0 gives inspect passed=true, profile-ci passed=false; apr exit 1 leaves only profile-ci-assertion passed and exits 1 AFTER the file is written; an output path under a regular file, or a tool_tests.json that is a directory, exits 1 naming the cause'
+    test: 'cargo test -p aprender-qa-cli --test tool_results_json_5638'
+    if_fails: 'save_tool_results_json_or_exit drops/inverts a verdict, skips the write on a red run, or panics instead of exiting 1 with a message'
+    mutation: 'passed: !r.passed in the ToolResultJson mapping; must turn RED (MEASURED 2026-10-19, 2 tests RED)'
