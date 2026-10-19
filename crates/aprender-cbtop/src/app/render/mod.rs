@@ -443,3 +443,73 @@ impl CbtopApp {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use presentar_terminal::direct::CellBuffer;
+
+    /// Render the tab bar into a fresh buffer; returns the buffer (row 1 holds the bar).
+    fn bar(width: u16, active: ActivePanel) -> CellBuffer {
+        let mut buf = CellBuffer::new(width, 3);
+        {
+            let mut canvas = DirectTerminalCanvas::new(&mut buf);
+            CbtopApp::render_tab_bar(&mut canvas, width, active, &Theme::default());
+        }
+        buf
+    }
+
+    fn row1(buf: &CellBuffer, width: u16) -> String {
+        (0..width)
+            .filter_map(|c| buf.get(c, 1).map(|cell| cell.symbol.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn active_panel_is_bracketed_and_others_are_padded() {
+        let row = row1(&bar(100, ActivePanel::Cpu), 100);
+        assert!(row.starts_with("│ 1:Overview [2:CPU]  3:GPU"), "{row:?}");
+        assert!(row.contains("9:Help"), "{row:?}");
+        assert_eq!(row.matches('[').count(), 1, "{row:?}");
+    }
+
+    #[test]
+    fn first_and_last_panel_brackets_and_separator_rules() {
+        let first = row1(&bar(100, ActivePanel::Overview), 100);
+        assert!(first.starts_with("│[1:Overview]  2:CPU"), "{first:?}");
+        // Help is last: no separator is drawn after it, so the bar is closed by
+        // the fill spaces, not by a separator cell.
+        let last = row1(&bar(100, ActivePanel::Help), 100);
+        assert!(last.contains(" 8:Config [9:Help]"), "{last:?}");
+    }
+
+    #[test]
+    fn bar_is_closed_with_a_border_at_both_ends_and_fills_between() {
+        let row = row1(&bar(100, ActivePanel::Overview), 100);
+        assert_eq!(row.chars().count(), 100, "{row:?}");
+        assert!(row.starts_with('│') && row.ends_with('│'), "{row:?}");
+        assert!(
+            row.trim_end_matches('│').trim_end().ends_with("9:Help"),
+            "{row:?}"
+        );
+        assert!(row.contains("9:Help "), "{row:?}");
+    }
+
+    #[test]
+    fn narrow_width_skips_fill_and_still_closes_the_bar() {
+        // Content is wider than 20 columns, so `remaining` clamps to 0.
+        let row = row1(&bar(20, ActivePanel::Overview), 20);
+        assert_eq!(row.chars().last(), Some('│'), "{row:?}");
+    }
+
+    #[test]
+    fn active_and_inactive_cells_use_distinct_theme_colours() {
+        let theme = Theme::default();
+        let buf = bar(100, ActivePanel::Overview);
+        let at = |c: u16| buf.get(c, 1).expect("cell in range").fg;
+        assert_eq!(at(1), theme.cpu.sample(0.2), "'[' highlight");
+        assert_eq!(at(4), theme.foreground, "active title");
+        assert_eq!(at(15), theme.dim, "inactive key");
+        assert_eq!(at(0), theme.dim, "left border");
+    }
+}

@@ -1,0 +1,42 @@
+metadata:
+  version: 1.0.0
+  created: '2026-10-19'
+  author: PAIML Engineering
+  description: "aprender-cbtop CbtopApp::render_tab_bar (#5630) — draws a one-row panel tab bar: the active panel bracketed in the highlight colour, the others dimmed and padded, a separator after every panel except Help, and a closing border at width-1."
+  kind: pattern
+  references:
+    - "crates/aprender-cbtop/src/app/render/mod.rs — render_tab_bar"
+    - "aprender#5630 — coverage ticket"
+
+equations:
+  tab_bar_layout:
+    formula: "active -> '[k:Title]'; inactive -> ' k:Title'; ' ' after every panel but Help; '│' at col 0 and col width-1"
+    domain: "ActivePanel, width, Theme"
+    codomain: "CellBuffer row 1"
+    invariants:
+      - "exactly one panel is bracketed"
+      - "the right border is always drawn, also when the content is wider than the width"
+
+proof_obligations:
+  - id: CBTOP-TAB-INV-001
+    type: invariant
+    property: "exactly the active panel is bracketed"
+    formal: "cargo test -p aprender-cbtop --lib active_panel_is_bracketed_and_others_are_padded exits 0"
+    applies_to: tab_bar_layout
+  - id: CBTOP-TAB-INV-002
+    type: invariant
+    property: "no separator follows the last panel"
+    formal: "cargo test -p aprender-cbtop --lib first_and_last_panel_brackets_and_separator_rules exits 0"
+    applies_to: tab_bar_layout
+
+falsification_tests:
+  - id: FALSIFY-CBTOP-TAB-001
+    rule: "active test inverted"
+    prediction: "changing *panel == active_panel to *panel != active_panel turns active_panel_is_bracketed_and_others_are_padded RED"
+    test: "cargo test -p aprender-cbtop --lib active_panel_is_bracketed_and_others_are_padded"
+    if_fails: "the active-panel bracket is unguarded"
+  - id: FALSIFY-CBTOP-TAB-002
+    rule: "separator guard inverted"
+    prediction: "changing *panel != ActivePanel::Help to *panel == ActivePanel::Help turns first_and_last_panel_brackets_and_separator_rules RED"
+    test: "cargo test -p aprender-cbtop --lib first_and_last_panel_brackets_and_separator_rules"
+    if_fails: "the separator rule is unguarded"
