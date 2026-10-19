@@ -92,6 +92,12 @@ falsification_tests:
   test: manifest::tests::test_save_then_load_roundtrip
   if_fails: to_modelfile drops or reorders a directive, or load/save lose the Io error context
   mutation: drop the LICENSE push in to_modelfile; the roundtrip test must go RED
+- id: FALSIFY-RI-005
+  rule: Model lookup by id
+  prediction: RegistryDb::get_model_by_id returns exactly the inserted row, and an unknown id yields PachaError::NotFound with kind "model" naming the id
+  test: get_model_by_id_5661::unknown_id_is_not_found_naming_the_id
+  if_fails: QueryReturnedNoRows is mapped to Database instead of NotFound, or the lookup returns a different row
+  mutation: map QueryReturnedNoRows to PachaError::Database in get_model_by_id; the not-found test must go RED
 kani_harnesses:
 - id: KANI-RI-001
   obligation: Run ID monotonicity
