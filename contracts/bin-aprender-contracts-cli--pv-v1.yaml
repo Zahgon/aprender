@@ -168,3 +168,9 @@ falsification_tests:
     test: 'scripts/check_surface_audit_bins.sh (aprender#4476)'
     if_fails: 'a pv command ships unaudited (RED 2026-09-26: 11 of 49 paths had no row; GREEN 2026-09-27: 49 of 49)'
     mutation: 'delete every pv row; must turn RED naming pv'
+  - id: FALSIFY-BIN-PV-010
+    rule: '`graph --format json` renders nodes, from/to edges, topo order and cycles (#5615)'
+    prediction: 'the edge direction is dependent->dependency and a cyclic corpus exits non-zero with an empty topo_order'
+    test: 'cargo test -p aprender-contracts-cli --test graph_json_render'
+    if_fails: 'the JSON graph renderer drifts without a test noticing'
+    mutation: 'swap from/to in render_json; graph_json_lists_nodes_edge_and_topological_order must turn RED (MEASURED 2026-10-19)'
