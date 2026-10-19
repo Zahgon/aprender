@@ -1,0 +1,50 @@
+metadata:
+  id: C-CGP-DETECT-WAITING
+  version: 1.0.0
+  created: '2026-10-19'
+  author: PAIML Engineering
+  kind: pattern
+  status: ACTIVE_ALGORITHM_LEVEL
+  description: |
+    Pins `MudaDetector::detect_waiting` (#5664): Waiting muda fires when the
+    scheduler idle share exceeds the threshold (strictly) or any barrier or
+    memory stall cycle is seen; impact is the idle share, floored at 10 when
+    memory stalls exist; the recommendation targets memory only when memory
+    stalls strictly exceed barrier stalls.
+  references:
+    - 'crates/aprender-cgp/src/analysis/muda.rs (detect_waiting)'
+
+equations:
+  detect_waiting_result:
+    formula: |
+      fires = idle > max_idle OR barrier > 0 OR memory > 0
+      impact = max(idle, 10 if memory > 0 else 0)
+      hint = latency-hiding if memory > barrier else barrier-overlap
+    domain: stall cycle counters and a scheduler idle percentage
+    invariants:
+    - 'a clean profile (idle at threshold, zero stalls) yields None'
+
+proof_obligations:
+- id: CDW-INV-001
+  type: invariant
+  property: detect_waiting fires on idle above threshold or any stall and reports the floored impact
+  formal: 'fires ≡ idle ∨ stall'
+  applies_to: detect_waiting_result
+
+falsification_tests:
+- id: FALSIFY-CGP-DETECT-WAITING-001
+  rule: detect_waiting output is exact per branch
+  prediction: 'idle 20.0 with no stalls is None; idle 20.5 fires with impact 20.5; memory stalls with idle 3 give impact 10.0 and the locality hint; barrier-only gives impact 4.0 and the barrier hint; equal stalls pick the barrier hint'
+  test: cargo test -p aprender-cgp --test detect_waiting_5664
+  if_fails: cgp muda analysis misreports Waiting waste or its recommendation
+  ship_blocking: false
+  mutation: 'flip the idle > threshold comparison, zero the 10.0 floor, flip memory > barrier to >=, or raise the barrier trigger; each must turn RED'
+
+qa_gate:
+  id: QA-CGP-DETECT-WAITING-001
+  name: cgp detect_waiting gate
+  description: detect_waiting result is exact
+  checks:
+  - detect_waiting_result
+  pass_criteria: FALSIFY-CGP-DETECT-WAITING-001 passes
+  falsification: Any failure fails the gate
