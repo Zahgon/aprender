@@ -33,9 +33,24 @@ fn border_fg(buffer: &CellBuffer) -> Color {
     buffer.get(0, 0).expect("cell (0,0) exists").fg
 }
 
-const PANEL_GREEN: Color = Color { r: 0.3, g: 1.0, b: 0.3, a: 1.0 };
-const PANEL_YELLOW: Color = Color { r: 1.0, g: 1.0, b: 0.3, a: 1.0 };
-const PANEL_RED: Color = Color { r: 1.0, g: 0.3, b: 0.3, a: 1.0 };
+const PANEL_GREEN: Color = Color {
+    r: 0.3,
+    g: 1.0,
+    b: 0.3,
+    a: 1.0,
+};
+const PANEL_YELLOW: Color = Color {
+    r: 1.0,
+    g: 1.0,
+    b: 0.3,
+    a: 1.0,
+};
+const PANEL_RED: Color = Color {
+    r: 1.0,
+    g: 0.3,
+    b: 0.3,
+    a: 1.0,
+};
 
 #[test]
 fn register_panel_lines_show_each_register_class() {
@@ -54,7 +69,11 @@ fn register_panel_lines_show_each_register_class() {
     assert!(rows[3].contains(".b64:  12 / 255"), "{}", rows[3]);
     assert!(rows[4].contains(".pred:  4 / 8"), "{}", rows[4]);
     assert!(rows[5].contains("Total: 58 -> 88% occ"), "{}", rows[5]);
-    assert!(rows[7].starts_with('└') && rows[7].trim_end().ends_with('┘'), "{}", rows[7]);
+    assert!(
+        rows[7].starts_with('└') && rows[7].trim_end().ends_with('┘'),
+        "{}",
+        rows[7]
+    );
 }
 
 #[test]
