@@ -260,3 +260,7 @@ fn redraw_query<W: Write>(stdout: &mut W, query: &str, height: u16) -> crate::Re
     )
     .map_err(term_err)
 }
+
+#[cfg(test)]
+#[path = "view_render_tests.rs"]
+mod view_render_tests;

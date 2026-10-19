@@ -1,0 +1,48 @@
+metadata:
+  id: C-DATA-VIEW-RENDER-FRAME
+  version: 1.0.0
+  created: '2026-10-19'
+  author: PAIML Engineering
+  kind: pattern
+  status: ACTIVE_ALGORITHM_LEVEL
+  description: |
+    Pins `render_frame` in the `apr data view` TUI (#5648): the frame clears
+    the screen, prints a title bar with the file name, row count and
+    InMemory/Streaming mode, every viewer line in order, then a status bar
+    whose row range starts at scroll offset + 1 and is clamped to the row count.
+  references:
+    - 'crates/aprender-data/src/cli/view.rs (render_frame)'
+
+equations:
+  render_frame_output:
+    formula: |
+      title = " <file_name> | <rows> rows | <InMemory|Streaming>"
+      status = " Row <offset+1>-<min(offset+visible, rows)> of <rows> | ..."
+    domain: a DatasetViewer rendered into an in-memory writer
+    invariants:
+    - 'title precedes the data lines, which precede the status bar'
+
+proof_obligations:
+- id: DVR-INV-001
+  type: invariant
+  property: the frame shows the adapter mode and a clamped one-based row range
+  formal: 'range ≡ clamped'
+  applies_to: render_frame_output
+
+falsification_tests:
+- id: FALSIFY-DATA-VIEW-RENDER-FRAME-001
+  rule: render_frame output is exact per branch
+  prediction: 'InMemory vs Streaming labels, directory stripped from the title, Row 1-5 of 50 then Row 11-15 after scrolling 10, end clamps to 50, lines emitted in order after a screen clear'
+  test: cargo test -p aprender-data --lib view_render_tests
+  if_fails: the data viewer misreports mode, position or drops rows
+  ship_blocking: false
+  mutation: 'ignore is_streaming, drop the +1 on the first row, remove the min() clamp, or truncate render_lines; each must turn RED'
+
+qa_gate:
+  id: QA-DATA-VIEW-RENDER-FRAME-001
+  name: data view render_frame gate
+  description: render_frame output is exact
+  checks:
+  - render_frame_output
+  pass_criteria: FALSIFY-DATA-VIEW-RENDER-FRAME-001 passes
+  falsification: Any failure fails the gate
