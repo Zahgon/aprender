@@ -61,6 +61,11 @@ falsification:
     test: "falsify_avx512_q4k_003_non_aligned_in_dim_no_oob — activation buffer carries a non-zero sentinel tail past in_dim inside the allocation; pre-fix over-read injects the sentinel (RED, e.g. in_dim=32 → SIMD 7.4e9 vs scalar 532), masked-load fix matches scalar (GREEN). Covers in_dim ∈ {32,48,96,160,224} (mod-256 mid-chunk cases) + 256 control."
     evidence: "cargo test -p aprender-compute --lib falsify_avx512_q4k_003"
 
+  - id: FALSIFY-AVX512-Q4K-005
+    description: "Threaded Q4_K GEMV (out_dim*in_dim >= 8M) on AVX-512 matches the scalar reference for every row, including the ragged last chunk and multi-super-block rows"
+    test: "cargo test -p aprender-compute --test q4k_parallel_avx512_chunk_5671"
+    evidence: "mutation: index rows by local_idx instead of out_idx in compute_chunk_q4k_avx512; every chunk after the first reads the wrong weights and the scalar comparison goes RED"
+
 falsification_tests:
   - id: FALSIFY-AVX512_Q4K-001
     description: "C-AVX512-Q4K-003 (and -001 parity): for non-256-aligned in_dim with a non-zero sentinel past in_dim, the dispatched Q4K matmul equals the scalar reference"
