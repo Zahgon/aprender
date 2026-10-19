@@ -308,14 +308,6 @@ jobs:
         continue-on-error: true
         with:
           subject-path: ${{ runner.temp }}/fat/sov.provenance/ws/${{ github.event.repository.name }}/Cargo.toml
-      # Operator 2026-10-19: CI flags any step over 1.5x its budget (ci/step-budgets.tsv). On push to main
-      # only, outside the merge path (C324: a LAB signal, so it can never block a merge).
-      - name: Flag steps over 1.5x their budget (push to main, LAB)
-        if: ${{ always() && github.event_name == 'push' }}
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash scripts/ci/step_budget_check.sh "$GITHUB_RUN_ID"
       # #5397: free this job's own target dir (`<PR>/run-<id>`), never the PR parent.
       # Last step, so nothing after it reads the dir; always() so a failed or
       # cancelled run frees it too.

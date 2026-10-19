@@ -27,6 +27,8 @@ check() {
   return $rc
 }
 
+case "${1:-}" in -h|--help) echo "usage: check_ci_failfast.sh [workflow] | --self-test"; exit 0 ;; esac
+
 if [ "${1:-}" = "--self-test" ]; then
   check .github/workflows/ci.yml || { echo "FAIL: the real workflow is not fail-fast"; exit 1; }
   t=$(mktemp -d); trap 'rm -rf "${t:?}"' EXIT
