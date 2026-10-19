@@ -265,6 +265,11 @@ falsification_tests:
   prediction: The timestamp in a cbtop report matches the UTC date at the moment it was generated, on both headless paths
   test: commands::cbtop::tests::test_chrono_timestamp_is_current_utc_date
   if_fails: Persisted CI provenance is stamped with a stale hardcoded date
+- id: FALSIFY-OPS-017
+  rule: batch inference never aborts on a failing prompt
+  prediction: run_batch_loop emits one JSONL error row and counts one failure per bad-JSON, encode-failed or model-less prompt, skips blank lines, and returns an IoError when the sink is unwritable
+  test: infer::tests_batch_loop_5691::bad_json_encode_failure_and_missing_model_each_emit_one_error_row_5691
+  if_fails: a bad prompt aborts or silently vanishes from a batch run
 kani_harnesses:
 - id: KANI-OPS-001
   obligation: ReadOnly commands have no side effects
