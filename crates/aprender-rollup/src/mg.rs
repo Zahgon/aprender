@@ -38,6 +38,24 @@ pub fn parse_verdict(json: &str) -> Result<Verdict, String> {
     })
 }
 
+/// `gh` args listing the merge-group runs for a rollup branch.
+#[must_use]
+pub fn run_list_args(branch: &str) -> Vec<String> {
+    [
+        "run",
+        "list",
+        "--event",
+        "merge_group",
+        "--branch",
+        branch,
+        "--json",
+        "status,conclusion",
+    ]
+    .iter()
+    .map(|s| (*s).to_string())
+    .collect()
+}
+
 /// Result of bisecting a rollup: who may land, who broke it, who is still unknown.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Bisect {

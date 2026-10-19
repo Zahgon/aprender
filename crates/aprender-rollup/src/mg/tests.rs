@@ -136,3 +136,10 @@ fn close_plan_without_sha_on_main_closes_nothing() {
     let p = close_plan(&b, None);
     assert!(p.iter().all(|(_, a)| a[1] == "comment"));
 }
+
+#[test]
+fn run_list_args_filter_merge_group_on_the_branch() {
+    let a = run_list_args("rollup/5-3");
+    assert!(a.windows(2).any(|w| w == ["--event", "merge_group"]));
+    assert!(a.windows(2).any(|w| w == ["--branch", "rollup/5-3"]));
+}
