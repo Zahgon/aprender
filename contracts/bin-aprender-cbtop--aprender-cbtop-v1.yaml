@@ -113,11 +113,11 @@ falsification_tests:
     if_fails: 'a shipped command has no audited row (observed 2026-09-27: 4 of 4 leaves ledgered, plus the root row `aprender-cbtop (interactive TUI; --headless)` added 2026-09-27, GREEN)'
     mutation: 'delete every aprender-cbtop row; must turn RED naming aprender-cbtop'
   - id: FALSIFY-BIN-APRENDER-CBTOP-006
-    rule: 'analyze_bottlenecks bands efficiency at 25/50/75% and flags CV > 15% (#5548)'
-    prediction: 'efficiency 0.24 is critical, 0.25 severe, 0.50 moderate, 0.75 clean; CV 15.1 is unstable and 15.0 is not'
-    test: 'cargo test -p aprender-cbtop --lib optimize::bottleneck'
-    if_fails: 'a bottleneck lands in the wrong severity band or an unstable run goes unreported'
-    mutation: 'change a threshold (< 0.50 to <= 0.50) or CV > 15.0 to >= 15.0; must turn RED'
+    rule: 'analyze_bottlenecks buckets by efficiency (<0.25 critical, <0.50 severe, <0.75 moderate), flags CV>15 as unstable, and format_report names each non-empty section'
+    prediction: 'efficiency 0.25 is severe and 0.75 is healthy; CV exactly 15 is stable; a clean baseline prints the all-clear line'
+    test: 'cargo test -p aprender-cbtop --test bottleneck_analysis_5548'
+    if_fails: 'a slow or noisy kernel is reported healthy, or a healthy one is flagged, in the optimize report (#5548)'
+    mutation: 'change `efficiency < 0.50` to `efficiency <= 0.50` in analyze_bottlenecks; must turn RED'
   - id: FALSIFY-BIN-APRENDER-CBTOP-007
     rule: 'render_hardware_box draws five rows, truncates names to the inner width and advances y by 7 (#5564)'
     prediction: 'with a GPU the GPU row names it; without one it reads "Not detected" and the closing bar sits at box_width; a 100-char name is cut to inner_width - 10'
@@ -130,3 +130,9 @@ falsification_tests:
     test: 'cargo test -p aprender-cbtop --lib handle_key_tests'
     if_fails: 'a TUI hotkey does the wrong thing or silently stops working'
     mutation: 'make the space branch assign is_running = self.is_running; must turn RED'
+  - id: FALSIFY-BIN-APRENDER-CBTOP-009
+    rule: 'analyze_bottlenecks bands efficiency at 25/50/75% and flags CV > 15% (#5548)'
+    prediction: 'efficiency 0.24 is critical, 0.25 severe, 0.50 moderate, 0.75 clean; CV 15.1 is unstable and 15.0 is not'
+    test: 'cargo test -p aprender-cbtop --lib optimize::bottleneck'
+    if_fails: 'a bottleneck lands in the wrong severity band or an unstable run goes unreported'
+    mutation: 'change a threshold (< 0.50 to <= 0.50) or CV > 15.0 to >= 15.0; must turn RED'
