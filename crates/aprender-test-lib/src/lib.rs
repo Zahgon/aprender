@@ -1560,3 +1560,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(all(test, feature = "browser"))]
+mod browser_start_coverage_5598_tests;
