@@ -443,3 +443,6 @@ impl CbtopApp {
         }
     }
 }
+
+#[cfg(test)]
+mod status_bar_tests;

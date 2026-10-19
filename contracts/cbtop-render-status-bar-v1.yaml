@@ -1,0 +1,48 @@
+metadata:
+  id: C-CBTOP-RENDER-STATUS-BAR
+  version: 1.0.0
+  created: '2026-10-19'
+  author: PAIML Engineering
+  kind: pattern
+  status: ACTIVE_ALGORITHM_LEVEL
+  description: |
+    Pins `CbtopApp::render_status_bar` (#5611): the bottom row shows the
+    RUN/OFF marker (in different colors), backend, intensity as a rounded
+    percent, bricks/s and latency, GFLOP/s, and an FPS cell ten columns from
+    the right edge only when show_fps is set or a frame time exists.
+  references:
+    - 'crates/aprender-cbtop/src/app/render/formatters.rs (render_status_bar)'
+
+equations:
+  status_bar_row:
+    formula: |
+      row = " <●RUN|○OFF> │ <backend> │ Int:<round(i*100)>% │ <b> brick/s │ <us>μs │ <ops/1e9> GFLOP/s [│ <1000/frame_avg> FPS]"
+      FPS cell present iff show_fps OR frame_avg > 0, drawn at x = width - 10
+    domain: a CellBuffer canvas of width 100 and the tokyo_night theme
+    invariants:
+    - 'segments appear left to right in the order above'
+
+proof_obligations:
+- id: CRS-INV-001
+  type: invariant
+  property: the FPS cell is drawn iff a flag or a frame time asks for it
+  formal: 'fps ≡ flag ∨ frame'
+  applies_to: status_bar_row
+
+falsification_tests:
+- id: FALSIFY-CBTOP-RENDER-STATUS-BAR-001
+  rule: render_status_bar output is exact per branch
+  prediction: 'running draws ●RUN, stopped ○OFF with a different fg; 0.756 renders Int:76%; 2.5e9 ops renders 2.50 GFLOP/s; 16 ms frame renders 62 FPS at x=90; show_fps with no frame time renders 0 FPS; neither renders no FPS'
+  test: cargo test -p aprender-cbtop --lib status_bar_tests
+  if_fails: the cbtop status bar misreports load, throughput or frame rate
+  ship_blocking: false
+  mutation: 'swap the RUN glyph, scale intensity by 10, turn the FPS || into &&, divide GFLOP by 1e6, collapse the RUN color to dim, or use 100/frame_avg; each must turn RED'
+
+qa_gate:
+  id: QA-CBTOP-RENDER-STATUS-BAR-001
+  name: cbtop status bar gate
+  description: status bar row is exact
+  checks:
+  - status_bar_row
+  pass_criteria: FALSIFY-CBTOP-RENDER-STATUS-BAR-001 passes
+  falsification: Any failure fails the gate
