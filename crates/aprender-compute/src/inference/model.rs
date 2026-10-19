@@ -1128,3 +1128,7 @@ mod q5k_dequant_tests {
         assert_eq!(out[32], 18.0, "out[32] high nibble must add 16 for qh bit 1");
     }
 }
+
+#[cfg(test)]
+#[path = "model_load_5597_tests.rs"]
+mod model_load_5597_tests;

@@ -265,6 +265,11 @@ falsification_tests:
   prediction: The timestamp in a cbtop report matches the UTC date at the moment it was generated, on both headless paths
   test: commands::cbtop::tests::test_chrono_timestamp_is_current_utc_date
   if_fails: Persisted CI provenance is stamped with a stale hardcoded date
+- id: FALSIFY-OPS-028
+  rule: A GGUF with a missing required tensor or metadata key fails the load with an error naming it, never a partial model
+  prediction: LlamaModel::from_gguf returns Err naming the missing tensor/key, ties output to token_embd when output.weight is absent, and loads optional q/k/v biases when present
+  test: inference::model::model_load_5597_tests::missing_required_tensor_is_an_error_naming_it
+  if_fails: A truncated GGUF loads as a model with absent weights and produces garbage logits
 kani_harnesses:
 - id: KANI-OPS-001
   obligation: ReadOnly commands have no side effects
