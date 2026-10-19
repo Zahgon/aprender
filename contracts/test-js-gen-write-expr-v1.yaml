@@ -1,0 +1,48 @@
+metadata:
+  id: C-TEST-JS-GEN-WRITE-EXPR
+  version: 1.0.0
+  created: '2026-10-19'
+  author: PAIML Engineering
+  kind: pattern
+  status: ACTIVE_ALGORITHM_LEVEL
+  description: |
+    Pins the JavaScript that codegen write_expr emits for every Expr variant
+    (#5687): integral numbers drop the decimal point, strings escape quote,
+    backslash and control characters, binary and ternary forms are
+    parenthesised, and an arrow takes bare parameters only when it has exactly
+    one.
+  references:
+    - 'crates/aprender-test-js-gen/src/codegen.rs (write_expr)'
+
+equations:
+  write_expr_exact_output:
+    formula: |
+      generate(Expr e) is a pure function of e; each variant has one fixed spelling
+    domain: Expr trees passed to generate through a one-statement module
+    invariants:
+    - 'the same Expr always renders the same text'
+
+proof_obligations:
+- id: JWE-INV-001
+  type: invariant
+  property: each Expr variant renders to its fixed JavaScript spelling
+  formal: 'render ≡ spelling'
+  applies_to: write_expr_exact_output
+
+falsification_tests:
+- id: FALSIFY-TEST-JS-GEN-WRITE-EXPR-001
+  rule: write_expr renders every Expr variant exactly
+  prediction: 'literals, escapes, operators, ternary, object, array, call, new, await, import, assign and both arrow forms render to their exact strings'
+  test: cargo test -p aprender-test-js-gen --test write_expr_5687
+  if_fails: generated worker and worklet JavaScript changes meaning or fails to parse
+  ship_blocking: false
+  mutation: 'invert the single-parameter arrow check, or stop doubling the backslash escape; each must turn RED'
+
+qa_gate:
+  id: QA-TEST-JS-GEN-WRITE-EXPR-001
+  name: JS codegen expression gate
+  description: write_expr output is exact for every Expr variant
+  checks:
+  - write_expr_exact_output
+  pass_criteria: FALSIFY-TEST-JS-GEN-WRITE-EXPR-001 passes
+  falsification: Any failure fails the gate
