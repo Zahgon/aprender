@@ -265,6 +265,11 @@ falsification_tests:
   prediction: The timestamp in a cbtop report matches the UTC date at the moment it was generated, on both headless paths
   test: commands::cbtop::tests::test_chrono_timestamp_is_current_utc_date
   if_fails: Persisted CI provenance is stamped with a stale hardcoded date
+- id: FALSIFY-OPS-023
+  rule: /v1/predict computes from the loaded tensor and refuses what it cannot compute
+  prediction: apr_predict_handler rejects empty features with 400, reports a missing weights/output tensor as 400, returns the dot product for matching-length weights, and argmax class plus ranked top-k for logits
+  test: api::tests::apr_predict_5698::predict_classification_takes_argmax_and_ranks_top_k
+  if_fails: The predict endpoint returns a plausible number or class that is not derived from the loaded model
 kani_harnesses:
 - id: KANI-OPS-001
   obligation: ReadOnly commands have no side effects
