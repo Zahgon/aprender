@@ -131,3 +131,9 @@ falsification_tests:
     test: 'pv lint contracts/ --gate shapes on the snapshot (ONT-4g extract:binary)'
     if_fails: 'LIVE RED 2026-09-27 on a default-feature snapshot: 7 `eval *` rows are bin:ledgerOrphan. They are NOT a ledger defect: all 7 are enumerated in scripts/dogfood_reconcile.py FEATURE_GATED (proven by rebuilding with --features eval), so the RED clears when extract:binary reads that enumerated set as an allowance (same fix clears the S9 apr and S10 alimentar feature-gated rows) — never by a count tolerance, and never by deleting the rows'
     mutation: 'delete `query` from the snapshot; must turn RED on bin:command (5) and bin:ledgerOrphan naming `aprender-rag query`'
+  - id: FALSIFY-BIN-TRUENO-RAG-006
+    rule: 'index persistence: index.json always, manifest.json only with --manifest'
+    prediction: '`aprender-rag index` writes index.json (chunks and embeddings equal length) into a created output dir; manifest.json appears only with --manifest and its chunk_count/file_count match the index and corpus'
+    test: 'save_index_5662::manifest_flag_writes_manifest_matching_index'
+    if_fails: 'save_index writes the manifest unconditionally or never, or reports counts that disagree with index.json'
+    mutation: 'invert `if manifest` in save_index; the manifest tests must turn RED'
