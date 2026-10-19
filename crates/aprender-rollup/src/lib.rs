@@ -12,8 +12,8 @@ pub mod report;
 
 /// Largest PR (additions + deletions, from `gh`) that may join a rollup.
 pub const MAX_LINES: u32 = 200;
-/// Most constituents in one rollup.
-pub const MAX_ENTRIES: usize = 10;
+/// Most constituents in one rollup (operator: b = 3, only with bisection, until p_red is measured).
+pub const MAX_ENTRIES: usize = 3;
 /// Label a PR owner sets to opt in.
 pub const OPT_IN_LABEL: &str = "rollup-ok";
 
