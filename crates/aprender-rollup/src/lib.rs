@@ -4,6 +4,7 @@
 //! merge-group run [`split`] halves it. The bot closes a constituent only after the
 //! rollup commit is on main, with the SHA posted; never on red (see [`Outcome`]).
 
+pub mod build;
 pub mod gh_json;
 pub mod report;
 
