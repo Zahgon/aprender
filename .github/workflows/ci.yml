@@ -264,6 +264,14 @@ jobs:
         # the teardown below keeps always() and still reaps the containers.
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/fat_driver.py wait --results "$RUNNER_TEMP/fat/results.json"
+      # Operator 2026-10-19: root cause is no gate time budget. A merge_group entry that is already RED must
+      # not keep the other jobs and shards holding mq runners for another ~45 min: the first failed job cancels
+      # the run. merge_group only (a PR run keeps every verdict); the teardown below is always() and still reaps.
+      - name: Fail fast, cancel this merge-group run
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || echo "::warning::fail-fast cancel did not take"
       # #4948: a cancelled run never reaches a section's own container removal,
       # and its fat-<run>-<section> container then sits on `tail -f /dev/null`
       # for days. always() runs on cancel too; on the passing path the driver
@@ -300,6 +308,14 @@ jobs:
         continue-on-error: true
         with:
           subject-path: ${{ runner.temp }}/fat/sov.provenance/ws/${{ github.event.repository.name }}/Cargo.toml
+      # Operator 2026-10-19: CI flags any step over 1.5x its budget (ci/step-budgets.tsv). On push to main
+      # only, outside the merge path (C324: a LAB signal, so it can never block a merge).
+      - name: Flag steps over 1.5x their budget (push to main, LAB)
+        if: ${{ always() && github.event_name == 'push' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/ci/step_budget_check.sh "$GITHUB_RUN_ID"
       # #5397: free this job's own target dir (`<PR>/run-<id>`), never the PR parent.
       # Last step, so nothing after it reads the dir; always() so a failed or
       # cancelled run frees it too.
@@ -443,6 +459,9 @@ jobs:
     # same lanes as x86-main: clean-room for pull_request/push, mq for a merge_group entry
     runs-on: ${{ github.event_name == 'merge_group' && fromJSON('["self-hosted","Linux","X64","mq"]') || fromJSON('["self-hosted","Linux","X64","clean-room"]') }}
     timeout-minutes: 180
+    permissions:
+      contents: read
+      actions: write   # the fail-fast step cancels this run
     strategy:
       fail-fast: false
       matrix:
@@ -466,6 +485,14 @@ jobs:
           python3 scripts/ci/fat_driver.py run
           --sections 'workspace-test-shard?${{ matrix.shard }}?3?'
           --results "$RUNNER_TEMP/fat/results.json"
+      # Operator 2026-10-19: root cause is no gate time budget. A merge_group entry that is already RED must
+      # not keep the other jobs and shards holding mq runners for another ~45 min: the first failed job cancels
+      # the run. merge_group only (a PR run keeps every verdict); the teardown below is always() and still reaps.
+      - name: Fail fast, cancel this merge-group run
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || echo "::warning::fail-fast cancel did not take"
       # #4948: a cancelled run never reaches a section's own container removal,
       # and its fat-<run>-<section> container then sits on `tail -f /dev/null`
       # for days. always() runs on cancel too; on the passing path the driver
